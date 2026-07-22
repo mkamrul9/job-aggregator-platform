@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  # Placeholder for frontend-next
+  # Placeholder for frontend-admin
+  
+  # User Service (NestJS + PostgreSQL)
+  # postgres:
+  #   image: postgres:15
+  #   ...
+
+  # Scraper Service (Go + MongoDB)
+  # mongodb:
+  #   image: mongo:6
+  #   ...
+
+  # Resume Service (FastAPI)
+  
+  # Notification Service (Express)
