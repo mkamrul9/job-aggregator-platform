@@ -1,3 +1,4 @@
+# docker-compose.yml
 version: '3.8'
 
 services:
@@ -9,24 +10,32 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       - microservices-net
+    depends_on:
+      - scraper-service
 
-  # Placeholder for frontend-next
-  # Placeholder for frontend-admin
-  
-  # User Service (NestJS + PostgreSQL)
-  # postgres:
-  #   image: postgres:15
-  #   ...
+  scraper-service:
+    build: 
+      context: ./service-scraper
+      dockerfile: Dockerfile
+    environment:
+      - MONGO_URI=mongodb://job-mongo:27017
+    networks:
+      - microservices-net
+    depends_on:
+      - job-mongo
 
-  # Scraper Service (Go + MongoDB)
-  # mongodb:
-  #   image: mongo:6
-  #   ...
-
-  # Resume Service (FastAPI)
-  
-  # Notification Service (Express)
+  job-mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017" # Exposed only for local debugging/compass
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - microservices-net
 
 networks:
   microservices-net:
     driver: bridge
+
+volumes:
+  mongo_data:

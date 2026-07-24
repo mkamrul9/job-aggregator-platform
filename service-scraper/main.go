@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 
 func main() {
 	// Initialize shared DB pool (assuming running via local/Docker URL)
-	mongoURI := "mongodb://localhost:27107" // Generic testing port based on instructions
+	mongoURI := os.Getenv("MONGO_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27107" // Generic testing port based on instructions
+	}
 	dbClient := InitMongoClient(mongoURI)
 	
 	// 1. Initialize Playwright
