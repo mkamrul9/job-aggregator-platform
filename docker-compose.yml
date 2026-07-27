@@ -33,9 +33,23 @@ services:
     networks:
       - microservices-net
 
+  user-postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: job_aggregator_users
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
 networks:
   microservices-net:
     driver: bridge
 
 volumes:
   mongo_data:
+  postgres_data:
