@@ -20,6 +20,11 @@ func main() {
 	}
 	dbClient := InitMongoClient(mongoURI)
 	
+	err := playwright.Install()
+	if err != nil {
+		log.Fatalf("could not install playwright driver: %v", err)
+	}
+
 	// 1. Initialize Playwright
 	pw, err := playwright.Run()
 	if err != nil {

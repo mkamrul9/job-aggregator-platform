@@ -1,6 +1,6 @@
 module github.com/mkamrul9/job-aggregator-platform/service-scraper
 
-go 1.25.2
+go 1.22.0
 
 require (
 	github.com/mxschmitt/playwright-go v0.6100.0
