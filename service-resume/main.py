@@ -1,35 +1,51 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from PyPDF2 import PdfReader
+import spacy
+from spacy.matcher import PhraseMatcher
 import io
 
-app = FastAPI(title="Resume Parsing Service")
+app = FastAPI(title="Resume Parsing & AI Service")
+
+# 1. Load the NLP Model and initialize the Matcher
+nlp = spacy.load("en_core_web_sm")
+matcher = PhraseMatcher(nlp.vocab, attr="LOWER") # LOWER makes it case-insensitive
+
+# A sample database of skills to look for. 
+# In a real app, this might be fetched from your PostgreSQL database.
+TECH_SKILLS = ["React", "Angular", "Vue", "Node.js", "NestJS", "Python", "FastAPI", "Go", "Golang", "Docker", "Kubernetes", "PostgreSQL", "MongoDB", "Kafka", "Microservices"]
+
+# Convert the skills into spaCy patterns
+patterns = [nlp.make_doc(skill) for skill in TECH_SKILLS]
+matcher.add("SKILLS", patterns)
 
 @app.post("/parse")
 async def parse_resume(file: UploadFile = File(...)):
-    # 1. Validate the file type
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     try:
-        # 2. Read the file into memory
+        # Extract text using PyPDF2 (Same as Phase 9)
         file_content = await file.read()
         pdf_stream = io.BytesIO(file_content)
-        
-        # 3. Extract text using PyPDF2
         reader = PdfReader(pdf_stream)
-        raw_text = ""
-        
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                raw_text += extracted + "\n"
+        raw_text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-        # 4. Return the naive raw text
+        # 2. Process the text through the NLP pipeline
+        doc = nlp(raw_text)
+        matches = matcher(doc)
+
+        # 3. Extract the matched skills and remove duplicates using a Set
+        extracted_skills = set()
+        for match_id, start, end in matches:
+            span = doc[start:end]
+            extracted_skills.add(span.text)
+
+        # Return a structured, useful JSON payload
         return {
             "filename": file.filename,
             "status": "success",
-            "raw_text": raw_text.strip()
+            "extracted_skills": list(extracted_skills)
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing NLP: {str(e)}")
