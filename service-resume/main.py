@@ -18,6 +18,15 @@ TECH_SKILLS = ["React", "Angular", "Vue", "Node.js", "NestJS", "Python", "FastAP
 patterns = [nlp.make_doc(skill) for skill in TECH_SKILLS]
 matcher.add("SKILLS", patterns)
 
+def extract_skills_from_text(text: str):
+    doc = nlp(text)
+    matches = matcher(doc)
+    extracted_skills = set()
+    for match_id, start, end in matches:
+        span = doc[start:end]
+        extracted_skills.add(span.text)
+    return list(extracted_skills)
+
 @app.post("/parse")
 async def parse_resume(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
@@ -31,20 +40,13 @@ async def parse_resume(file: UploadFile = File(...)):
         raw_text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
         # 2. Process the text through the NLP pipeline
-        doc = nlp(raw_text)
-        matches = matcher(doc)
-
-        # 3. Extract the matched skills and remove duplicates using a Set
-        extracted_skills = set()
-        for match_id, start, end in matches:
-            span = doc[start:end]
-            extracted_skills.add(span.text)
+        extracted_skills = extract_skills_from_text(raw_text)
 
         # Return a structured, useful JSON payload
         return {
             "filename": file.filename,
             "status": "success",
-            "extracted_skills": list(extracted_skills)
+            "extracted_skills": extracted_skills
         }
 
     except Exception as e:

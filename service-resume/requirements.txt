@@ -2,4 +2,6 @@ fastapi
 uvicorn
 python-multipart
 pypdf2
-spacy  
+spacy
+grpcio
+grpcio-tools  
