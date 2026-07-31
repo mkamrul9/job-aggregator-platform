@@ -46,6 +46,30 @@ services:
     networks:
       - microservices-net
 
+  user-service:
+    build:
+      context: ./service-user
+      dockerfile: Dockerfile
+    environment:
+      # Use the container name 'user-postgres' to connect internally
+      - DATABASE_URL=postgresql://admin:password123@user-postgres:5432/job_aggregator_users?schema=public
+      # Point the gRPC client to the Python container's internal network address
+      - RESUME_GRPC_URL=resume-service:50051 
+    ports:
+      - "3000:3000" # Optional: only expose if you want to bypass Nginx for debugging
+    networks:
+      - microservices-net
+    depends_on:
+      - user-postgres
+      - resume-service
+
+  resume-service:
+    build:
+      context: ./service-resume
+      dockerfile: Dockerfile
+    networks:
+      - microservices-net
+
 networks:
   microservices-net:
     driver: bridge

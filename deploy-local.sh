@@ -17,3 +17,8 @@ docker compose up -d
 
 echo "✅ Deployment successful. Checking status..."
 docker compose ps
+
+echo "Applying database migrations..."
+# Wait a few seconds to ensure Postgres is fully initialized
+sleep 5 
+docker compose exec user-service npx prisma db push
