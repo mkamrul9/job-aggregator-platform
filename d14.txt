@@ -1,7 +1,0 @@
-Phase 14 completed.
-- Installed kafka-go.
-- Decoupled scraper from MongoDB.
-- Created kafka.go publisher.
-- Refactored main.go to send scraped jobs to Kafka jobs.new topic.
-- Removed db.go and BSON dependencies.
-- Updated docker-compose.yml for scraper-service.
