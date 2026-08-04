@@ -112,6 +112,17 @@ services:
       - kafka
       - job-mongo
 
+  notification-service:
+    build:
+      context: ./service-notification
+      dockerfile: Dockerfile
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    networks:
+      - microservices-net
+    depends_on:
+      - kafka
+
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
     environment:
