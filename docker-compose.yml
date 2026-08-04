@@ -99,6 +99,19 @@ services:
     networks:
       - microservices-net
 
+  ingestion-service:
+    build:
+      context: ./service-ingestion
+      dockerfile: Dockerfile
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - MONGO_URI=mongodb://job-mongo:27017
+    networks:
+      - microservices-net
+    depends_on:
+      - kafka
+      - job-mongo
+
 networks:
   microservices-net:
     driver: bridge
