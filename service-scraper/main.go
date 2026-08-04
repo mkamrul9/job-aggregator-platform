@@ -4,21 +4,20 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
-	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/segmentio/kafka-go"
 )
 
 func main() {
-	// Initialize shared DB pool (assuming running via local/Docker URL)
-	mongoURI := os.Getenv("MONGO_URI")
-	if mongoURI == "" {
-		mongoURI = "mongodb://localhost:27107" // Generic testing port based on instructions
-	}
-	dbClient := InitMongoClient(mongoURI)
+	// Initialize Kafka Writer instead of MongoDB
+	kafkaBroker := "kafka:9092" // This matches our Docker Compose service name
+	kafkaTopic := "jobs.new"
+	
+	writer := InitKafkaWriter(kafkaBroker, kafkaTopic)
+	defer writer.Close()
 	
 	err := playwright.Install()
 	if err != nil {
@@ -57,13 +56,11 @@ func main() {
 
 	// 3. Launch a Goroutine for each URL
 	for _, url := range jobURLs {
-		wg.Add(1) // Increment the wait group counter
+		wg.Add(1)
 
-		// The 'go' keyword spins up a concurrent worker
 		go func(targetURL string) {
-			defer wg.Done() // Decrement counter when this function finishes
-
-			scrapeJobPage(browser, targetURL, dbClient, jobDataChannel)
+			defer wg.Done()
+			scrapeJobPage(browser, targetURL, writer, jobDataChannel)
 		}(url)
 	}
 
@@ -73,14 +70,14 @@ func main() {
 
 	// 5. Read the results from the channel
 	for job := range jobDataChannel {
-		fmt.Printf("Successfully Scraped & Saved -> %s at %s\n", job.Title, job.Company)
+		fmt.Printf("Successfully Scraped & Sent to Kafka -> %s at %s\n", job.Title, job.Company)
 	}
 
 	fmt.Printf("Scraping completed in %v\n", time.Since(startTime))
 }
 
 // scrapeJobPage handles the actual browser automation for a single page
-func scrapeJobPage(browser playwright.Browser, url string, dbClient *mongo.Client, results chan<- DBJob) {
+func scrapeJobPage(browser playwright.Browser, url string, writer *kafka.Writer, results chan<- DBJob) {
 	// Open a new isolated browser context (like an incognito tab)
 	context, _ := browser.NewContext(playwright.BrowserNewContextOptions{
 		UserAgent: playwright.String("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
@@ -89,7 +86,6 @@ func scrapeJobPage(browser playwright.Browser, url string, dbClient *mongo.Clien
 
 	page, _ := context.NewPage()
 
-	// Navigate to the URL and wait for the network to be mostly idle
 	if _, err := page.Goto(url, playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateNetworkidle,
 	}); err != nil {
@@ -97,7 +93,6 @@ func scrapeJobPage(browser playwright.Browser, url string, dbClient *mongo.Clien
 		return
 	}
 
-	// Note: We use try/catch logic here in a real scenario because selectors fail if blocked
 	title, _ := page.Locator("h1.top-card-layout__title").InnerText()
 	company, _ := page.Locator("a.topcard__org-name-link").InnerText()
 	description, _ := page.Locator("div.show-more-less-html__markup").InnerText()
@@ -107,12 +102,13 @@ func scrapeJobPage(browser playwright.Browser, url string, dbClient *mongo.Clien
 		Company:        company,
 		URL:            url,
 		RawDescription: description,
+		ScrapedAt:      time.Now(),
 	}
 
-	// Save to DB via shared client
-	err := InsertJob(dbClient, "job_platform", "jobs", job)
+	// Publish to Kafka instead of saving to DB
+	err := PublishJobEvent(writer, job)
 	if err != nil {
-		log.Printf("DB Error inserting %s: %v", url, err)
+		log.Printf("Error publishing %s: %v", url, err)
 	}
 
 	// Send the data back through the channel

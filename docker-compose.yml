@@ -18,11 +18,12 @@ services:
       context: ./service-scraper
       dockerfile: Dockerfile
     environment:
-      - MONGO_URI=mongodb://job-mongo:27017
+      # Pass the Kafka URL instead of Mongo URI
+      - KAFKA_BROKER=kafka:9092
     networks:
       - microservices-net
     depends_on:
-      - job-mongo
+      - kafka # Now depends on Kafka, not job-mongo
 
   job-mongo:
     image: mongo:latest
@@ -69,6 +70,8 @@ services:
     build:
       context: ./service-resume
       dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     networks:
       - microservices-net
 
