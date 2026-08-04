@@ -1,0 +1,13 @@
+Intern ID: ZYNVEX-CERT-0369
+
+Today's Work:
+
+Phase 15 completed.
+- Created service-ingestion directory for Node.js worker.
+- Installed kafkajs and mongodb packages.
+- Added index.js to act as a Kafka consumer subscribing to jobs.new.
+- Added logic to upsert job events into MongoDB job_platform database.
+- Created Dockerfile for the ingestion worker.
+- Updated docker-compose.yml to run ingestion-service alongside Kafka and MongoDB.
+
+GitHub Commit Link: https://github.com/mkamrul9/job-aggregator-platform/commit/e8990f464abe0d5f1e7d18c9b75de30d71f5e772
