@@ -1,0 +1,12 @@
+Intern ID: ZYNVEX-CERT-0369
+
+Today's Work:
+
+Developed the interactive `ResumeUpload` component within the Next.js App Router, enabling candidates to seamlessly submit PDF resumes directly from the browser.
+Secured the multipart form data transmission by programmatically appending the Firebase JWT to the HTTP Authorization header, ensuring zero-trust candidate authentication.
+Architected a streamlined API proxy route, configuring the frontend to post file payloads directly to the Nginx API Gateway, which inherently load balances requests to the NestJS User Service.
+Verified the end-to-end data lifecycle: the PDF is successfully ingested by Next.js, authorized via Firebase, proxied by Nginx, parsed by Python FastAPI (spaCy NLP) via gRPC, and the extracted skill array is dynamically rendered back in the React DOM.
+Integrated the `AuthComponent` and `ResumeUpload` logic seamlessly into the unified Next.js `page.tsx` landing view, providing a comprehensive candidate onboarding flow.
+Authored Phase 20 documentation (`phase20.md`) comprehensively detailing the multipart file traversal across the monorepo's microservice infrastructure.
+
+GitHub Commit Link: [Insert Commit Hash Here]
