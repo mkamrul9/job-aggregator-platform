@@ -1,1 +1,33 @@
-<p>dashboard works!</p>
+<div class="max-w-7xl mx-auto">
+  <div class="flex justify-between items-center mb-8">
+    <h1 class="text-3xl font-bold text-gray-900">System Overview</h1>
+    <div class="flex items-center space-x-2">
+      <span class="relative flex h-3 w-3">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+      </span>
+      <span class="text-sm font-medium text-green-700">Live Scraper Active</span>
+    </div>
+  </div>
+
+  <!-- Real-Time Feed Panel -->
+  <div class="bg-white shadow rounded-lg p-6">
+    <h2 class="text-xl font-semibold text-gray-800 border-b pb-4 mb-4">Latest Ingested Jobs</h2>
+    
+    <div class="overflow-y-auto max-h-[600px] pr-2">
+      <div *ngFor="let job of (liveJobs$ | async)" class="mb-4 p-4 border-l-4 border-blue-500 bg-gray-50 rounded-r-md animate-fade-in-down">
+        <div class="flex justify-between">
+          <h3 class="font-bold text-lg text-blue-800">{{ job.Title }}</h3>
+          <span class="text-xs text-gray-500 font-mono">{{ job.ScrapedAt }}</span>
+        </div>
+        <p class="text-gray-700 mt-1">{{ job.Company }}</p>
+        <a [href]="job.URL" target="_blank" class="text-sm text-blue-500 hover:underline mt-2 inline-block">View Source &rarr;</a>
+      </div>
+
+      <!-- Empty State -->
+      <div *ngIf="(liveJobs$ | async)?.length === 0" class="text-center text-gray-500 py-12">
+        Waiting for crawler to broadcast events...
+      </div>
+    </div>
+  </div>
+</div>

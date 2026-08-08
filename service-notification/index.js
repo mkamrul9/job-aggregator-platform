@@ -7,8 +7,26 @@ const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = 'jobs.new';
 
 const app = express();
+const http = require('http'); // Required for Socket.io
+const { Server } = require('socket.io');
+
 const port = 4000;
 
+const server = http.createServer(app);
+
+// Initialize Socket.io with CORS enabled for the Angular frontend
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:4200",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Listen for frontend connections
+io.on('connection', (socket) => {
+  console.log(`🟢 Admin Client Connected: ${socket.id}`);
+  socket.on('disconnect', () => console.log(`🔴 Admin Client Disconnected: ${socket.id}`));
+});
 // 1. Configure the Fake SMTP Server (Ethereal Email)
 // In production, you would swap this with AWS SES or SendGrid credentials
 const transporter = nodemailer.createTransport({
@@ -34,6 +52,8 @@ async function startKafkaConsumer() {
     eachMessage: async ({ message }) => {
       const jobData = JSON.parse(message.value.toString());
       
+      // 1. Broadcast the new job to all connected Angular clients instantly
+      io.emit('live-job-feed', jobData);
       // Simulated matching logic: 
       // e.g., We queried the DB and found 2 users matching this job's keywords
       const matchedUsers = [
@@ -63,7 +83,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'Notification Service is running.' });
 });
 
-app.listen(port, async () => {
+server.listen(port, async () => {
   console.log(`🚀 Notification Express server running on port ${port}`);
   await startKafkaConsumer().catch(console.error);
 });
