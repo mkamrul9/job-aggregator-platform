@@ -139,6 +139,28 @@ services:
     networks:
       - microservices-net
 
+  frontend-next:
+    build:
+      context: ./frontend-next
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    networks:
+      - microservices-net
+    depends_on:
+      - api-gateway
+
+  frontend-admin:
+    build:
+      context: ./frontend-admin
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80" # Nginx inside the container runs on 80
+    networks:
+      - microservices-net
+    depends_on:
+      - notification-service
+
 networks:
   microservices-net:
     driver: bridge
