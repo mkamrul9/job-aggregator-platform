@@ -8,16 +8,17 @@ import (
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
-	"github.com/segmentio/kafka-go"
 )
 
 func main() {
-	// Initialize Kafka Writer instead of MongoDB
 	kafkaBroker := "kafka:9092" // This matches our Docker Compose service name
 	kafkaTopic := "jobs.new"
 	
 	writer := InitKafkaWriter(kafkaBroker, kafkaTopic)
 	defer writer.Close()
+
+	// In production, we inject the Kafka Implementation
+	var publisher EventPublisher = &KafkaPublisher{writer: writer}
 	
 	err := playwright.Install()
 	if err != nil {
@@ -60,7 +61,7 @@ func main() {
 
 		go func(targetURL string) {
 			defer wg.Done()
-			scrapeJobPage(browser, targetURL, writer, jobDataChannel)
+			scrapeJobPage(browser, targetURL, publisher, jobDataChannel)
 		}(url)
 	}
 
@@ -77,7 +78,7 @@ func main() {
 }
 
 // scrapeJobPage handles the actual browser automation for a single page
-func scrapeJobPage(browser playwright.Browser, url string, writer *kafka.Writer, results chan<- DBJob) {
+func scrapeJobPage(browser playwright.Browser, url string, publisher EventPublisher, results chan<- DBJob) {
 	// Open a new isolated browser context (like an incognito tab)
 	context, _ := browser.NewContext(playwright.BrowserNewContextOptions{
 		UserAgent: playwright.String("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
@@ -105,8 +106,8 @@ func scrapeJobPage(browser playwright.Browser, url string, writer *kafka.Writer,
 		ScrapedAt:      time.Now(),
 	}
 
-	// Publish to Kafka instead of saving to DB
-	err := PublishJobEvent(writer, job)
+	// Publish to the event stream
+	err := publisher.Publish(job)
 	if err != nil {
 		log.Printf("Error publishing %s: %v", url, err)
 	}
