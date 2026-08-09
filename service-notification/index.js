@@ -2,6 +2,7 @@
 const express = require('express');
 const { Kafka } = require('kafkajs');
 const nodemailer = require('nodemailer');
+const promClient = require('prom-client');
 
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = 'jobs.new';
@@ -13,6 +14,16 @@ const { Server } = require('socket.io');
 const port = 4000;
 
 const server = http.createServer(app);
+
+// 1. Enable default system metrics collection (RAM, CPU, Event Loop Lag)
+const collectDefaultMetrics = promClient.collectDefaultMetrics;
+collectDefaultMetrics({ register: promClient.register });
+
+// 2. Create a custom metric to track how many emails we send
+const emailsSentCounter = new promClient.Counter({
+  name: 'job_notifications_sent_total',
+  help: 'Total number of job match emails sent to users'
+});
 
 // Initialize Socket.io with CORS enabled for the Angular frontend
 const io = new Server(server, {
@@ -69,6 +80,7 @@ async function startKafkaConsumer() {
             text: `Hello ${user.name},\n\nWe found a new job matching your skills!\n\nTitle: ${jobData.Title}\nCompany: ${jobData.Company}\nLink: ${jobData.URL}\n\nGood luck!`
           });
           
+          emailsSentCounter.inc(); // Increment the metric every time an email sends
           console.log(`📧 Email sent to ${user.email}. Preview: ${nodemailer.getTestMessageUrl(info)}`);
         } catch (error) {
           console.error(`❌ Failed to send email to ${user.email}:`, error);
@@ -81,6 +93,12 @@ async function startKafkaConsumer() {
 // 3. Simple Health Check Endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'Notification Service is running.' });
+});
+
+// 4. Expose the /metrics endpoint for Prometheus to scrape
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(await promClient.register.metrics());
 });
 
 server.listen(port, async () => {

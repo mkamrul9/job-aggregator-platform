@@ -57,7 +57,7 @@ services:
       # Point the gRPC client to the Python container's internal network address
       - RESUME_GRPC_URL=resume-service:50051 
     ports:
-      - "3000:3000" # Optional: only expose if you want to bypass Nginx for debugging
+      - "3002:3000" # Optional: only expose if you want to bypass Nginx for debugging
     volumes:
       - ./shared-protos:/shared-protos
     networks:
@@ -144,7 +144,7 @@ services:
       context: ./frontend-next
       dockerfile: Dockerfile
     ports:
-      - "3001:3000"
+      - "3003:3000"
     networks:
       - microservices-net
     depends_on:
@@ -161,6 +161,29 @@ services:
     depends_on:
       - notification-service
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./config-prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - microservices-net
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin # Default password for local dev
+    ports:
+      - "3004:3000" # Expose Grafana on 3004 (since 3002 is already used by user-service)
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - microservices-net
+    depends_on:
+      - prometheus
+
 networks:
   microservices-net:
     driver: bridge
@@ -170,3 +193,5 @@ volumes:
   postgres_data:
   kafka_data:
   elastic_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,12 @@
+Intern ID: ZYNVEX-CERT-0369
+
+Today's Work:
+
+Implemented system observability across the microservice ecosystem, laying the groundwork for production-grade reliability.
+Instrumented `service-notification` using `prom-client` to expose an HTTP `/metrics` endpoint. In addition to capturing Node.js default telemetry (memory heap, event loop lag, CPU usage), I defined a custom `Counter` metric (`job_notifications_sent_total`) to explicitly track business logic throughput (successful emails dispatched).
+Provisioned `config-prometheus/prometheus.yml`, configuring a 10s scraping interval targeting the notification service.
+Updated the core `docker-compose.yml` to incorporate the `prometheus` and `grafana` containers. Connected them to the shared `microservices-net` network and instantiated persistent volumes (`prometheus_data`, `grafana_data`) for robust metric and dashboard retention. Avoided port collisions by explicitly mapping Grafana to `3004:3000`.
+Successfully ran `deploy-local.sh` and resolved a Go versioning issue in the scraper Dockerfile (upgrading to `golang:1.23-bookworm` to satisfy `go.mod` constraints). The stack spun up flawlessly.
+Authored architectural documentation in `docs/phase28.md`.
+
+GitHub Commit Link: da3a09fb9ba1dc19b06fc15d18b09370e8f0614e

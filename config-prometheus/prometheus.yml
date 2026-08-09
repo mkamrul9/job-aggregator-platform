@@ -1,0 +1,8 @@
+# config-prometheus/prometheus.yml
+global:
+  scrape_interval: 10s # How often to poll the services
+
+scrape_configs:
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:4000']
