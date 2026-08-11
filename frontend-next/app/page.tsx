@@ -4,24 +4,66 @@ import JobSearch from '../components/JobSearch';
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-gray-50 py-12">
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-extrabold tracking-tight text-gray-900">Job Aggregator Portal</h1>
-        <p className="mt-4 text-lg text-gray-600">Find roles that match your actual skills.</p>
-      </div>
-      
-      <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-8 px-4">
-        {/* Left Column: User Management */}
-        <div className="space-y-8">
-          <AuthComponent />
-          <ResumeUpload />
+    <main>
+
+      {/* ─── Hero Section ─────────────────────────────── */}
+      <section className="hero-section">
+        <div className="seekers-container">
+          <div className="hero-badge fade-up">
+            <span>✦</span> AI-Powered Job Discovery
+          </div>
+
+          <h1 className="hero-title fade-up delay-1">
+            Find your next<br />
+            <span className="accent">opportunity.</span>
+          </h1>
+
+          <p className="hero-subtitle fade-up delay-2">
+            Seekers aggregates millions of real-time job listings,
+            matches them against your skills, and surfaces only what matters.
+          </p>
+
+          <div className="hero-stats fade-up delay-3">
+            <div className="hero-stat">
+              <div className="hero-stat-num">2.4M+</div>
+              <div className="hero-stat-label">Live Roles</div>
+            </div>
+            <div className="hero-stat">
+              <div className="hero-stat-num">180+</div>
+              <div className="hero-stat-label">Sources</div>
+            </div>
+            <div className="hero-stat">
+              <div className="hero-stat-num">Real-time</div>
+              <div className="hero-stat-label">Updates</div>
+            </div>
+          </div>
         </div>
-        
-        {/* Right Column: The Core Search Feature */}
-        <div className="bg-white rounded-xl shadow-sm border p-4">
-          <JobSearch />
+      </section>
+
+      {/* ─── Main Grid ────────────────────────────────── */}
+      <section style={{ paddingBottom: '5rem' }}>
+        <div className="seekers-container">
+          <div className="seekers-grid">
+
+            {/* Left Column */}
+            <div className="flex-col">
+              <div className="card fade-up delay-1">
+                <AuthComponent />
+              </div>
+              <div className="card fade-up delay-2">
+                <ResumeUpload />
+              </div>
+            </div>
+
+            {/* Right Column */}
+            <div className="card fade-up delay-1">
+              <JobSearch />
+            </div>
+
+          </div>
         </div>
-      </div>
+      </section>
+
     </main>
   );
 }

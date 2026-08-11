@@ -7,62 +7,123 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'fire
 export default function AuthComponent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const syncUserWithBackend = async (token: string) => {
     try {
-      // Notice we are calling the Nginx API Gateway endpoint on port 80!
-      // Nginx will forward this to the NestJS User Service.
       const response = await fetch('http://localhost/api/users/sync', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
-      
       if (response.ok) {
-        console.log('User successfully synced with PostgreSQL!');
+        console.log('User synced with PostgreSQL');
       }
-    } catch (error) {
-      console.error('Failed to sync user', error);
+    } catch (err) {
+      console.error('Failed to sync user', err);
     }
   };
 
   const handleAuth = async (isSignUp: boolean) => {
+    setError('');
+    setSuccess('');
+    if (!email || !password) {
+      setError('Please fill in all fields.');
+      return;
+    }
     try {
-      let userCredential;
+      let credential;
       if (isSignUp) {
-        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        credential = await createUserWithEmailAndPassword(auth, email, password);
       } else {
-        userCredential = await signInWithEmailAndPassword(auth, email, password);
+        credential = await signInWithEmailAndPassword(auth, email, password);
       }
-      
-      // Get the JWT to send to NestJS
-      const token = await userCredential.user.getIdToken();
+      const token = await credential.user.getIdToken();
       await syncUserWithBackend(token);
-      
-    } catch (error) {
-      console.error('Authentication Error:', error);
+      setSuccess(isSignUp ? 'Account created! Welcome to Seekers.' : `Welcome back!`);
+    } catch (err: any) {
+      setError(err.message || 'Something went wrong.');
     }
   };
 
   return (
-    <div className="flex flex-col gap-4 p-8 max-w-md mx-auto bg-white rounded-xl shadow-md">
-      <h2 className="text-2xl font-bold text-gray-800">Candidate Login</h2>
-      <input 
-        type="email" 
-        placeholder="Email" 
-        className="border p-2 rounded text-black"
-        onChange={(e) => setEmail(e.target.value)} 
-      />
-      <input 
-        type="password" 
-        placeholder="Password" 
-        className="border p-2 rounded text-black"
-        onChange={(e) => setPassword(e.target.value)} 
-      />
-      <button onClick={() => handleAuth(false)} className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Login</button>
-      <button onClick={() => handleAuth(true)} className="bg-green-600 text-white p-2 rounded hover:bg-green-700">Sign Up</button>
+    <div>
+      <div className="card-title">
+        <div className="card-icon">👤</div>
+        Sign in to Seekers
+      </div>
+
+      <div className="flex-col" style={{ gap: '0.75rem' }}>
+        <div>
+          <label className="form-label">Email address</label>
+          <input
+            type="email"
+            placeholder="you@example.com"
+            className="s-input"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            id="auth-email-input"
+          />
+        </div>
+
+        <div>
+          <label className="form-label">Password</label>
+          <input
+            type="password"
+            placeholder="••••••••"
+            className="s-input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            id="auth-password-input"
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            padding: '0.65rem 0.875rem',
+            background: 'rgba(248,113,113,0.1)',
+            border: '1px solid rgba(248,113,113,0.25)',
+            borderRadius: 'var(--r-md)',
+            color: 'var(--danger)',
+            fontSize: '0.8125rem',
+          }}>
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div style={{
+            padding: '0.65rem 0.875rem',
+            background: 'var(--success-dim)',
+            border: '1px solid rgba(34,197,94,0.25)',
+            borderRadius: 'var(--r-md)',
+            color: 'var(--success)',
+            fontSize: '0.8125rem',
+          }}>
+            {success}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.25rem' }}>
+          <button
+            onClick={() => handleAuth(false)}
+            className="btn-amber"
+            id="login-btn"
+          >
+            Login
+          </button>
+          <button
+            onClick={() => handleAuth(true)}
+            className="btn-ghost"
+            id="signup-btn"
+          >
+            Create Account
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,26 +1,38 @@
-# Phase 24: Angular Admin Dashboard (Real-time WebSockets)
+# Phase 25: Frontend Dockerization
 
 ## Overview
-To elevate the administrative dashboard into a real-time command center, we integrated WebSocket communication. Instead of polling or requiring manual page refreshes, the system now maintains a persistent connection with the backend. When the Golang scraper ingests a new job, that event is passed through the Kafka topic `jobs.new` directly to the Node.js notification service, which immediately broadcasts it to all connected Angular clients.
+To conclude Module 4 and ensure environmental parity across the entire ecosystem, we containerized the Next.js Candidate Portal and the Angular Admin Dashboard. Both applications were integrated into the `microservices-net` Docker network, allowing them to boot synchronously with the backend infrastructure.
 
 ## Implementation Details
 
-1. **Backend Integration (`service-notification`)**:
-   - Upgraded the Express application to bind a native HTTP server and instantiate a `socket.io` Server.
-   - Configured CORS policies strictly allowing connections from the Angular client (`http://localhost:4200`).
-   - Tapped into the existing `startKafkaConsumer` logic: upon receiving and parsing a message from the `jobs.new` topic, the server immediately triggers `io.emit('live-job-feed', jobData)`.
+### Next.js (`frontend-next`) Containerization
+- **Standalone Output**: We updated `next.config.ts` with `output: 'standalone'`. This leverages Next.js's built-in build tracing to strip away unused dependencies, drastically reducing the final image size.
+- **Multi-stage Dockerfile**:
+  - **Stage 1 (Builder)**: Uses `node:20-alpine` to install dependencies via `npm ci` and compile the React application.
+  - **Stage 2 (Runner)**: A clean `node:20-alpine` environment. Only the `.next/standalone` output, `.next/static` files, and `public` assets are copied over. The server exposes port 3000 internally.
 
-2. **Frontend WebSocket Service (`frontend-admin`)**:
-   - Installed `socket.io-client` in the Angular repository.
-   - Scaffolded `LiveFeedService`, a core service injected globally.
-   - Established a connection to `ws://localhost:4000` via the socket client.
-   - Initialized an RxJS `BehaviorSubject` to maintain an internal state (an array) of the latest 50 scraped jobs. When a `'live-job-feed'` event is detected, the new job is prepended, timestamped (`ScrapedAt`), and the array is truncated to prevent memory bloat.
+### Angular (`frontend-admin`) Containerization
+- **Static Nginx Serving**: Because Angular compiles to pure HTML/CSS/JS (a Single Page Application), it does not require Node.js at runtime.
+- **Multi-stage Dockerfile**:
+  - **Stage 1 (Builder)**: Uses `node:20-alpine` to execute `ng build --configuration=production`, generating optimized static assets in `/dist/frontend-admin/browser`.
+  - **Stage 2 (Runner)**: Uses `nginx:alpine` to serve those static files.
+- **Client-Side Routing**: We created `nginx.conf` containing `try_files $uri $uri/ /index.html;`. This instructs Nginx to redirect 404s back to `index.html`, allowing Angular's router to take control of deep links instead of failing.
 
-3. **Dashboard Component Bindings**:
-   - Injected `LiveFeedService` into `DashboardComponent`.
-   - Exposed the `BehaviorSubject` as a continuous Observable stream (`liveJobs$`).
-   - Refactored the `dashboard.component.html` template to utilize the Angular `async` pipe, allowing the UI to reactively render the `*ngFor` loop as new jobs arrive without manual subscription management.
-   - Added Tailwind CSS `@keyframes` logic (`animate-fade-in-down`) for a polished visual cue when new data streams in.
+### Docker Compose Integration
+- Added both services to the root `docker-compose.yml`.
+- `frontend-next` is mapped to host port `3001` (to prevent conflict with NestJS on 3000) and depends on `api-gateway`.
+- `frontend-admin` is mapped to host port `4200` (bridging the internal Nginx port 80) and depends on `notification-service`.
 
-## Impact
-The system now demonstrates a complete end-to-end event-driven architecture. A job scraped by a headless browser in a Golang container will appear on the Angular UI within milliseconds of insertion, completely autonomously. This is the hallmark of modern, high-throughput enterprise systems.
+## Ecosystem Architecture Complete
+With this final step, executing `./deploy-local.sh` now orchestrates 9 discrete containers:
+1. **API Gateway** (Nginx)
+2. **Scraper** (Golang)
+3. **Event Bus** (Kafka KRaft)
+4. **Data Ingestion** (Node.js)
+5. **NoSQL Store** (MongoDB)
+6. **User/Match DB** (PostgreSQL)
+7. **AI Parsing** (Python FastAPI)
+8. **Real-time Notifications** (Express + WebSockets)
+9. **Search Engine** (Elasticsearch)
+10. **Candidate Portal** (Next.js)
+11. **Admin Dashboard** (Angular)

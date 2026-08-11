@@ -10,4 +10,4 @@ Authored `KafkaPublisher` and `ConsolePublisher` structs that implement the `Eve
 Executed successful compilation checks across both codebases (`npm run build` and `go build`).
 Documented the architectural rationale and benefits of these decoupling strategies in `docs/phase25-refactoring.md`.
 
-GitHub Commit Link: [Insert Commit Hash Here]
+GitHub Commit Link: 2fc639db21ef2b26d3fcaf05281d527574e8ab4c

@@ -1,30 +1,26 @@
-# Phase 23: Angular Admin Dashboard (Setup)
+# Phase 24: Angular Admin Dashboard (Real-time WebSockets)
 
 ## Overview
-To provide a comprehensive, enterprise-grade architecture for the Job Aggregator Platform, we initiated the scaffolding for an internal Administrative Dashboard using Angular. While the public candidate-facing portal utilizes Next.js for rapid SEO and SSR, Angular provides the rigid, strictly-typed structure (`NgModule` architecture, Dependency Injection, RxJS) required for dense data management tools.
+To elevate the administrative dashboard into a real-time command center, we integrated WebSocket communication. Instead of polling or requiring manual page refreshes, the system now maintains a persistent connection with the backend. When the Golang scraper ingests a new job, that event is passed through the Kafka topic `jobs.new` directly to the Node.js notification service, which immediately broadcasts it to all connected Angular clients.
 
 ## Implementation Details
 
-1. **Angular Initialization (`frontend-admin`):**
-   - We used the Angular CLI (`@angular/cli`) to generate a new application within the `frontend-admin` directory.
-   - Crucially, we bypassed the modern v17+ "Standalone Components" default by explicitly enforcing `--standalone=false` to ensure the project relies on the classic, highly-structured `NgModule` architecture (e.g., `app.module.ts`, `app-routing.module.ts`), aligning precisely with the provided enterprise specifications.
-   - Configured SCSS as the default preprocessor.
+1. **Backend Integration (`service-notification`)**:
+   - Upgraded the Express application to bind a native HTTP server and instantiate a `socket.io` Server.
+   - Configured CORS policies strictly allowing connections from the Angular client (`http://localhost:4200`).
+   - Tapped into the existing `startKafkaConsumer` logic: upon receiving and parsing a message from the `jobs.new` topic, the server immediately triggers `io.emit('live-job-feed', jobData)`.
 
-2. **Tailwind CSS Integration:**
-   - Installed `tailwindcss`, `postcss`, and `autoprefixer` as development dependencies.
-   - Initialized `tailwind.config.js` and explicitly configured the `content` array (`"./src/**/*.{html,ts}"`) to ensure Tailwind properly scans and purges classes across Angular's component architecture.
-   - Injected the core Tailwind directives into `src/styles.scss`.
+2. **Frontend WebSocket Service (`frontend-admin`)**:
+   - Installed `socket.io-client` in the Angular repository.
+   - Scaffolded `LiveFeedService`, a core service injected globally.
+   - Established a connection to `ws://localhost:4000` via the socket client.
+   - Initialized an RxJS `BehaviorSubject` to maintain an internal state (an array) of the latest 50 scraped jobs. When a `'live-job-feed'` event is detected, the new job is prepended, timestamped (`ScrapedAt`), and the array is truncated to prevent memory bloat.
 
-3. **Core Component Scaffolding:**
-   - Generated the foundational UI components utilizing Angular CLI:
-     - `layout/sidebar` (Navigation & Controls)
-     - `layout/header` (Global Context & User Status)
-     - `features/dashboard` (Main Data View)
-
-4. **Structural Layout Injection:**
-   - Eradicated the boilerplate HTML in `app.component.html`.
-   - Engineered a responsive Flexbox structural layout that statically positions the `<app-sidebar>` and `<app-header>`, while injecting a `<router-outlet>` into a scrollable, isolated `main` content block.
-   - Updated `app-routing.module.ts` to map the root path (`/`) directly to the newly scaffolded `DashboardComponent`.
+3. **Dashboard Component Bindings**:
+   - Injected `LiveFeedService` into `DashboardComponent`.
+   - Exposed the `BehaviorSubject` as a continuous Observable stream (`liveJobs$`).
+   - Refactored the `dashboard.component.html` template to utilize the Angular `async` pipe, allowing the UI to reactively render the `*ngFor` loop as new jobs arrive without manual subscription management.
+   - Added Tailwind CSS `@keyframes` logic (`animate-fade-in-down`) for a polished visual cue when new data streams in.
 
 ## Impact
-The `frontend-admin` environment is now fully established. It possesses a rock-solid, strictly typed Angular framework combined with the rapid styling capabilities of Tailwind CSS. It is structurally prepared to consume the microservice ecosystem (via RxJS and HTTPClient) in subsequent phases.
+The system now demonstrates a complete end-to-end event-driven architecture. A job scraped by a headless browser in a Golang container will appear on the Angular UI within milliseconds of insertion, completely autonomously. This is the hallmark of modern, high-throughput enterprise systems.

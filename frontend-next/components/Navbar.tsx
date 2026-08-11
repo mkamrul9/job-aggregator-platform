@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { Menu, X, Bug } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Navbar() {
@@ -9,115 +8,114 @@ export default function Navbar() {
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
 
-  const toggleMenu = () => setIsOpen(!isOpen);
-
   const handleFeedbackSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Feedback submitted:', feedback);
-    // In the future, this could hit a backend endpoint
     setIsFeedbackOpen(false);
     setFeedback('');
-    setIsOpen(false); // close hamburger menu if open
+    setIsOpen(false);
   };
 
   return (
     <>
-      <nav className="bg-white shadow-sm border-b sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/" className="flex-shrink-0 flex items-center">
-                <span className="font-bold text-xl text-indigo-600">JobAggregator</span>
-              </Link>
-            </div>
+      <nav className="nav-root">
+        <div className="nav-inner">
 
-            {/* Desktop Menu */}
-            <div className="hidden sm:ml-6 sm:flex sm:items-center space-x-4">
-              <button 
-                onClick={() => setIsFeedbackOpen(true)}
-                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-indigo-600 hover:bg-gray-50 transition-colors"
-              >
-                <Bug size={18} />
-                Report Bug
-              </button>
+          {/* Brand */}
+          <Link href="/" className="nav-brand">
+            <div className="nav-logo-icon">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <circle cx="7.5" cy="7.5" r="5" stroke="#0c0e12" strokeWidth="2.2"/>
+                <path d="M11.5 11.5L16 16" stroke="#0c0e12" strokeWidth="2.2" strokeLinecap="round"/>
+              </svg>
             </div>
+            <span className="nav-logo-text">seek<span>ers</span></span>
+          </Link>
 
-            {/* Mobile hamburger button */}
-            <div className="flex items-center sm:hidden">
-              <button
-                onClick={toggleMenu}
-                className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
-                aria-expanded="false"
-              >
-                <span className="sr-only">Open main menu</span>
-                {isOpen ? <X className="block h-6 w-6" aria-hidden="true" /> : <Menu className="block h-6 w-6" aria-hidden="true" />}
-              </button>
-            </div>
+          {/* Desktop Nav */}
+          <div className="nav-links" style={{ display: 'flex' }}>
+            <button
+              onClick={() => setIsFeedbackOpen(true)}
+              className="nav-btn"
+              id="report-bug-btn"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M7 4.5V7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="7" cy="9.5" r="0.75" fill="currentColor"/>
+              </svg>
+              Report Bug
+            </button>
+
+            {/* Mobile hamburger */}
+            <button
+              className="nav-btn"
+              style={{ display: 'none' }}
+              onClick={() => setIsOpen(!isOpen)}
+              id="mobile-menu-btn"
+            >
+              {isOpen ? '✕' : '☰'}
+            </button>
           </div>
         </div>
 
-        {/* Mobile Menu Panel */}
+        {/* Mobile dropdown */}
         {isOpen && (
-          <div className="sm:hidden border-t border-gray-200">
-            <div className="pt-2 pb-3 space-y-1">
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  setIsFeedbackOpen(true);
-                }}
-                className="flex w-full items-center gap-3 px-4 py-3 text-base font-medium text-gray-700 hover:text-indigo-600 hover:bg-gray-50"
-              >
-                <Bug size={20} />
-                Report a Bug / Feedback
-              </button>
-            </div>
+          <div style={{
+            borderTop: '1px solid var(--border)',
+            padding: '1rem 2rem',
+            background: 'var(--bg-elevated)',
+          }}>
+            <button
+              onClick={() => { setIsOpen(false); setIsFeedbackOpen(true); }}
+              className="nav-btn"
+              style={{ width: '100%', justifyContent: 'flex-start' }}
+            >
+              Report a Bug / Feedback
+            </button>
           </div>
         )}
       </nav>
 
       {/* Feedback Modal */}
       {isFeedbackOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overflow-x-hidden bg-black/50 p-4">
-          <div className="relative w-full max-w-md bg-white rounded-xl shadow-lg p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Bug className="text-indigo-600" /> 
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setIsFeedbackOpen(false)}>
+          <div className="modal-box fade-up">
+            <div className="modal-header">
+              <span className="modal-title">
+                <span style={{ color: 'var(--amber)' }}>⚑</span>
                 Report a Bug
-              </h3>
-              <button 
+              </span>
+              <button
+                className="modal-close"
                 onClick={() => setIsFeedbackOpen(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <X size={20} />
+                ✕
               </button>
             </div>
+
             <form onSubmit={handleFeedbackSubmit}>
-              <div className="mb-4">
-                <label htmlFor="feedback" className="block text-sm font-medium text-gray-700 mb-1">
-                  What went wrong?
-                </label>
-                <textarea
-                  id="feedback"
-                  rows={4}
-                  className="w-full border border-gray-300 rounded-md shadow-sm p-3 focus:ring-indigo-500 focus:border-indigo-500 text-black"
-                  placeholder="Describe the bug or share your feedback here..."
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex justify-end gap-3">
+              <label className="form-label" htmlFor="feedback-text">
+                What went wrong?
+              </label>
+              <textarea
+                id="feedback-text"
+                className="s-textarea"
+                placeholder="Describe the bug or share your feedback..."
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                required
+                style={{ marginBottom: '1.25rem' }}
+              />
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
                   onClick={() => setIsFeedbackOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  className="btn-ghost"
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
+                <button type="submit" className="btn-amber">
                   Submit Report
                 </button>
               </div>

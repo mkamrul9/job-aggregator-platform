@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 
-// Define the shape of our data
 interface Job {
   title: string;
   company: string;
@@ -23,10 +22,7 @@ export default function JobSearch() {
     try {
       const response = await fetch(`/api/search?q=${encodeURIComponent(searchTerm)}`);
       const data = await response.json();
-      
-      if (data.jobs) {
-        setJobs(data.jobs);
-      }
+      if (data.jobs) setJobs(data.jobs);
     } catch (error) {
       console.error('Failed to fetch jobs', error);
     } finally {
@@ -35,47 +31,99 @@ export default function JobSearch() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 mt-8">
-      <form onSubmit={handleSearch} className="flex gap-4 mb-8">
+    <div>
+      {/* Header */}
+      <div className="card-title">
+        <div className="card-icon">🔍</div>
+        Search Roles
+      </div>
+
+      {/* Search Bar */}
+      <form onSubmit={handleSearch} className="search-bar">
         <input
           type="text"
-          placeholder="Search for roles (e.g., React, Go, Docker)..."
-          className="flex-1 border-2 border-gray-300 p-4 rounded-lg text-lg text-black focus:outline-none focus:border-blue-500 transition-colors"
+          placeholder="Role, skill, or company — e.g. "React Engineer""
+          className="s-input"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
+          id="job-search-input"
         />
-        <button 
-          type="submit" 
+        <button
+          type="submit"
           disabled={loading}
-          className="bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 disabled:bg-blue-400"
+          className="btn-amber"
+          id="job-search-btn"
         >
-          {loading ? 'Searching...' : 'Search'}
+          {loading ? (
+            <span className="loading-pulse">...</span>
+          ) : (
+            <>
+              Search
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </>
+          )}
         </button>
       </form>
 
-      <div className="grid gap-6">
-        {jobs.map((job, index) => (
-          <div key={index} className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-            <h2 className="text-2xl font-bold text-gray-900">{job.title}</h2>
-            <h3 className="text-lg text-gray-600 mt-1">{job.company}</h3>
-            {/* Truncate the massive raw description for the UI */}
-            <p className="text-gray-500 mt-4 line-clamp-3">
-              {job.raw_description || "No description provided."}
-            </p>
-            <a 
-              href={job.url} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="inline-block mt-4 text-blue-600 font-medium hover:underline"
-            >
-              View Application &rarr;
-            </a>
+      {/* Results */}
+      {loading && (
+        <div className="empty-state">
+          <div className="loading-pulse" style={{ fontSize: '1.5rem' }}>⏳</div>
+          <span>Searching across all sources...</span>
+        </div>
+      )}
+
+      {!loading && jobs.length > 0 && (
+        <>
+          <div className="section-label">
+            {jobs.length} result{jobs.length !== 1 ? 's' : ''} for "{searchTerm}"
           </div>
-        ))}
-        {!loading && jobs.length === 0 && searchTerm && (
-          <p className="text-center text-gray-500">No jobs found matching your criteria.</p>
-        )}
-      </div>
+          <div className="jobs-list">
+            {jobs.map((job, i) => (
+              <div key={i} className="job-card fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
+                <div className="job-card-header">
+                  <div className="job-card-title">{job.title}</div>
+                  <span className="job-card-badge">New</span>
+                </div>
+                <div className="job-card-company">@ {job.company}</div>
+                <div className="job-card-desc">
+                  {job.raw_description || 'No description available.'}
+                </div>
+                <a
+                  href={job.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="job-card-link"
+                  id={`apply-btn-${i}`}
+                >
+                  View & Apply
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </a>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!loading && jobs.length === 0 && searchTerm && (
+        <div className="empty-state">
+          <div className="empty-state-icon">🔎</div>
+          <strong style={{ color: 'var(--text-secondary)' }}>No results found</strong>
+          <span>Try a different keyword or broaden your search.</span>
+        </div>
+      )}
+
+      {!loading && jobs.length === 0 && !searchTerm && (
+        <div className="empty-state">
+          <div className="empty-state-icon">✦</div>
+          <strong style={{ color: 'var(--text-secondary)' }}>Start your search</strong>
+          <span>Enter a role, skill, or company above to find live openings.</span>
+        </div>
+      )}
     </div>
   );
 }

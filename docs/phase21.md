@@ -1,24 +1,30 @@
-# Phase 21: Responsive Mobile Navbar & UX Enhancements
+# Phase 22: Next.js Portal (Job Search UI & Elasticsearch Proxy)
 
 ## Overview
-Based on UX best practices for mobile environments, we have implemented a dedicated responsive navigation bar for the frontend portal. To preserve precious screen real estate on mobile devices and reduce accidental taps, the "Feedback / Bug Report" feature has been moved off the main viewport and inside a togglable hamburger menu.
+In this phase, we completed the core functional requirement of the frontend candidate portal: the Job Search engine. To guarantee stringent security against malicious indexing drops or data scraping, we intentionally insulated the Elasticsearch container. Instead of direct client-to-database access, we built a highly secure Next.js API Proxy Route to securely orchestrate fuzzy search queries on behalf of the frontend UI.
 
 ## Implementation Details
 
-1. **Responsive Navbar (`components/Navbar.tsx`):**
-   - Built a sticky Tailwind CSS navigation bar (`sticky top-0 z-40`).
-   - Integrated the `lucide-react` icon library to provide crisp, scalable SVG icons (`Bug`, `Menu`, `X`).
-   - Implemented desktop and mobile views: 
-     - On desktop (`sm:` breakpoint and up), the "Report Bug" button appears inline in the navigation header.
-     - On mobile screens, a classic Hamburger menu button appears. Tapping it toggles a clean dropdown panel containing the "Report a Bug / Feedback" button.
+1. **Elasticsearch Node.js Client (`@elastic/elasticsearch`):**
+   - Installed the official Elasticsearch library into the Next.js runtime.
+   - Configured the client instance to dynamically route to the `ES_NODE` environment variable, enabling seamless connection within our Docker network (`http://elasticsearch:9200`) while allowing local fallback (`localhost`).
 
-2. **Feedback Modal Component:**
-   - Rather than redirecting the user to a separate page and losing their state, we implemented a full-screen/centered Modal overlay (`fixed inset-0 z-50`).
-   - The modal contains a structured form capturing their bug report or feedback, maintaining a clean UX that easily allows them to cancel or submit without context switching.
+2. **Next.js API Proxy (`app/api/search/route.ts`):**
+   - Engineered a server-side App Router API handler (`GET`).
+   - Parsed the `q` (query) string parameter to dynamically build an Elasticsearch request body.
+   - Utilized a `multi_match` query targeting the `title` and `raw_description` fields, specifically assigning a 3x (`^3`) relevancy boost to title matches.
+   - Enabled `fuzziness: 'AUTO'` to provide resilient typo-tolerance for candidate queries.
+   - Cleanly mapped the complex nested Elasticsearch `result.hits.hits` response into a sanitized, flattened array before transmitting it back to the client.
 
-3. **Global Layout Integration (`app/layout.tsx`):**
-   - Injected the `<Navbar />` component directly into the `RootLayout` body.
-   - This ensures the navigation bar persists globally across all future pages without requiring re-rendering or manual imports on a per-page basis.
+3. **Job Search UI (`components/JobSearch.tsx`):**
+   - Developed a responsive, state-driven search component leveraging React hooks (`useState`, `React.FormEvent`).
+   - Styled the search bar and individual job result cards elegantly using Tailwind CSS.
+   - Implemented loading states and empty-result handlers for optimized user feedback.
+   - Mapped the returned `Job[]` array to render the Job Title, Company, a truncated description (`line-clamp-3`), and an external hyperlink to the actual application URL.
+
+4. **Dashboard Assembly (`app/page.tsx`):**
+   - Refactored the core dashboard layout into a dual-column CSS grid (`grid md:grid-cols-2`).
+   - Housed the User Management stack (`AuthComponent` and `ResumeUpload`) securely on the left, while dedicating the expansive right column to the new `JobSearch` interface.
 
 ## Impact
-The mobile user experience is now significantly cleaner. The interface feels like a native app with a persistent top navigation bar and an intuitive hamburger menu, keeping the main screen focused entirely on the core tasks: logging in and uploading resumes.
+The platform is now end-to-end operational. Candidates can interact securely via the Next.js frontend to execute complex, typo-tolerant full-text searches across our massive scraped dataset without ever exposing the underlying Elasticsearch infrastructure to the public internet.

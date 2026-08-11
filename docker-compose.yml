@@ -10,6 +10,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       - microservices-net
+    restart: on-failure
     depends_on:
       - scraper-service
 
@@ -22,6 +23,7 @@ services:
       - KAFKA_BROKER=kafka:9092
     networks:
       - microservices-net
+    restart: on-failure
     depends_on:
       - kafka # Now depends on Kafka, not job-mongo
 
@@ -62,6 +64,7 @@ services:
       - ./shared-protos:/shared-protos
     networks:
       - microservices-net
+    restart: on-failure
     depends_on:
       - user-postgres
       - resume-service
@@ -108,6 +111,7 @@ services:
       - MONGO_URI=mongodb://job-mongo:27017
     networks:
       - microservices-net
+    restart: on-failure
     depends_on:
       - kafka
       - job-mongo
@@ -120,6 +124,7 @@ services:
       - KAFKA_BROKER=kafka:9092
     networks:
       - microservices-net
+    restart: on-failure
     depends_on:
       - kafka
 
@@ -143,6 +148,8 @@ services:
     build:
       context: ./frontend-next
       dockerfile: Dockerfile
+    environment:
+      - ES_NODE=http://elasticsearch:9200
     ports:
       - "3003:3000"
     networks:

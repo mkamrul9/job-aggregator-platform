@@ -1,30 +1,30 @@
-# Phase 22: Next.js Portal (Job Search UI & Elasticsearch Proxy)
+# Phase 23: Angular Admin Dashboard (Setup)
 
 ## Overview
-In this phase, we completed the core functional requirement of the frontend candidate portal: the Job Search engine. To guarantee stringent security against malicious indexing drops or data scraping, we intentionally insulated the Elasticsearch container. Instead of direct client-to-database access, we built a highly secure Next.js API Proxy Route to securely orchestrate fuzzy search queries on behalf of the frontend UI.
+To provide a comprehensive, enterprise-grade architecture for the Job Aggregator Platform, we initiated the scaffolding for an internal Administrative Dashboard using Angular. While the public candidate-facing portal utilizes Next.js for rapid SEO and SSR, Angular provides the rigid, strictly-typed structure (`NgModule` architecture, Dependency Injection, RxJS) required for dense data management tools.
 
 ## Implementation Details
 
-1. **Elasticsearch Node.js Client (`@elastic/elasticsearch`):**
-   - Installed the official Elasticsearch library into the Next.js runtime.
-   - Configured the client instance to dynamically route to the `ES_NODE` environment variable, enabling seamless connection within our Docker network (`http://elasticsearch:9200`) while allowing local fallback (`localhost`).
+1. **Angular Initialization (`frontend-admin`):**
+   - We used the Angular CLI (`@angular/cli`) to generate a new application within the `frontend-admin` directory.
+   - Crucially, we bypassed the modern v17+ "Standalone Components" default by explicitly enforcing `--standalone=false` to ensure the project relies on the classic, highly-structured `NgModule` architecture (e.g., `app.module.ts`, `app-routing.module.ts`), aligning precisely with the provided enterprise specifications.
+   - Configured SCSS as the default preprocessor.
 
-2. **Next.js API Proxy (`app/api/search/route.ts`):**
-   - Engineered a server-side App Router API handler (`GET`).
-   - Parsed the `q` (query) string parameter to dynamically build an Elasticsearch request body.
-   - Utilized a `multi_match` query targeting the `title` and `raw_description` fields, specifically assigning a 3x (`^3`) relevancy boost to title matches.
-   - Enabled `fuzziness: 'AUTO'` to provide resilient typo-tolerance for candidate queries.
-   - Cleanly mapped the complex nested Elasticsearch `result.hits.hits` response into a sanitized, flattened array before transmitting it back to the client.
+2. **Tailwind CSS Integration:**
+   - Installed `tailwindcss`, `postcss`, and `autoprefixer` as development dependencies.
+   - Initialized `tailwind.config.js` and explicitly configured the `content` array (`"./src/**/*.{html,ts}"`) to ensure Tailwind properly scans and purges classes across Angular's component architecture.
+   - Injected the core Tailwind directives into `src/styles.scss`.
 
-3. **Job Search UI (`components/JobSearch.tsx`):**
-   - Developed a responsive, state-driven search component leveraging React hooks (`useState`, `React.FormEvent`).
-   - Styled the search bar and individual job result cards elegantly using Tailwind CSS.
-   - Implemented loading states and empty-result handlers for optimized user feedback.
-   - Mapped the returned `Job[]` array to render the Job Title, Company, a truncated description (`line-clamp-3`), and an external hyperlink to the actual application URL.
+3. **Core Component Scaffolding:**
+   - Generated the foundational UI components utilizing Angular CLI:
+     - `layout/sidebar` (Navigation & Controls)
+     - `layout/header` (Global Context & User Status)
+     - `features/dashboard` (Main Data View)
 
-4. **Dashboard Assembly (`app/page.tsx`):**
-   - Refactored the core dashboard layout into a dual-column CSS grid (`grid md:grid-cols-2`).
-   - Housed the User Management stack (`AuthComponent` and `ResumeUpload`) securely on the left, while dedicating the expansive right column to the new `JobSearch` interface.
+4. **Structural Layout Injection:**
+   - Eradicated the boilerplate HTML in `app.component.html`.
+   - Engineered a responsive Flexbox structural layout that statically positions the `<app-sidebar>` and `<app-header>`, while injecting a `<router-outlet>` into a scrollable, isolated `main` content block.
+   - Updated `app-routing.module.ts` to map the root path (`/`) directly to the newly scaffolded `DashboardComponent`.
 
 ## Impact
-The platform is now end-to-end operational. Candidates can interact securely via the Next.js frontend to execute complex, typo-tolerant full-text searches across our massive scraped dataset without ever exposing the underlying Elasticsearch infrastructure to the public internet.
+The `frontend-admin` environment is now fully established. It possesses a rock-solid, strictly typed Angular framework combined with the rapid styling capabilities of Tailwind CSS. It is structurally prepared to consume the microservice ecosystem (via RxJS and HTTPClient) in subsequent phases.
