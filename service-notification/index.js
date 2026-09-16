@@ -54,7 +54,19 @@ const kafka = new Kafka({ clientId: 'notification-service', brokers: [KAFKA_BROK
 const consumer = kafka.consumer({ groupId: 'email-notification-group' });
 
 async function startKafkaConsumer() {
-  await consumer.connect();
+  let retries = 5;
+  while (retries > 0) {
+    try {
+      await consumer.connect();
+      break;
+    } catch (err) {
+      console.error(`❌ Kafka connection failed, retries left: ${retries}`, err);
+      retries -= 1;
+      if (retries === 0) throw err;
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+
   await consumer.subscribe({ topic: TOPIC, fromBeginning: false }); // Only notify on NEW jobs
 
   console.log(`✅ Notification Service listening to: ${TOPIC}`);
