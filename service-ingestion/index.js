@@ -51,8 +51,13 @@ async function run() {
     // 3. Start Express API for Job Fetching
     app.get('/api/jobs', async (req, res) => {
       try {
-        const jobs = await jobsCollection.find().sort({ scraped_at: -1 }).limit(50).toArray();
-        res.json(jobs);
+        const limit = parseInt(req.query.limit) || 20;
+        const page  = parseInt(req.query.page)  || 1;
+        const skip  = (page - 1) * limit;
+        const jobs  = await jobsCollection.find()
+          .sort({ scraped_at: -1 }).skip(skip).limit(limit).toArray();
+        const total = await jobsCollection.countDocuments();
+        res.json({ jobs, total, page, limit });
       } catch (err) {
         console.error('Error fetching jobs:', err);
         res.status(500).json({ error: 'Failed to fetch jobs' });
