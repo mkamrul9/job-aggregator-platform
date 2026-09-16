@@ -4,3 +4,9 @@ vendor/
 node_modules/
 service-notification/node_modules/
 *.exe
+
+# Local secrets — never commit
+.secrets
+.env.local
+*.pem
+*.key
