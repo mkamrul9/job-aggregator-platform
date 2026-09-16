@@ -3,3 +3,4 @@ vendor/
 *.exe
 node_modules/
 service-notification/node_modules/
+*.exe

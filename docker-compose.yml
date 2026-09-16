@@ -11,8 +11,6 @@ services:
     networks:
       - microservices-net
     restart: on-failure
-    depends_on:
-      - scraper-service
 
   scraper-service:
     build: 
@@ -67,14 +65,23 @@ services:
     restart: on-failure
     depends_on:
       - user-postgres
-      - resume-service
+      - resume-grpc
 
-  resume-service:
+  resume-api:
     build:
       context: ./service-resume
       dockerfile: Dockerfile
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
+    networks:
+      - microservices-net
+
+  resume-grpc:
+    build:
+      context: ./service-resume
+      dockerfile: Dockerfile
+    command: ["python", "grpc_server.py"]
     networks:
       - microservices-net
 
@@ -91,7 +98,7 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
@@ -144,29 +151,29 @@ services:
     networks:
       - microservices-net
 
-  frontend-next:
-    build:
-      context: ./frontend-next
-      dockerfile: Dockerfile
-    environment:
-      - ES_NODE=http://elasticsearch:9200
-    ports:
-      - "3003:3000"
-    networks:
-      - microservices-net
-    depends_on:
-      - api-gateway
+  # frontend-next:
+  #   build:
+  #     context: ./frontend-next
+  #     dockerfile: Dockerfile
+  #   environment:
+  #     - ES_NODE=http://elasticsearch:9200
+  #   ports:
+  #     - "3003:3000"
+  #   networks:
+  #     - microservices-net
+  #   depends_on:
+  #     - api-gateway
 
-  frontend-admin:
-    build:
-      context: ./frontend-admin
-      dockerfile: Dockerfile
-    ports:
-      - "4200:80" # Nginx inside the container runs on 80
-    networks:
-      - microservices-net
-    depends_on:
-      - notification-service
+  # frontend-admin:
+  #   build:
+  #     context: ./frontend-admin
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "4200:80" # Nginx inside the container runs on 80
+  #   networks:
+  #     - microservices-net
+  #   depends_on:
+  #     - notification-service
 
   prometheus:
     image: prom/prometheus:latest

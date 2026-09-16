@@ -61,30 +61,36 @@ async function startKafkaConsumer() {
 
   await consumer.run({
     eachMessage: async ({ message }) => {
-      const jobData = JSON.parse(message.value.toString());
-      
-      // 1. Broadcast the new job to all connected Angular clients instantly
-      io.emit('live-job-feed', jobData);
-      // Simulated matching logic: 
-      // e.g., We queried the DB and found 2 users matching this job's keywords
-      const matchedUsers = [
-        { email: 'candidateA@example.com', name: 'Alice' }
-      ];
+      try {
+        if (!message.value) return; // Ignore tombstones
+        
+        const jobData = JSON.parse(message.value.toString());
+        
+        // 1. Broadcast the new job to all connected Angular clients instantly
+        io.emit('live-job-feed', jobData);
+        // Simulated matching logic: 
+        // e.g., We queried the DB and found 2 users matching this job's keywords
+        const matchedUsers = [
+          { email: 'candidateA@example.com', name: 'Alice' }
+        ];
 
-      for (const user of matchedUsers) {
-        try {
-          const info = await transporter.sendMail({
-            from: '"Job Aggregator" <alerts@jobaggregator.local>',
-            to: user.email,
-            subject: `New Job Match: ${jobData.Title} at ${jobData.Company}`,
-            text: `Hello ${user.name},\n\nWe found a new job matching your skills!\n\nTitle: ${jobData.Title}\nCompany: ${jobData.Company}\nLink: ${jobData.URL}\n\nGood luck!`
-          });
-          
-          emailsSentCounter.inc(); // Increment the metric every time an email sends
-          console.log(`📧 Email sent to ${user.email}. Preview: ${nodemailer.getTestMessageUrl(info)}`);
-        } catch (error) {
-          console.error(`❌ Failed to send email to ${user.email}:`, error);
+        for (const user of matchedUsers) {
+          try {
+            const info = await transporter.sendMail({
+              from: '"Job Aggregator" <alerts@jobaggregator.local>',
+              to: user.email,
+              subject: `New Job Match: ${jobData.title} at ${jobData.company}`,
+              text: `Hello ${user.name},\n\nWe found a new job matching your skills!\n\nTitle: ${jobData.title}\nCompany: ${jobData.company}\nLink: ${jobData.url}\n\nGood luck!`
+            });
+            
+            emailsSentCounter.inc(); // Increment the metric every time an email sends
+            console.log(`📧 Email sent to ${user.email}. Preview: ${nodemailer.getTestMessageUrl(info)}`);
+          } catch (error) {
+            console.error(`❌ Failed to send email to ${user.email}:`, error);
+          }
         }
+      } catch (err) {
+        console.error('❌ Error processing message:', err);
       }
     },
   });

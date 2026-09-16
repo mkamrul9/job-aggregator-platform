@@ -14,7 +14,7 @@ import { join } from 'path';
         options: {
           package: 'resume',
           protoPath: join(process.cwd(), '../shared-protos/resume.proto'),
-          url: 'localhost:50051',
+          url: process.env.RESUME_GRPC_URL || 'localhost:50051',
         },
       },
     ]),

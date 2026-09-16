@@ -42,7 +42,7 @@ export default function JobSearch() {
       <form onSubmit={handleSearch} className="search-bar">
         <input
           type="text"
-          placeholder="Role, skill, or company — e.g. "React Engineer""
+          placeholder="Role, skill, or company — e.g. React Engineer"
           className="s-input"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}

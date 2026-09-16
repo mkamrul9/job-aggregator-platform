@@ -148,8 +148,7 @@ A silent background process with no open ports. It only listens to Kafka.
 The authentication and profile management backbone.
 
 **What it does:**
-- User registration and login with **JWT** authentication
-- Password hashing via **bcrypt**
+- User registration and login with **Firebase Auth**
 - User profiles with skill arrays (populated from resume parsing)
 - Connects to **PostgreSQL** via **Prisma ORM**
 - Calls the Resume Service via **gRPC** when a resume is uploaded
@@ -245,7 +244,7 @@ model Profile {
   firstName String
   lastName  String
   resumeUrl String?
-  skills    String[] // Populated by the AI Resume Service
+  extractedSkills String[] // Populated by the AI Resume Service
 }
 ```
 
@@ -483,7 +482,7 @@ service ResumeParser {
 }
 
 message ParseRequest {
-  string resume_url = 1;
+  string file_path = 1;
 }
 
 message ParseResponse {
@@ -627,7 +626,7 @@ Security is built into the architecture, not bolted on afterward.
 
 | Area | Implementation |
 |---|---|
-| **Authentication** | JWT tokens with short expiry; bcrypt password hashing (cost factor 12) |
+| **Authentication** | Firebase Auth; JWT tokens provided and verified by Firebase Admin SDK |
 | **API Access** | All routes protected by NestJS guards; public routes explicitly whitelisted |
 | **Secrets** | Never committed to Git; injected via environment variables; production uses a secrets manager |
 | **Data in transit** | Nginx terminates TLS for external traffic; internal services communicate over the isolated `microservices-net` bridge |

@@ -18,5 +18,5 @@ COPY . .
 # Expose FastAPI (8000) and gRPC (50051)
 EXPOSE 8000 50051
 
-# Start both the REST API and the gRPC server using a shell command
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 & python grpc_server.py"]
+# Start the REST API by default (docker-compose will override this for the gRPC container)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

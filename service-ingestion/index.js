@@ -25,8 +25,19 @@ async function run() {
     const jobsCollection = db.collection('jobs');
     console.log('✅ Connected to MongoDB');
 
-    // 2. Connect to Kafka
-    await consumer.connect();
+    // 2. Connect to Kafka with Retry Backoff
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        await consumer.connect();
+        break;
+      } catch (err) {
+        console.error(`❌ Kafka connection failed, retries left: ${retries}`, err);
+        retries -= 1;
+        if (retries === 0) throw err;
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
     await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
     console.log(`✅ Subscribed to Kafka topic: ${TOPIC}`);
 
@@ -39,19 +50,19 @@ async function run() {
           
           // Upsert the job into MongoDB based on the URL
           await jobsCollection.updateOne(
-            { url: jobData.URL },
+            { url: jobData.url },
             { 
               $setOnInsert: { scraped_at: new Date() },
               $set: {
-                title: jobData.Title,
-                company: jobData.Company,
-                raw_description: jobData.RawDescription
+                title: jobData.title,
+                company: jobData.company,
+                raw_description: jobData.raw_description
               }
             },
             { upsert: true }
           );
 
-          console.log(`💾 Saved to DB: ${jobData.Title} at ${jobData.Company}`);
+          console.log(`💾 Saved to DB: ${jobData.title} at ${jobData.company}`);
         } catch (err) {
           console.error('❌ Error processing message:', err);
         }

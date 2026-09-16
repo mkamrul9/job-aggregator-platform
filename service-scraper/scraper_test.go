@@ -15,7 +15,7 @@ func (m *MockPublisher) Publish(job DBJob) error {
 }
 
 // 2. The Unit Test
-func TestScrapeJobPage(t *testing.T) {
+func TestMockPublisher(t *testing.T) {
 	mockPub := &MockPublisher{}
 	
 	// Simulate the exact struct the scraper would produce after parsing HTML

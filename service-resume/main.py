@@ -14,6 +14,9 @@ matcher = PhraseMatcher(nlp.vocab, attr="LOWER") # LOWER makes it case-insensiti
 # In a real app, this might be fetched from your PostgreSQL database.
 TECH_SKILLS = ["React", "Angular", "Vue", "Node.js", "NestJS", "Python", "FastAPI", "Go", "Golang", "Docker", "Kubernetes", "PostgreSQL", "MongoDB", "Kafka", "Microservices"]
 
+# Create a dictionary for canonical mapping
+CANONICAL_SKILLS = {skill.lower(): skill for skill in TECH_SKILLS}
+
 # Convert the skills into spaCy patterns
 patterns = [nlp.make_doc(skill) for skill in TECH_SKILLS]
 matcher.add("SKILLS", patterns)
@@ -24,7 +27,8 @@ def extract_skills_from_text(text: str):
     extracted_skills = set()
     for match_id, start, end in matches:
         span = doc[start:end]
-        extracted_skills.add(span.text)
+        canonical_skill = CANONICAL_SKILLS.get(span.text.lower(), span.text)
+        extracted_skills.add(canonical_skill)
     return list(extracted_skills)
 
 @app.post("/parse")

@@ -5,5 +5,3 @@ pypdf2
 spacy
 grpcio
 grpcio-tools
-pytest
-httpx
