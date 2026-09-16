@@ -20,9 +20,10 @@ func TestMockPublisher(t *testing.T) {
 	
 	// Simulate the exact struct the scraper would produce after parsing HTML
 	simulatedJob := DBJob{
-		Title:   "Software Engineer",
-		Company: "Tech Corp",
-		URL:     "https://example.com/job",
+		Title:    "Software Engineer",
+		Company:  "Tech Corp",
+		Location: "Remote",
+		URL:      "https://example.com/job",
 	}
 
 	// Trigger the publisher (Simulating the end of the scrapeJobPage function)
@@ -39,5 +40,9 @@ func TestMockPublisher(t *testing.T) {
 
 	if mockPub.PublishedJobs[0].Title != "Software Engineer" {
 		t.Errorf("Expected title 'Software Engineer', got %s", mockPub.PublishedJobs[0].Title)
+	}
+
+	if mockPub.PublishedJobs[0].Location != "Remote" {
+		t.Errorf("Expected location 'Remote', got %s", mockPub.PublishedJobs[0].Location)
 	}
 }
