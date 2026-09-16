@@ -10,9 +10,42 @@ app = FastAPI(title="Resume Parsing & AI Service")
 nlp = spacy.load("en_core_web_sm")
 matcher = PhraseMatcher(nlp.vocab, attr="LOWER") # LOWER makes it case-insensitive
 
-# A sample database of skills to look for. 
+# A sample database of skills to look for, grouped by category.
 # In a real app, this might be fetched from your PostgreSQL database.
-TECH_SKILLS = ["React", "Angular", "Vue", "Node.js", "NestJS", "Python", "FastAPI", "Go", "Golang", "Docker", "Kubernetes", "PostgreSQL", "MongoDB", "Kafka", "Microservices"]
+TECH_SKILLS = [
+    # Programming Languages
+    "Python", "Go", "Golang", "TypeScript", "JavaScript", "Rust", "Java", "C++",
+    "C#", "Ruby", "Swift", "Kotlin", "PHP", "Scala", "Dart",
+
+    # Frontend Frameworks & Libraries
+    "React", "Angular", "Vue", "Next.js", "Svelte",
+
+    # Backend Frameworks
+    "Node.js", "NestJS", "FastAPI", "Django", "Flask", "Spring Boot",
+    "Express", "Laravel", "Ruby on Rails",
+
+    # Databases & Storage
+    "PostgreSQL", "MongoDB", "Redis", "MySQL", "Cassandra", "DynamoDB",
+    "Elasticsearch", "SQLite",
+
+    # Cloud & Infrastructure
+    "AWS", "Azure", "GCP", "Terraform", "Ansible",
+
+    # Containers & Orchestration
+    "Docker", "Kubernetes",
+
+    # Message Brokers & Queues
+    "Kafka", "RabbitMQ",
+
+    # DevOps & CI/CD
+    "Jenkins", "GitLab CI", "GitHub Actions", "Prometheus", "Grafana",
+
+    # APIs & Communication
+    "GraphQL", "REST", "gRPC", "WebSocket",
+
+    # Architecture
+    "Microservices",
+]
 
 # Create a dictionary for canonical mapping
 CANONICAL_SKILLS = {skill.lower(): skill for skill in TECH_SKILLS}
