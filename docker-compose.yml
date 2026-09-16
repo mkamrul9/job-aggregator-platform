@@ -55,7 +55,7 @@ services:
       # Use the container name 'user-postgres' to connect internally
       - DATABASE_URL=postgresql://admin:password123@user-postgres:5432/job_aggregator_users?schema=public
       # Point the gRPC client to the Python container's internal network address
-      - RESUME_GRPC_URL=resume-service:50051 
+      - RESUME_GRPC_URL=resume-grpc:50051 
     ports:
       - "3002:3000" # Optional: only expose if you want to bypass Nginx for debugging
     volumes:
