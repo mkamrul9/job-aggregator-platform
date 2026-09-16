@@ -5,19 +5,25 @@ import React, { useState } from 'react';
 interface Job {
   title: string;
   company: string;
+  location?: string;
   url: string;
   raw_description?: string;
 }
 
 export default function JobSearch() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [locationTerm, setLocationTerm] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchJobs = async (query = '') => {
+  const fetchJobs = async (query = '', location = '') => {
     setLoading(true);
     try {
-      const url = query ? `/api/jobs?q=${encodeURIComponent(query)}` : `/api/jobs`;
+      const params = new URLSearchParams();
+      if (query) params.append('q', query);
+      if (location) params.append('location', location);
+      const queryString = params.toString();
+      const url = queryString ? `/api/jobs?${queryString}` : `/api/jobs`;
       const response = await fetch(url);
       const data = await response.json();
       if (data.jobs) setJobs(data.jobs);
@@ -35,7 +41,7 @@ export default function JobSearch() {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    fetchJobs(searchTerm);
+    fetchJobs(searchTerm, locationTerm);
   };
 
   return (
@@ -55,6 +61,14 @@ export default function JobSearch() {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           id="job-search-input"
+        />
+        <input
+          type="text"
+          placeholder="Location — e.g. London or Remote"
+          className="s-input"
+          value={locationTerm}
+          onChange={(e) => setLocationTerm(e.target.value)}
+          id="job-location-input"
         />
         <button
           type="submit"
@@ -86,7 +100,9 @@ export default function JobSearch() {
       {!loading && jobs.length > 0 && (
         <>
           <div className="section-label">
-            {jobs.length} result{jobs.length !== 1 ? 's' : ''} for "{searchTerm}"
+            {jobs.length} result{jobs.length !== 1 ? 's' : ''}
+            {searchTerm && ` for "${searchTerm}"`}
+            {locationTerm && ` in "${locationTerm}"`}
           </div>
           <div className="jobs-list">
             {jobs.map((job, i) => (
@@ -95,7 +111,10 @@ export default function JobSearch() {
                   <div className="job-card-title">{job.title}</div>
                   <span className="job-card-badge">New</span>
                 </div>
-                <div className="job-card-company">@ {job.company}</div>
+                <div className="job-card-company">
+                  @ {job.company}
+                  {job.location && <span> • {job.location}</span>}
+                </div>
                 <div className="job-card-desc">
                   {job.raw_description || 'No description available.'}
                 </div>
@@ -117,19 +136,19 @@ export default function JobSearch() {
         </>
       )}
 
-      {!loading && jobs.length === 0 && searchTerm && (
+      {!loading && jobs.length === 0 && (searchTerm || locationTerm) && (
         <div className="empty-state">
           <div className="empty-state-icon">🔎</div>
           <strong style={{ color: 'var(--text-secondary)' }}>No results found</strong>
-          <span>Try a different keyword or broaden your search.</span>
+          <span>Try a different keyword or location or broaden your search.</span>
         </div>
       )}
 
-      {!loading && jobs.length === 0 && !searchTerm && (
+      {!loading && jobs.length === 0 && !searchTerm && !locationTerm && (
         <div className="empty-state">
           <div className="empty-state-icon">✦</div>
           <strong style={{ color: 'var(--text-secondary)' }}>Start your search</strong>
-          <span>Enter a role, skill, or company above to find live openings.</span>
+          <span>Enter a role, skill, company, or location above to find live openings.</span>
         </div>
       )}
     </div>

@@ -9,6 +9,7 @@ import (
 type DBJob struct {
 	Title          string    `json:"title"`
 	Company        string    `json:"company"`
+	Location       string    `json:"location"`
 	URL            string    `json:"url"`
 	RawDescription string    `json:"raw_description"`
 	ScrapedAt      time.Time `json:"scraped_at"`

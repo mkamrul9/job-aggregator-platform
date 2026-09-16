@@ -3,6 +3,7 @@ const { Kafka } = require('kafkajs');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const cors = require('cors');
+const { buildJobQuery } = require('./query');
 
 // Environment variables (will be injected by Docker)
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
@@ -55,10 +56,8 @@ async function run() {
         const page  = parseInt(req.query.page)  || 1;
         const skip  = (page - 1) * limit;
         const q = req.query.q;
-        let query = {};
-        if (q) {
-           query = { $or: [ { title: new RegExp(q, 'i') }, { company: new RegExp(q, 'i') } ] };
-        }
+        const location = req.query.location;
+        const query = buildJobQuery({ q, location });
 
         const jobs  = await jobsCollection.find(query)
           .sort({ scraped_at: -1 }).skip(skip).limit(limit).toArray();
