@@ -2,11 +2,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"log"
-	"time"
-
 	"github.com/segmentio/kafka-go"
 )
 

@@ -124,7 +124,7 @@ func scrapeJobPage(browser playwright.Browser, url string, publisher EventPublis
 	}
 
 	// Publish to the event stream
-	err := publisher.Publish(job)
+	err = publisher.Publish(job)
 	if err != nil {
 		log.Printf("Error publishing %s: %v", url, err)
 	}
