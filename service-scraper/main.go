@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -11,7 +12,10 @@ import (
 )
 
 func main() {
-	kafkaBroker := "kafka:9092" // This matches our Docker Compose service name
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
+	if kafkaBroker == "" {
+		kafkaBroker = "kafka:9092" // This matches our Docker Compose service name fallback
+	}
 	kafkaTopic := "jobs.new"
 	
 	writer := InitKafkaWriter(kafkaBroker, kafkaTopic)
@@ -69,11 +73,9 @@ func main() {
 			}(url)
 		}
 
-		// 4. Wait for all Goroutines to finish in background
-		go func() {
-			wg.Wait()
-			close(jobDataChannel)
-		}()
+		// 4. Wait synchronously, then close
+		wg.Wait()
+		close(jobDataChannel)
 
 		// 5. Read the results from the channel
 		for job := range jobDataChannel {
