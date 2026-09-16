@@ -15,19 +15,19 @@ enum Role {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
-  passwordHash  String   // Will be populated by Firebase Auth uid later
-  role          Role     @default(CANDIDATE)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  profile       Profile?
+  id           String   @id
+  email        String   @unique
+  passwordHash String // Will be populated by Firebase Auth uid later
+  role         Role     @default(CANDIDATE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  profile      Profile?
 }
 
 model Profile {
-  id             String   @id @default(uuid())
-  userId         String   @unique
-  resumeUrl      String?
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  resumeUrl       String?
   extractedSkills String[] // PostgreSQL supports array types
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
