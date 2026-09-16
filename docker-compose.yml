@@ -60,6 +60,7 @@ services:
       - "3002:3000" # Optional: only expose if you want to bypass Nginx for debugging
     volumes:
       - ./shared-protos:/shared-protos
+      - shared_uploads:/uploads
     networks:
       - microservices-net
     restart: on-failure
@@ -82,6 +83,8 @@ services:
       context: ./service-resume
       dockerfile: Dockerfile
     command: ["python", "grpc_server.py"]
+    volumes:
+      - shared_uploads:/uploads
     networks:
       - microservices-net
 
@@ -113,6 +116,8 @@ services:
     build:
       context: ./service-ingestion
       dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
     environment:
       - KAFKA_BROKER=kafka:9092
       - MONGO_URI=mongodb://job-mongo:27017
@@ -209,3 +214,4 @@ volumes:
   elastic_data:
   prometheus_data:
   grafana_data:
+  shared_uploads:

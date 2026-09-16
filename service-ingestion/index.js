@@ -1,6 +1,8 @@
 // service-ingestion/index.js
 const { Kafka } = require('kafkajs');
 const { MongoClient } = require('mongodb');
+const express = require('express');
+const cors = require('cors');
 
 // Environment variables (will be injected by Docker)
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
@@ -16,6 +18,11 @@ const consumer = kafka.consumer({ groupId: 'mongo-ingestion-group' });
 
 // Initialize MongoDB Client
 const mongoClient = new MongoClient(MONGO_URI);
+
+// Initialize Express App
+const app = express();
+app.use(cors());
+app.use(express.json());
 
 async function run() {
   try {
@@ -41,7 +48,23 @@ async function run() {
     await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
     console.log(`✅ Subscribed to Kafka topic: ${TOPIC}`);
 
-    // 3. Listen for messages
+    // 3. Start Express API for Job Fetching
+    app.get('/api/jobs', async (req, res) => {
+      try {
+        const jobs = await jobsCollection.find().sort({ scraped_at: -1 }).limit(50).toArray();
+        res.json(jobs);
+      } catch (err) {
+        console.error('Error fetching jobs:', err);
+        res.status(500).json({ error: 'Failed to fetch jobs' });
+      }
+    });
+
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+      console.log(`✅ Jobs API listening on port ${PORT}`);
+    });
+
+    // 4. Listen for messages
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         try {
