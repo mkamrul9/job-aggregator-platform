@@ -2,8 +2,12 @@ import { Controller, Post, Req, UseGuards, UseInterceptors, UploadedFile, BadReq
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import * as fs from 'fs';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { UserService } from './user.service';
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || '/uploads';
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 @Controller('users')
 export class UserController {
@@ -29,7 +33,7 @@ export class UserController {
   @UseGuards(FirebaseAuthGuard)
   @UseInterceptors(FileInterceptor('resume', {
     storage: diskStorage({
-      destination: '/uploads',
+      destination: UPLOAD_DIR,
       filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
         cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
