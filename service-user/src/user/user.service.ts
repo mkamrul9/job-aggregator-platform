@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Inject } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, HttpException, HttpStatus } from '@nestjs/common';
 import type { ClientGrpc } from '@nestjs/microservices';
 import { lastValueFrom } from 'rxjs';
 import { Observable } from 'rxjs';
@@ -43,6 +43,6 @@ export class UserService implements OnModuleInit {
       // 2. Save the extracted skills to PostgreSQL using Repository
       return this.userRepository.updateSkills(userId, result.skills);
     }
-    throw new Error('Failed to parse resume via AI service');
+    throw new HttpException('Resume could not be parsed. Ensure the PDF contains selectable text.', HttpStatus.UNPROCESSABLE_ENTITY);
   }
 }
