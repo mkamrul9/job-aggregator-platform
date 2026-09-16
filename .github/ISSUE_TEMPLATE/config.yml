@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 General Discussion
+    url: https://github.com/mkamrul9/job-aggregator-platform/discussions
+    about: For questions, ideas, or general chat that doesn't need a formal issue.

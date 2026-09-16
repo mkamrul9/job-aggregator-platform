@@ -1,0 +1,107 @@
+name: 🐛 Bug Report
+description: Report a broken or incorrect behaviour in any service
+title: "[Bug] <short description>"
+labels: ["bug", "needs triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a bug report. Please fill this out as completely as possible so maintainers can reproduce and fix the issue quickly.
+
+  - type: dropdown
+    id: service
+    attributes:
+      label: Affected Service
+      description: Which microservice or area does this bug affect?
+      options:
+        - service-scraper (Go)
+        - service-ingestion (Node.js)
+        - service-user (NestJS)
+        - service-resume (Python / FastAPI)
+        - service-notification (Node.js)
+        - frontend-next (Next.js)
+        - nginx / api-gateway
+        - kafka / infrastructure
+        - docker-compose / deployment
+        - documentation
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I upload a PDF resume, the response always returns an empty `extracted_skills` array even though the file is valid."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behaviour.
+      placeholder: |
+        1. Start all containers with `docker compose up -d --build`
+        2. Navigate to `http://localhost`
+        3. Upload a PDF file in the Resume Parser section
+        4. Click "Parse Resume"
+        5. Observe that `extracted_skills` is empty
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What should have happened?
+      placeholder: "The response should contain an array of detected skills, e.g., `[\"Python\", \"Docker\"]`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happened?
+      placeholder: "The response returns `{ \"extracted_skills\": [] }` regardless of resume content."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs or Error Output
+      description: Paste any relevant Docker logs, console errors, or stack traces. Use ` ```  ``` ` to format.
+      render: shell
+      placeholder: |
+        $ docker compose logs resume-api
+        INFO:     172.20.0.3:45738 - "POST /parse HTTP/1.1" 200 OK
+        WARNING:  spacy model not found, falling back to blank model
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Tell us about your setup.
+      value: |
+        - OS: [e.g. Windows 11, macOS 14, Ubuntu 22.04]
+        - Docker version: [e.g. 26.1.1]
+        - Docker Compose version: [e.g. v2.27]
+        - Branch / commit SHA: [e.g. main / abc1234]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I have reproduced this on the latest `main` branch
+          required: true
+        - label: I have included logs or error output where relevant
+          required: false

@@ -2,7 +2,7 @@
 
 <h1>⚡ Job Aggregator Platform</h1>
 
-<p><strong>A production-grade, polyglot microservices monorepo that scrapes job listings across the web, parses resumes using AI/NLP, matches candidates to roles, and delivers real-time alerts — all powered by an event-driven Kafka backbone.</strong></p>
+<p><strong>A production-grade, polyglot microservices platform that scrapes job listings, parses resumes with AI/NLP, matches candidates to roles, and delivers real-time alerts — all powered by an event-driven Kafka backbone.</strong></p>
 
 <br/>
 
@@ -10,9 +10,9 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)](https://nestjs.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-15-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Kafka](https://img.shields.io/badge/Apache_Kafka-KRaft-231F20?style=for-the-badge&logo=apache-kafka&logoColor=white)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com/)
-[![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8.10-005571?style=for-the-badge&logo=elasticsearch&logoColor=white)](https://elastic.co/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Latest-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://mongodb.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgresql.org/)
 [![Nginx](https://img.shields.io/badge/Nginx-Gateway-009639?style=for-the-badge&logo=nginx&logoColor=white)](https://nginx.org/)
@@ -25,36 +25,37 @@
 
 ## 📋 Table of Contents
 
-- [🌟 What This Project Does](#-what-this-project-does)
-- [🗺️ Architecture Overview](#️-architecture-overview)
-- [🧩 Microservices At a Glance](#-microservices-at-a-glance)
-- [🔄 The Data Flow: End-to-End](#-the-data-flow-end-to-end)
-- [🗄️ Database Architecture](#️-database-architecture)
-- [🚀 Getting Started](#-getting-started)
-- [📁 Monorepo Structure](#-monorepo-structure)
-- [⚙️ Environment Variables](#️-environment-variables)
-- [🌐 API Reference](#-api-reference)
-- [🔀 Internal Communication (gRPC)](#-internal-communication-grpc)
-- [📡 Kafka Topics & Event Contracts](#-kafka-topics--event-contracts)
-- [🧪 Testing](#-testing)
-- [📜 Commit Conventions](#-commit-conventions)
-- [🗺️ Roadmap](#️-roadmap)
-- [🔒 Security](#-security)
-- [📄 License](#-license)
+- [What This Project Does](#-what-this-project-does)
+- [Architecture Overview](#️-architecture-overview)
+- [Microservices At a Glance](#-microservices-at-a-glance)
+- [End-to-End Data Flow](#-end-to-end-data-flow)
+- [Database Architecture](#️-database-architecture)
+- [Getting Started](#-getting-started)
+- [Accessing the Platform](#-accessing-the-platform)
+- [Monorepo Structure](#-monorepo-structure)
+- [Environment Variables](#️-environment-variables)
+- [API Reference](#-api-reference)
+- [Internal Communication (gRPC)](#-internal-communication-grpc)
+- [Kafka Topics & Event Contracts](#-kafka-topics--event-contracts)
+- [Testing](#-testing)
+- [Roadmap](#️-roadmap)
+- [Contributing](#-contributing)
+- [Security](#-security)
+- [License](#-license)
 
 ---
 
 ## 🌟 What This Project Does
 
-Think of this platform as an intelligent career companion that runs entirely on your own infrastructure.
+This platform is an intelligent, self-hosted career companion that aggregates job listings from across the web, matches them to candidate profiles using AI, and delivers real-time alerts.
 
 | Problem | Our Solution |
 |---|---|
-| Job listings are scattered across 100s of websites | **Go Scraper** concurrently harvests listings using headless browser automation |
-| Querying raw text at scale is slow | **Elasticsearch** provides an inverted index for sub-millisecond full-text search |
-| Candidates don't know which jobs match their skills | **FastAPI + spaCy NLP** extracts technical skills from PDF resumes |
-| Users miss relevant new postings | **Notification Service** pushes personalised email alerts the moment a match is scraped |
-| One slow service should not crash everything else | **Apache Kafka** decouples every service — each publishes or consumes events independently |
+| Job listings are scattered across hundreds of websites | **Go Scraper** concurrently harvests listings using headless browser automation |
+| Manual job searching is slow and repetitive | **Kafka event bus** fans scraped data out to all consumers simultaneously |
+| Candidates don't know which jobs match their skills | **FastAPI + spaCy NLP** extracts technical skills directly from PDF resumes |
+| Users miss relevant new postings | **Notification Service** pushes personalised email alerts the moment a match is found |
+| One slow service should not crash everything else | **Apache Kafka** fully decouples every service — each publishes or consumes events independently |
 
 ---
 
@@ -63,53 +64,51 @@ Think of this platform as an intelligent career companion that runs entirely on 
 This platform follows a **polyglot microservices** pattern — each service is written in the language best suited to its job:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        CLIENT LAYER                                 │
-│              Web Browser  ·  Mobile App  ·  Postman                 │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │  HTTP (port 80)
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    NGINX API GATEWAY                                │
-│        Reverse proxy · Path-based routing · SSL termination         │
-│                                                                     │
-│  /             →  frontend-next:3000 (Next.js)                      │
-│  /api/users/  →  user-service:3000  (NestJS)                       │
-│  /api/resume/ →  resume-service:8000  (FastAPI)                     │
-│  /api/notifications/ → notification-service:4000  (Express)         │
-└──────┬──────────┬──────────┬──────────┬────────────────────────────┘
-       │          │          │          │
-       ▼          ▼          ▼          ▼
-  ┌────────┐  ┌────────┐  ┌────────┐  ┌──────────────┐
-  │ User   │  │ Resume │  │Scraper │  │ Notification │
-  │Service │  │Service │  │Service │  │   Service    │
-  │NestJS  │  │FastAPI │  │  Go    │  │   Express    │
-  │  TS    │  │Python  │  │        │  │   Node.js    │
-  └───┬────┘  └───┬────┘  └───┬────┘  └──────┬───────┘
-      │  gRPC     │           │               │
-      └───────────┘           │ Kafka         │ Kafka
-                              │ Producer      │ Consumer
-                              ▼               │
-                    ┌──────────────────┐      │
-                    │   Apache Kafka   │◄─────┘
-                    │  (KRaft mode)    │
-                    │   jobs.new       │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-       ┌────────────┐  ┌─────────┐  ┌──────────────┐
-       │ Ingestion  │  │  (fut.) │  │ Notification │
-       │  Worker    │  │  ES     │  │  (consumer)  │
-       │  Node.js   │  │ Worker  │  │              │
-       └─────┬──────┘  └────┬────┘  └──────────────┘
-             │              │
-             ▼              ▼
-       ┌──────────┐  ┌──────────────┐
-       │ MongoDB  │  │Elasticsearch │
-       │ job_     │  │  8.10.2      │
-       │ platform │  │  Port 9200   │
-       └──────────┘  └──────────────┘
+┌─────────────────────────────────────────────────────┐
+│                  CLIENT BROWSER                     │
+│               http://localhost (port 80)            │
+└──────────────────────┬──────────────────────────────┘
+                       │ HTTP
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│              NGINX  API GATEWAY  (port 80)          │
+│   /            →  frontend-next:3000  (Next.js)     │
+│   /api/users/  →  user-service:3000   (NestJS)      │
+│   /api/resume/ →  resume-api:8000     (FastAPI)     │
+│   /api/jobs/   →  ingestion-service:5000 (Node.js)  │
+│   /api/notifications/ → notification-service:4000   │
+└──┬──────┬──────────┬──────────┬──────────┬──────────┘
+   │      │          │          │          │
+   ▼      ▼          ▼          ▼          ▼
+ ┌────┐ ┌──────┐  ┌──────┐  ┌──────┐  ┌──────────────┐
+ │Next│ │ User │  │Resume│  │Inges-│  │Notification  │
+ │ JS │ │Serv. │  │ API  │  │tion  │  │   Service    │
+ │    │ │NestJS│  │FastAP│  │Node.j│  │   Express    │
+ └────┘ └──┬───┘  └──────┘  └──┬───┘  └──────┬───────┘
+           │ gRPC               │               │
+           └──→ resume-grpc     │ Kafka         │ Kafka
+                :50051          │ Producer      │ Consumer
+                                ▼               │
+                      ┌──────────────────┐      │
+                      │  Apache  Kafka   │◄─────┘
+                      │  (KRaft mode)    │
+                      │   jobs.new       │
+                      └────────┬─────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+          ┌────────────┐             ┌──────────────┐
+          │ Ingestion  │             │ Notification │
+          │  Worker    │             │   Consumer   │
+          │  Node.js   │             │   Node.js    │
+          └──────┬─────┘             └──────────────┘
+                 │
+                 ▼
+           ┌──────────┐
+           │ MongoDB  │
+           │ job_     │
+           │ platform │
+           └──────────┘
 ```
 
 > **Key principle:** No service directly calls another to store data. All writes go through Kafka events, making the system resilient to individual service restarts.
@@ -119,84 +118,71 @@ This platform follows a **polyglot microservices** pattern — each service is w
 ## 🧩 Microservices At a Glance
 
 ### 🕷️ Scraper Service — `service-scraper/` (Go)
-The high-performance data harvester. Uses Playwright-Go to control a headless Chromium browser. Launches one **Goroutine per URL**, achieving true parallelism with minimal memory overhead.
+High-performance data harvester. Uses Playwright-Go for headless Chromium automation. Launches one **Goroutine per URL** for true parallelism.
 
-**Why Go?** Goroutines are lightweight (~4KB RAM each vs ~2MB for OS threads), allowing thousands of concurrent browser sessions.
-
-**What it does:**
-- Launches concurrent Goroutines for each job URL
+- Concurrent Goroutines for each target job URL
 - Renders JavaScript-heavy pages via headless Chromium
-- Extracts job title, company, URL, and description
+- Extracts title, company, URL, and description
 - Publishes a `JobFound` event to the `jobs.new` Kafka topic
-- **Does NOT write to any database** — fully decoupled
+- **Does NOT write to any database** — fully decoupled from persistence
 
 ---
 
 ### 📥 Ingestion Worker — `service-ingestion/` (Node.js)
-A silent background process with no open ports. It only listens to Kafka.
+Silent background process. Listens to Kafka and persists data to MongoDB.
 
-**Why Node.js?** Moving JSON from a network stream (Kafka) to a NoSQL store (MongoDB) is purely I/O-bound — Node's async event loop handles this with extremely low RAM usage.
-
-**What it does:**
-- Subscribes to `jobs.new` Kafka topic (consumer group: `mongo-ingestion-group`)
-- Parses each event's JSON payload
-- Performs an **upsert** operation into MongoDB (deduplication by URL)
-- Horizontally scalable — spin up more containers; Kafka auto-redistributes load
+- Subscribes to `jobs.new` topic (consumer group: `mongo-ingestion-group`)
+- Performs **upsert** into MongoDB (deduplicates by URL)
+- Exposes `GET /api/jobs` with **pagination** (`?page=`, `?limit=`) and **text search** (`?q=`)
+- Horizontally scalable — Kafka auto-redistributes load across replicas
 
 ---
 
 ### 👤 User Service — `service-user/` (NestJS + TypeScript)
-The authentication and profile management backbone.
+Authentication and profile management backbone.
 
-**What it does:**
-- User registration and login with **Firebase Auth**
+- Firebase Auth integration; token verification via Firebase Admin SDK
 - User profiles with skill arrays (populated from resume parsing)
 - Connects to **PostgreSQL** via **Prisma ORM**
-- Calls the Resume Service via **gRPC** when a resume is uploaded
+- Calls Resume Service via **gRPC** to extract skills on upload
+- File uploads handled by **Multer** with PDF-only enforcement
 
 ---
 
-### 📄 Resume Service — `service-resume/` (Python + FastAPI)
-The AI/NLP engine that extracts intelligence from PDF resumes.
+### 📄 Resume API — `service-resume/` (Python + FastAPI)
+AI/NLP engine that extracts intelligence from PDF resumes.
 
-**What it does:**
-- Accepts PDF uploads via REST API
-- Extracts raw text using **PyPDF2**
-- Runs extracted text through a **spaCy PhraseMatcher NLP pipeline**
-- Identifies 15+ technical skills (React, Go, Kafka, Kubernetes, etc.)
-- Exposes a **gRPC server** (`port 50051`) for high-performance inter-service calls
-- Returns structured JSON with extracted skills
+- Accepts PDF uploads via `POST /parse`
+- Extracts raw text with **PyPDF2**
+- Runs text through a **spaCy PhraseMatcher** pipeline (15+ recognised tech skills)
+- Also exposes a **gRPC server** (port `50051`) for synchronous inter-service calls
+- Returns structured JSON: `{ filename, status, extracted_skills[] }`
 
 ---
 
 ### 🔔 Notification Service — `service-notification/` (Node.js + Express)
-The proactive alerting engine. Listens for new jobs and notifies matched users.
+Proactive alerting engine for matched job events.
 
-**What it does:**
 - Subscribes to `jobs.new` Kafka topic (consumer group: `email-notification-group`)
 - Matches incoming jobs against stored user skill preferences
-- Sends personalised email alerts using **Nodemailer** (Ethereal SMTP in dev)
+- Sends personalised email alerts via **Nodemailer** (Ethereal SMTP in dev)
 - Exposes `/health` endpoint via Express for container health-checks
-- Routed through Nginx at `/api/notifications/health`
 
 ---
 
-### 🔍 Elasticsearch — `docker-compose.yml` (Managed Container)
-The search engine powering full-text job discovery.
+### 🖥️ Frontend — `frontend-next/` (Next.js + React)
+Candidate-facing web portal. Served through Nginx at `http://localhost`.
 
-**Why not just use MongoDB for search?**
-MongoDB uses regex or simple text indexes which scan documents linearly. Elasticsearch uses an **inverted index** — like the index at the back of a textbook — so it doesn't scan; it looks up. The difference at 1,000,000 documents is orders of magnitude.
-
-- Single-node cluster (KRaft equivalent: `discovery.type=single-node`)
-- Security disabled for local development
-- JVM capped at 1GB (`ES_JAVA_OPTS=-Xms1g -Xmx1g`)
-- Persistent data via `elastic_data` volume
+- Live **Job Feed** auto-loaded from the Ingestion Service API
+- **Search bar** with real-time keyword filtering (`?q=`)
+- **AI Resume Parser** — upload a PDF and instantly see your extracted skills
+- Firebase Auth integration for user login and profile management
 
 ---
 
-## 🔄 The Data Flow: End-to-End
+## 🔄 End-to-End Data Flow
 
-Understanding how a single job listing travels through the system:
+How a single job listing travels through the entire system:
 
 ```
 1. 🕷️  Go Scraper opens a headless Chrome browser
@@ -205,14 +191,14 @@ Understanding how a single job listing travels through the system:
         ↓
 3. 📤  Publishes JSON event to Kafka topic: jobs.new
         ↓ (Kafka fans out to all consumers)
-       ┌────────────────┬──────────────────┐
-       ↓                ↓                  ↓
-4a. 📥 Ingestion    4b. 🔔 Notification   4c. 🔍 (Future)
-    Worker saves       Service emails         ES Indexer
-    to MongoDB         matched users          indexes for search
+       ┌────────────────────┬────────────────────┐
+       ↓                    ↓                    ↓
+4a. 📥 Ingestion         4b. 🔔 Notification    4c. 🖥️ Frontend
+    Worker upserts          Service emails           Job Feed shows
+    to MongoDB              matched users            new listings
 ```
 
-**The key insight:** Steps 4a, 4b, and 4c all happen **simultaneously and independently**. If MongoDB goes down, the Notification Service still sends emails. If the email server is slow, MongoDB still saves data. No service blocks any other.
+Steps 4a, 4b, and 4c happen **simultaneously and independently**. No service blocks any other.
 
 ---
 
@@ -220,18 +206,17 @@ Understanding how a single job listing travels through the system:
 
 The platform uses **polyglot persistence** — the right database for the right job:
 
-| Database | Service | Port | Purpose |
+| Database | Service | Exposed Port | Purpose |
 |---|---|---|---|
-| **PostgreSQL 15** | User Service | 5433 (host) | ACID-compliant relational data: users, auth, profiles, subscriptions |
-| **MongoDB** | Ingestion Worker | 27017 (host) | Flexible document storage for semi-structured job listings |
-| **Elasticsearch 8.10** | Future Search API | 9200 (host) | Full-text inverted index for lightning-fast job search |
+| **PostgreSQL 15** | User Service | `5433` (host) | ACID-compliant user data: profiles, auth, skill arrays |
+| **MongoDB** | Ingestion Worker | `27017` (host) | Flexible document storage for semi-structured job listings |
+| **Elasticsearch 8.10** | Future Search API | `9200` (host) | Full-text inverted index for lightning-fast job search |
 
-### PostgreSQL Schema (via Prisma)
+### PostgreSQL Schema (Prisma)
 ```prisma
 model User {
-  id                 String    @id @default(uuid())
+  id                 String    @id
   email              String    @unique
-  passwordHash       String
   role               Role      @default(USER)
   subscriptionStatus SubStatus @default(FREE)
   profile            Profile?
@@ -240,12 +225,12 @@ model User {
 }
 
 model Profile {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  firstName String
-  lastName  String
-  resumeUrl String?
-  extractedSkills String[] // Populated by the AI Resume Service
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  firstName       String
+  lastName        String
+  resumeUrl       String?
+  extractedSkills String[]  // Populated by the AI Resume Service
 }
 ```
 
@@ -255,9 +240,9 @@ model Profile {
   "_id": "ObjectId('...')",
   "title": "Senior Go Engineer",
   "company": "TechCorp Inc.",
-  "url": "https://linkedin.com/jobs/...",
+  "url": "https://linkedin.com/jobs/view/12345",
   "raw_description": "We are looking for a Go developer...",
-  "scraped_at": "2026-08-04T04:00:00Z"
+  "scraped_at": "2026-09-16T10:00:00Z"
 }
 ```
 
@@ -267,7 +252,7 @@ model Profile {
 
 ### Prerequisites
 
-You only need **two tools** installed on your machine. Everything else runs inside Docker.
+You only need **two tools** installed. Everything else runs inside Docker.
 
 | Tool | Minimum Version | Download |
 |---|---|---|
@@ -275,8 +260,6 @@ You only need **two tools** installed on your machine. Everything else runs insi
 | Git | Any recent | [git-scm.com](https://git-scm.com/) |
 
 > ✅ You do **NOT** need Go, Node.js, Python, or Java installed locally.
-
----
 
 ### 1. Clone the Repository
 
@@ -287,58 +270,57 @@ cd job-aggregator-platform
 
 ### 2. Start the Entire Platform
 
-A single script handles everything — cleaning old containers, building images, and applying database migrations:
-
 ```bash
-./deploy-local.sh
+docker compose up -d --build
 ```
 
-This script:
-1. 🧹 Tears down any existing containers (`docker compose down`)
-2. 🏗️ Rebuilds the Go scraper image from scratch (`--no-cache`)
-3. 🌐 Spins up the entire cluster in detached mode (`-d`)
-4. 💾 Waits for PostgreSQL to be ready, then runs Prisma migrations
+This will build all images and start the full cluster in detached mode. The first build takes ~3-5 minutes as it pulls base images and compiles all services.
 
-### 3. Verify Everything is Running
+### 3. Run Database Migrations
+
+After the cluster is up, apply the Prisma schema to PostgreSQL:
+
+```bash
+docker compose exec user-service npx prisma migrate deploy
+```
+
+### 4. Verify Everything is Running
 
 ```bash
 docker compose ps
 ```
 
-You should see all services with a status of `Up`:
+All services should show status `running`:
 
-| Service | Port | Status |
+| Container | Port | Role |
 |---|---|---|
-| `api-gateway` | 80 | Up |
-| `frontend-next` | — | Up |
-| `scraper-service` | — | Up |
-| `ingestion-service` | — | Up |
-| `notification-service` | 4000 | Up |
-| `user-service` | 3000 | Up |
-| `resume-service` | 8000 | Up |
-| `kafka` | 9092 | Up |
-| `job-mongo` | 27017 | Up |
-| `user-postgres` | 5433 | Up |
-| `elasticsearch` | 9200 | Up |
+| `api-gateway` | `80` | Nginx reverse proxy |
+| `frontend-next` | *(internal)* | Next.js web UI |
+| `user-service` | *(internal)* | NestJS auth & profiles |
+| `resume-api` | *(internal)* | FastAPI NLP parser |
+| `resume-grpc` | *(internal)* | gRPC resume server |
+| `ingestion-service` | *(internal)* | Kafka → MongoDB worker |
+| `scraper-service` | *(internal)* | Go headless scraper |
+| `notification-service` | *(internal)* | Kafka → Email alerter |
+| `kafka` | `9092` | Event bus |
+| `job-mongo` | `27017` | Job listings DB |
+| `user-postgres` | `5433` | User profiles DB |
+| `elasticsearch` | `9200` | Search index |
 
-### 4. Verify Key Services
+---
 
-**Elasticsearch** (takes ~30s to boot its JVM):
-```bash
-curl http://localhost:9200
-# Expected: JSON response with "tagline": "You Know, for Search"
-```
+## 🌐 Accessing the Platform
 
-**Notification Service Health Check:**
-```bash
-curl http://localhost/api/notifications/health
-# Expected: {"status":"Notification Service is running."}
-```
+Once all containers are running, open your browser:
 
-**Resume Service Docs:**
-```
-http://localhost:8000/docs
-```
+| Interface | URL | Description |
+|---|---|---|
+| **Web App** | [http://localhost](http://localhost) | Main candidate portal (job feed + resume parser) |
+| **Resume API Docs** | [http://localhost/api/resume/docs](http://localhost/api/resume/docs) | Interactive FastAPI Swagger UI |
+| **Job Feed API** | [http://localhost/api/jobs](http://localhost/api/jobs) | Raw JSON job listing endpoint |
+| **Notification Health** | [http://localhost/api/notifications/health](http://localhost/api/notifications/health) | Service health check |
+| **Grafana Metrics** | [http://localhost:3001](http://localhost:3001) | Prometheus + Grafana dashboards |
+| **Elasticsearch** | [http://localhost:9200](http://localhost:9200) | ES cluster status |
 
 ---
 
@@ -347,64 +329,77 @@ http://localhost:8000/docs
 ```
 job-aggregator-platform/
 │
-├── 📄 docker-compose.yml       # Orchestrates the entire cluster
-├── 📄 deploy-local.sh          # One-command local deployment script
+├── 📄 docker-compose.yml          # Orchestrates the entire cluster
+├── 📄 deploy-local.sh             # One-command local deployment script
 ├── 📄 .gitignore
 │
-├── 🕷️  service-scraper/         # Go — Concurrent web scraper → Kafka producer
-│   ├── main.go                  # Entry point: Goroutine pool + Playwright
-│   ├── kafka.go                 # Kafka writer initialization & publish logic
-│   ├── models.go                # DBJob struct (JSON serializable)
-│   ├── Dockerfile               # Multi-stage Go build
-│   ├── go.mod
-│   └── go.sum
-│
-├── 📥 service-ingestion/        # Node.js — Kafka consumer → MongoDB writer
-│   ├── index.js                 # Consumer loop with upsert logic
-│   ├── Dockerfile
-│   └── package.json
-│
-├── 👤 service-user/             # NestJS/TypeScript — Auth + User Profiles
-│   ├── src/
-│   │   ├── auth/                # JWT strategies, guards, decorators
-│   │   └── users/               # Controllers, services, DTOs
-│   ├── prisma/
-│   │   └── schema.prisma        # PostgreSQL schema definition
+├── 🕷️  service-scraper/            # Go — Concurrent web scraper → Kafka producer
+│   ├── main.go                    # Entry point: Goroutine pool + Playwright
+│   ├── kafka.go                   # Kafka writer initialisation & publish logic
+│   ├── models.go                  # DBJob struct (JSON serialisable)
+│   ├── scraper_test.go            # Unit tests
 │   └── Dockerfile
 │
-├── 📄 service-resume/           # Python/FastAPI — NLP resume parser + gRPC server
-│   ├── main.py                  # FastAPI REST endpoints
-│   ├── grpc_server.py           # gRPC server implementation
-│   ├── resume_pb2.py            # Auto-generated Protobuf stubs
+├── 📥 service-ingestion/           # Node.js — Kafka consumer → MongoDB writer + REST API
+│   ├── index.js                   # Consumer loop, upsert logic, paginated /api/jobs endpoint
+│   └── Dockerfile
+│
+├── 👤 service-user/                # NestJS/TypeScript — Auth + User Profiles
+│   ├── src/
+│   │   ├── auth/                  # Firebase guards, decorators
+│   │   └── user/                  # Controllers, services, DTOs
+│   ├── prisma/
+│   │   └── schema.prisma          # PostgreSQL schema definition
+│   └── Dockerfile
+│
+├── 📄 service-resume/              # Python/FastAPI — REST resume parser + gRPC server
+│   ├── main.py                    # FastAPI REST endpoint (POST /parse)
+│   ├── grpc_server.py             # gRPC server implementation
+│   ├── resume_pb2.py              # Auto-generated Protobuf stubs
 │   ├── requirements.txt
 │   └── Dockerfile
 │
-├── 🔔 service-notification/     # Node.js/Express — Kafka consumer → Email alerts
-│   ├── index.js                 # Consumer + Nodemailer SMTP logic
-│   ├── Dockerfile
-│   └── package.json
+├── 🔔 service-notification/        # Node.js/Express — Kafka consumer → Email alerts
+│   ├── index.js                   # Consumer + Nodemailer SMTP logic
+│   └── Dockerfile
 │
 ├── 🌐 nginx/
-│   └── nginx.conf               # API Gateway routing rules
+│   └── nginx.conf                 # API Gateway routing rules
 │
-├── 🔗 shared-protos/            # Protobuf definitions (shared across services)
+├── 🔗 shared-protos/               # Protobuf definitions (shared across services)
+│   └── resume.proto
 │
-├── 🖥️  frontend-next/            # Next.js — Candidate-facing web app
-└── 🖥️  frontend-admin/           # Angular — Internal admin dashboard
+├── 🖥️  frontend-next/              # Next.js 15 — Candidate-facing web app
+│   ├── app/                       # Next.js App Router pages
+│   ├── components/
+│   │   ├── JobSearch.tsx          # Job feed + search bar
+│   │   └── ResumeUpload.tsx       # PDF upload + skill display
+│   ├── lib/
+│   │   └── firebase.ts            # Firebase Auth initialisation
+│   └── Dockerfile
+│
+├── 🖥️  frontend-admin/             # Angular — Internal admin dashboard (planned)
+│
+├── .github/
+│   ├── workflows/                 # GitHub Actions CI/CD pipelines
+│   ├── ISSUE_TEMPLATE/            # Bug report & feature request templates
+│   └── PULL_REQUEST_TEMPLATE.md   # PR description template
+│
+└── docs/                          # Additional architecture documentation
 ```
 
 ---
 
 ## ⚙️ Environment Variables
 
-Each service reads its configuration from environment variables injected by Docker Compose. For local development, these are already set in `docker-compose.yml`.
+All environment variables are pre-configured in `docker-compose.yml` for local development. **Never commit real secrets to Git.**
 
 ### Scraper Service
 | Variable | Default | Description |
 |---|---|---|
 | `KAFKA_BROKER` | `kafka:9092` | Internal Kafka broker address |
 
-### Ingestion Worker
+### Ingestion Service
 | Variable | Default | Description |
 |---|---|---|
 | `KAFKA_BROKER` | `kafka:9092` | Internal Kafka broker address |
@@ -413,45 +408,68 @@ Each service reads its configuration from environment variables injected by Dock
 ### User Service
 | Variable | Example | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://admin:password123@user-postgres:5432/job_aggregator_users` | Prisma PostgreSQL connection |
-| `RESUME_GRPC_URL` | `resume-service:50051` | Internal gRPC address for resume service |
+| `DATABASE_URL` | `postgresql://admin:password@user-postgres:5432/db` | Prisma PostgreSQL connection |
+| `RESUME_GRPC_URL` | `resume-grpc:50051` | Internal gRPC address for resume service |
+| `FIREBASE_PROJECT_ID` | `your-project-id` | Firebase project for token verification |
 
-### Notification Service
-| Variable | Default | Description |
-|---|---|---|
-| `KAFKA_BROKER` | `kafka:9092` | Internal Kafka broker address |
+### Frontend (Next.js)
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase web API key |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase auth domain |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Firebase project ID |
 
-> ⚠️ **Production Note:** Never commit real credentials. Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, or Doppler) and inject secrets at runtime.
+> ⚠️ **Production:** Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, or Doppler) and inject secrets at runtime. Never hardcode credentials.
 
 ---
 
 ## 🌐 API Reference
 
-All external traffic is routed through the **Nginx Gateway on port 80**.
+All external traffic routes through **Nginx on port 80**.
 
-### Resume Service (FastAPI) — `http://localhost:8000`
+### Job Listings — `GET /api/jobs`
 
-#### `POST /parse`
+Fetch paginated job listings with optional keyword search.
+
+```
+GET /api/jobs?page=1&limit=20&q=React
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | Page number |
+| `limit` | integer | `20` | Results per page |
+| `q` | string | *(none)* | Keyword filter (title or company) |
+
+**Response:**
+```json
+{
+  "jobs": [{ "title": "...", "company": "...", "url": "...", "scraped_at": "..." }],
+  "total": 145,
+  "page": 1,
+  "limit": 20
+}
+```
+
+### Resume Parser — `POST /api/resume/parse`
+
 Upload a PDF resume and extract technical skills.
 
 ```bash
-curl -X POST http://localhost:8000/parse \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@./my_resume.pdf"
+curl.exe -X POST http://localhost/api/resume/parse -F "file=@resume.pdf"
 ```
 
 **Response:**
 ```json
 {
-  "filename": "my_resume.pdf",
+  "filename": "resume.pdf",
   "status": "success",
   "extracted_skills": ["Go", "Docker", "Kafka", "NestJS", "PostgreSQL"]
 }
 ```
 
-### Notification Service (Express) — via Nginx
+### Notification Health — `GET /api/notifications/health`
 
-#### `GET /api/notifications/health`
 ```bash
 curl http://localhost/api/notifications/health
 ```
@@ -459,20 +477,30 @@ curl http://localhost/api/notifications/health
 { "status": "Notification Service is running." }
 ```
 
-### User Service (NestJS) — Planned routes via `/api/users/`
+### User Service — `POST /api/users/sync`
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/users/auth/signup` | Register a new user |
-| `POST` | `/api/users/auth/login` | Authenticate and receive JWT |
-| `GET` | `/api/users/profile` | Get the current user's profile |
-| `POST` | `/api/users/profile/resume` | Upload and parse resume PDF |
+Sync a Firebase-authenticated user to the PostgreSQL database. Requires a valid Firebase Bearer token.
+
+```bash
+curl -X POST http://localhost/api/users/sync \
+  -H "Authorization: Bearer <firebase_id_token>"
+```
+
+### User Resume Upload — `POST /api/users/upload-resume`
+
+Upload and parse a resume for a logged-in user (stores extracted skills to their profile).
+
+```bash
+curl.exe -X POST http://localhost/api/users/upload-resume \
+  -H "Authorization: Bearer <firebase_id_token>" \
+  -F "resume=@resume.pdf"
+```
 
 ---
 
 ## 🔀 Internal Communication (gRPC)
 
-The **User Service** and **Resume Service** communicate over gRPC for low-latency, type-safe inter-service calls. gRPC uses HTTP/2 and Protocol Buffers (binary format) instead of HTTP/1.1 JSON — approximately 7x faster for high-frequency calls.
+The **User Service** and **Resume gRPC Service** communicate over gRPC for low-latency, type-safe inter-service calls.
 
 **Protobuf Contract** (`shared-protos/resume.proto`):
 ```protobuf
@@ -497,49 +525,47 @@ message ParseResponse {
 **Flow:**
 ```
 Browser uploads PDF
-    → Nginx (port 80)
-        → User Service (NestJS, port 3000)
-            → gRPC call → Resume Service (FastAPI, port 50051)
-                ← returns extracted skills []
-            ← saves skills to PostgreSQL via Prisma
-        ← returns updated profile JSON
-    ← 200 OK
+  → Nginx (port 80)
+    → User Service (NestJS)
+      → gRPC call → Resume gRPC Service (port 50051)
+          ← returns extracted skills []
+      ← saves skills to PostgreSQL via Prisma
+    ← returns updated profile JSON
+  ← 200 OK
 ```
 
 ---
 
 ## 📡 Kafka Topics & Event Contracts
 
-Apache Kafka runs in **KRaft mode** — no ZooKeeper required. The entire Kafka cluster is a single broker for local development.
+Apache Kafka runs in **KRaft mode** — no ZooKeeper required.
 
 ### Topic: `jobs.new`
 
 **Producer:** `service-scraper` (Go)
-**Consumers:**
-- `service-ingestion` (consumer group: `mongo-ingestion-group`)
-- `service-notification` (consumer group: `email-notification-group`)
 
-**Message Schema** (JSON, keyed by job URL):
+**Consumers:**
+- `service-ingestion` (group: `mongo-ingestion-group`)
+- `service-notification` (group: `email-notification-group`)
+
+**Message Schema:**
 ```json
 {
   "title": "Senior Go Developer",
   "company": "Acme Corp",
   "url": "https://linkedin.com/jobs/view/12345",
   "raw_description": "We are looking for a Go developer with Kafka experience...",
-  "scraped_at": "2026-08-04T04:00:00Z"
+  "scraped_at": "2026-09-16T04:00:00Z"
 }
 ```
 
-**Message Key:** The job's URL is used as the Kafka partition key. This guarantees all updates to the same job listing always land on the same partition, enabling ordered processing.
-
-**Consumer Groups — Why They Matter:**
-Because the ingestion worker and notification service each belong to different consumer groups, Kafka delivers every message to **both** of them independently. Adding a third consumer (e.g., an Elasticsearch indexer) requires zero changes to existing services — just a new consumer with a new group ID.
+**Message Key:** The job URL is used as the Kafka partition key, guaranteeing ordered processing of updates for the same listing.
 
 ---
 
 ## 🧪 Testing
 
-### Running Tests Locally
+### Running Tests
 
 **Go Scraper:**
 ```bash
@@ -550,52 +576,24 @@ go test ./...
 **NestJS User Service:**
 ```bash
 cd service-user
-npm test          # Unit tests (Jest)
-npm run test:e2e  # End-to-end tests
+npm test            # Unit tests (Jest)
+npm run test:e2e    # End-to-end tests
 ```
 
 **FastAPI Resume Service:**
 ```bash
 cd service-resume
-pip install pytest
+pip install pytest httpx
 pytest
 ```
 
 ### Testing Strategy
 
-| Layer | Tools | Target Coverage |
+| Layer | Tools | Coverage Target |
 |---|---|---|
 | **Unit** | Jest (TS), `go test` (Go), pytest (Python) | 70%+ |
-| **Integration** | Testcontainers (isolated DB instances per test) | Key data paths |
-| **E2E** | Playwright / Cypress (frontend flows) | Critical user journeys |
-
----
-
-## 📜 Commit Conventions
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit message must follow the format:
-
-```
-<type>(<scope>): <description>
-```
-
-| Type | When to use |
-|---|---|
-| `feat` | A new feature |
-| `fix` | A bug fix |
-| `refactor` | Code change that neither adds a feature nor fixes a bug |
-| `chore` | Build system, dependency updates, config changes |
-| `docs` | Documentation only |
-| `test` | Adding or updating tests |
-| `style` | Formatting (no logic changes) |
-
-**Examples from this project's history:**
-```
-feat(ingestion): create node.js worker to consume kafka events and persist to mongodb
-refactor(scraper): decouple MongoDB and implement Kafka producer for asynchronous event publishing
-chore(search): provision single-node elasticsearch container for high-performance inverted index searching
-feat(notification): implement express service and nodemailer to consume kafka events and trigger email alerts
-```
+| **Integration** | Testcontainers (isolated DB per test run) | All critical data paths |
+| **E2E** | Playwright / Cypress | Critical user journeys |
 
 ---
 
@@ -603,49 +601,60 @@ feat(notification): implement express service and nodemailer to consume kafka ev
 
 | Phase | Description | Status |
 |---|---|---|
-| **Phase 1** | Project setup, monorepo structure, Docker Compose foundation | ✅ Complete |
-| **Phase 2** | Nginx API Gateway, internal networking, path-based routing | ✅ Complete |
-| **Phase 3–4** | NestJS User Service, Prisma ORM, JWT auth, PostgreSQL schema | ✅ Complete |
-| **Phase 5** | Go scraper with Playwright, headless browser, concurrent Goroutines | ✅ Complete |
+| **Phase 1** | Monorepo setup, Docker Compose foundation | ✅ Complete |
+| **Phase 2** | Nginx API Gateway, path-based routing | ✅ Complete |
+| **Phase 3–4** | NestJS User Service, Prisma ORM, PostgreSQL schema | ✅ Complete |
+| **Phase 5** | Go scraper with Playwright, concurrent Goroutines | ✅ Complete |
 | **Phase 6** | MongoDB integration, Scraper → DB pipeline | ✅ Complete |
-| **Phase 7–12** | FastAPI Resume Service, spaCy NLP, gRPC inter-service communication | ✅ Complete |
+| **Phase 7–12** | FastAPI Resume Service, spaCy NLP, gRPC | ✅ Complete |
 | **Phase 13** | Apache Kafka (KRaft mode) infrastructure | ✅ Complete |
-| **Phase 14** | Scraper decoupled from MongoDB — now publishes to Kafka | ✅ Complete |
-| **Phase 15** | Node.js Ingestion Worker — Kafka consumer → MongoDB | ✅ Complete |
+| **Phase 14** | Scraper decoupled — publishes to Kafka | ✅ Complete |
+| **Phase 15** | Node.js Ingestion Worker — Kafka → MongoDB | ✅ Complete |
 | **Phase 16** | Elasticsearch provisioning | ✅ Complete |
-| **Phase 18** | Notification Service — Kafka consumer → Email alerts | ✅ Complete |
-| **Phase 17** | Elasticsearch Indexer Worker (Kafka → ES) | 🔜 Planned |
+| **Phase 17** | Notification Service — Kafka → Email alerts | ✅ Complete |
+| **Phase 18** | Bug fixes: pagination, gRPC errors, Kafka retry | ✅ Complete |
 | **Phase 19** | Next.js frontend — Candidate job portal | ✅ Complete |
-| **Phase 20** | Angular Admin Dashboard — Platform analytics | 🔜 Planned |
-| **Phase 21** | GitHub Actions CI/CD pipeline | ✅ Complete |
-| **Phase 22** | Production deployment (ECS / Railway / Render) | 🔜 Planned |
+| **Phase 20** | GitHub Actions CI/CD pipeline | ✅ Complete |
+| **Phase 21** | Elasticsearch Indexer Worker (Kafka → ES) | 🔜 Planned |
+| **Phase 22** | Angular Admin Dashboard — Platform analytics | 🔜 Planned |
+| **Phase 23** | Production deployment (ECS / Railway / Render) | 🔜 Planned |
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions of all kinds — bug fixes, features, documentation, and tests.
+
+Please read **[CONTRIBUTING.md](./CONTRIBUTING.md)** for the full guide on:
+- Setting up your local development environment
+- Our branching strategy and naming conventions
+- Commit message format (Conventional Commits)
+- How to open issues and pull requests
+- Coding standards for each language in the monorepo
 
 ---
 
 ## 🔒 Security
 
-Security is built into the architecture, not bolted on afterward.
-
 | Area | Implementation |
 |---|---|
-| **Authentication** | Firebase Auth; JWT tokens provided and verified by Firebase Admin SDK |
-| **API Access** | All routes protected by NestJS guards; public routes explicitly whitelisted |
-| **Secrets** | Never committed to Git; injected via environment variables; production uses a secrets manager |
-| **Data in transit** | Nginx terminates TLS for external traffic; internal services communicate over the isolated `microservices-net` bridge |
-| **Data at rest** | PostgreSQL and MongoDB volumes encrypted in production |
-| **Input validation** | All NestJS endpoints validated via `class-validator` DTOs; FastAPI uses Pydantic models |
+| **Authentication** | Firebase Auth; ID tokens verified server-side via Firebase Admin SDK |
+| **API Access** | NestJS `FirebaseAuthGuard` protects all authenticated routes |
+| **Secrets** | Never committed to Git; injected via Docker environment variables |
+| **Data in transit** | Nginx terminates external TLS; internal services on isolated `microservices-net` bridge |
+| **Input validation** | NestJS DTOs validated via `class-validator`; FastAPI uses Pydantic; PDF-only enforced on upload |
 | **Kafka** | Internal-only broker; never exposed to the public internet |
-| **Elasticsearch** | Security disabled for dev only; X-Pack security must be enabled in production |
-| **Least privilege** | Each service only has access to its own database; no cross-service database access |
+| **Elasticsearch** | Security disabled for dev; X-Pack **must** be enabled in production |
+| **Least privilege** | Each service only has access to its own database |
 
-> 🚨 **Before deploying to production:** Enable `xpack.security.enabled=true` on Elasticsearch, rotate all passwords, enable MongoDB authentication, and configure a proper secrets manager.
+> 🚨 **Before deploying to production:** Enable `xpack.security.enabled=true` on Elasticsearch, rotate all default passwords, enable MongoDB authentication, and configure a secrets manager.
 
 ---
 
 ## 📄 License
 
 This project is licensed under the **GNU General Public License v3.0**.
-You are free to use, study, modify and distribute this software under the same license.
+You are free to use, study, modify and distribute this software under the same terms.
 See the [LICENSE](./LICENSE) file for full details.
 
 ---

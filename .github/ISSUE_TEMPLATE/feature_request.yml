@@ -1,0 +1,95 @@
+name: ✨ Feature Request
+description: Propose a new feature or improvement for any service
+title: "[Feature] <short description>"
+labels: ["enhancement", "needs triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to suggest an improvement! Please fill this out completely so the team can evaluate and prioritise your request.
+
+  - type: dropdown
+    id: service
+    attributes:
+      label: Target Service / Area
+      description: Which service or area would this feature affect?
+      options:
+        - service-scraper (Go)
+        - service-ingestion (Node.js)
+        - service-user (NestJS)
+        - service-resume (Python / FastAPI)
+        - service-notification (Node.js)
+        - frontend-next (Next.js)
+        - nginx / api-gateway
+        - kafka / infrastructure
+        - docker-compose / deployment
+        - CI/CD / GitHub Actions
+        - documentation
+        - new service (please describe below)
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What is the current limitation?
+      placeholder: "Currently, the job feed displays all scraped listings without any way to filter by location. Users browsing the frontend have no way to narrow results to their city or country."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature you'd like to see. Be as specific as possible.
+      placeholder: |
+        Add a `location` field to the scraper's `DBJob` struct and Kafka message payload.
+        Extend the MongoDB job document to include `location`.
+        Add a `?location=` query parameter to the `GET /api/jobs` endpoint in the ingestion service.
+        Add a location filter dropdown to the `JobSearch.tsx` frontend component.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered other approaches? Why do you prefer your proposed solution?
+      placeholder: "I considered using Elasticsearch for location-based filtering, but that requires the ES indexer to be implemented first (Phase 21). A simple MongoDB query filter is a faster path to value."
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Suggested Priority
+      options:
+        - Low — Nice to have
+        - Medium — Would meaningfully improve the platform
+        - High — Blocks important functionality
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How will we know this feature is complete? List specific, testable conditions.
+      placeholder: |
+        - [ ] Scraped jobs include a `location` field in the Kafka message and MongoDB document
+        - [ ] `GET /api/jobs?location=London` returns only jobs with matching location
+        - [ ] The frontend search UI has a location dropdown that filters results
+        - [ ] Unit tests cover the new query parameter logic
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I am willing to implement this feature myself (optional)
+          required: false
