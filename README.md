@@ -73,6 +73,7 @@ This platform follows a **polyglot microservices** pattern — each service is w
 │                    NGINX API GATEWAY                                │
 │        Reverse proxy · Path-based routing · SSL termination         │
 │                                                                     │
+│  /             →  frontend-next:3000 (Next.js)                      │
 │  /api/users/  →  user-service:3000  (NestJS)                       │
 │  /api/resume/ →  resume-service:8000  (FastAPI)                     │
 │  /api/notifications/ → notification-service:4000  (Express)         │
@@ -309,6 +310,7 @@ You should see all services with a status of `Up`:
 | Service | Port | Status |
 |---|---|---|
 | `api-gateway` | 80 | Up |
+| `frontend-next` | — | Up |
 | `scraper-service` | — | Up |
 | `ingestion-service` | — | Up |
 | `notification-service` | 4000 | Up |
@@ -613,9 +615,9 @@ feat(notification): implement express service and nodemailer to consume kafka ev
 | **Phase 16** | Elasticsearch provisioning | ✅ Complete |
 | **Phase 18** | Notification Service — Kafka consumer → Email alerts | ✅ Complete |
 | **Phase 17** | Elasticsearch Indexer Worker (Kafka → ES) | 🔜 Planned |
-| **Phase 19** | Next.js frontend — Candidate job portal | 🔜 Planned |
+| **Phase 19** | Next.js frontend — Candidate job portal | ✅ Complete |
 | **Phase 20** | Angular Admin Dashboard — Platform analytics | 🔜 Planned |
-| **Phase 21** | GitHub Actions CI/CD pipeline | 🔜 Planned |
+| **Phase 21** | GitHub Actions CI/CD pipeline | ✅ Complete |
 | **Phase 22** | Production deployment (ECS / Railway / Render) | 🔜 Planned |
 
 ---

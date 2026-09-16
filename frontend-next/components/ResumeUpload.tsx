@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { auth } from '../lib/firebase';
 
 export default function ResumeUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,22 +12,20 @@ export default function ResumeUpload() {
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) { setError('Please select a PDF file first.'); return; }
-    if (!auth.currentUser) { setError('Please log in before uploading.'); return; }
 
     setError('');
     setUploading(true);
     const formData = new FormData();
-    formData.append('resume', file);
+    formData.append('file', file); // Python FastAPI expects 'file'
 
     try {
-      const token = await auth.currentUser.getIdToken();
-      const response = await fetch('http://localhost/api/users/upload-resume', {
+      // Pointing directly to the Python NLP service which doesn't require Auth
+      const response = await fetch('/api/resume/parse', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
         body: formData,
       });
       const data = await response.json();
-      if (data.skills) setSkills(data.skills);
+      if (data.extracted_skills) setSkills(data.extracted_skills);
     } catch (err) {
       console.error('Upload failed', err);
       setError('Upload failed. Please try again.');
