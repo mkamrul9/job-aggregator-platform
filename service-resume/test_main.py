@@ -36,3 +36,28 @@ def test_parse_resume_success(mock_pdf_reader):
     assert "filename" in response.json()
     assert response.json()["status"] == "success"
     assert type(response.json()["extracted_skills"]) == list
+    assert "Python" in response.json()["extracted_skills"]
+    assert "Java" in response.json()["extracted_skills"]
+    assert "Kubernetes" in response.json()["extracted_skills"]
+
+@patch('main.PdfReader')
+def test_parse_resume_extracts_expanded_skills(mock_pdf_reader):
+    mock_instance = MagicMock()
+    mock_page = MagicMock()
+    mock_page.extract_text.return_value = (
+        "Full Stack Developer proficient in TypeScript, AWS, Redis, GraphQL, Django, and Rust."
+    )
+    mock_instance.pages = [mock_page]
+    mock_pdf_reader.return_value = mock_instance
+
+    mock_pdf_bytes = b"%PDF-1.4\n%FakePDFContent..."
+    response = client.post(
+        "/parse",
+        files={"file": ("resume_expanded.pdf", io.BytesIO(mock_pdf_bytes), "application/pdf")}
+    )
+
+    assert response.status_code == 200
+    extracted = response.json()["extracted_skills"]
+    expected_new_skills = ["TypeScript", "AWS", "Redis", "GraphQL", "Django", "Rust"]
+    for skill in expected_new_skills:
+        assert skill in extracted, f"Expected {skill} to be in {extracted}"
