@@ -54,9 +54,15 @@ async function run() {
         const limit = parseInt(req.query.limit) || 20;
         const page  = parseInt(req.query.page)  || 1;
         const skip  = (page - 1) * limit;
-        const jobs  = await jobsCollection.find()
+        const q = req.query.q;
+        let query = {};
+        if (q) {
+           query = { $or: [ { title: new RegExp(q, 'i') }, { company: new RegExp(q, 'i') } ] };
+        }
+
+        const jobs  = await jobsCollection.find(query)
           .sort({ scraped_at: -1 }).skip(skip).limit(limit).toArray();
-        const total = await jobsCollection.countDocuments();
+        const total = await jobsCollection.countDocuments(query);
         res.json({ jobs, total, page, limit });
       } catch (err) {
         console.error('Error fetching jobs:', err);

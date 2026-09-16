@@ -156,18 +156,18 @@ services:
     networks:
       - microservices-net
 
-  # frontend-next:
-  #   build:
-  #     context: ./frontend-next
-  #     dockerfile: Dockerfile
-  #   environment:
-  #     - ES_NODE=http://elasticsearch:9200
-  #   ports:
-  #     - "3003:3000"
-  #   networks:
-  #     - microservices-net
-  #   depends_on:
-  #     - api-gateway
+  frontend-next:
+    build:
+      context: ./frontend-next
+      dockerfile: Dockerfile
+    environment:
+      - ES_NODE=http://elasticsearch:9200
+    ports:
+      - "3003:3000"
+    networks:
+      - microservices-net
+    depends_on:
+      - api-gateway
 
   # frontend-admin:
   #   build:

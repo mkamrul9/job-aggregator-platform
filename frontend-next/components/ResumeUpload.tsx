@@ -22,7 +22,7 @@ export default function ResumeUpload() {
 
     try {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch('http://localhost/api/users/profile/resume', {
+      const response = await fetch('http://localhost/api/users/upload-resume', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData,

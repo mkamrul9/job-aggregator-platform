@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 interface Job {
   title: string;
@@ -14,13 +14,11 @@ export default function JobSearch() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchTerm.trim()) return;
-
+  const fetchJobs = async (query = '') => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(searchTerm)}`);
+      const url = query ? `/api/jobs?q=${encodeURIComponent(query)}` : `/api/jobs`;
+      const response = await fetch(url);
       const data = await response.json();
       if (data.jobs) setJobs(data.jobs);
     } catch (error) {
@@ -28,6 +26,16 @@ export default function JobSearch() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch initial jobs on component mount
+  React.useEffect(() => {
+    fetchJobs();
+  }, []);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchJobs(searchTerm);
   };
 
   return (
