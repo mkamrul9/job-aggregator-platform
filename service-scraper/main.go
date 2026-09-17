@@ -115,6 +115,12 @@ func scrapeJobPage(browser playwright.Browser, url string, publisher EventPublis
 	company, _ := page.Locator("a.topcard__org-name-link").InnerText()
 	description, _ := page.Locator("div.show-more-less-html__markup").InnerText()
 
+	// Skip if selectors returned nothing (page structure changed or URL invalid)
+	if title == "" {
+		log.Printf("Skipping %s: no job title found (selectors may be outdated)", url)
+		return
+	}
+
 	job := DBJob{
 		Title:          title,
 		Company:        company,

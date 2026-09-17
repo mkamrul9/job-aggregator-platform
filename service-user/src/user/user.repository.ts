@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaClient, User, Profile } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { User, Profile } from '@prisma/client';
+import { PrismaService } from '../prisma.service';
 
 @Injectable()
 export class UserRepository {
+  constructor(private readonly prisma: PrismaService) {}
+
   async upsertUser(id: string, email: string): Promise<User> {
-    return prisma.user.upsert({
+    return this.prisma.user.upsert({
       where: { id },
       update: {},
       create: { id, email, passwordHash: 'MANAGED_BY_FIREBASE' },
@@ -14,7 +15,7 @@ export class UserRepository {
   }
 
   async updateSkills(userId: string, skills: string[]): Promise<Profile> {
-    return prisma.profile.upsert({
+    return this.prisma.profile.upsert({
       where: { userId },
       update: { extractedSkills: skills },
       create: { userId, extractedSkills: skills }

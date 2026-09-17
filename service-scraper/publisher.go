@@ -42,13 +42,3 @@ func (k *KafkaPublisher) Publish(job DBJob) error {
 	log.Printf("Successfully published event for: %s", job.Title)
 	return nil
 }
-
-// ---------------------------------------------------------
-// Implementation 2: A Mock Publisher for local testing
-// ---------------------------------------------------------
-type ConsolePublisher struct{}
-
-func (c *ConsolePublisher) Publish(job DBJob) error {
-	log.Printf("[MOCK PUBLISH] Job Found: %s at %s\n", job.Title, job.Company)
-	return nil
-}

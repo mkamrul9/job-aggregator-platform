@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
+import { PrismaService } from '../prisma.service';
 import { of } from 'rxjs';
 
 describe('UserService', () => {
@@ -19,6 +20,9 @@ describe('UserService', () => {
     }),
   };
 
+  // 3. Create a mock version of PrismaService
+  const mockPrismaService = {};
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -30,7 +34,11 @@ describe('UserService', () => {
         {
           provide: 'RESUME_PACKAGE',
           useValue: mockClientGrpc, // Inject the mock instead of the real gRPC client
-        }
+        },
+        {
+          provide: PrismaService,
+          useValue: mockPrismaService, // Inject the mock instead of the real Prisma
+        },
       ],
     }).compile();
 

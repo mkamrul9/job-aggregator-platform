@@ -12,7 +12,7 @@ export default function AuthComponent() {
 
   const syncUserWithBackend = async (token: string) => {
     try {
-      const response = await fetch('http://localhost/api/users/sync', {
+      const response = await fetch('/api/users/sync', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

@@ -8,5 +8,5 @@ RUN npm ci --only=production
 
 COPY . .
 
-# No EXPOSE instruction needed because it doesn't serve HTTP traffic
+EXPOSE 5000
 CMD ["node", "index.js"]

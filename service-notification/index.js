@@ -25,10 +25,12 @@ const emailsSentCounter = new promClient.Counter({
   help: 'Total number of job match emails sent to users'
 });
 
-// Initialize Socket.io with CORS enabled for the Angular frontend
+const SOCKET_CORS_ORIGIN = (process.env.SOCKET_CORS_ORIGIN || 'http://localhost:4200,http://localhost:3003').split(',');
+
+// Initialize Socket.io with CORS enabled for the frontend(s)
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:4200",
+    origin: SOCKET_CORS_ORIGIN,
     methods: ["GET", "POST"]
   }
 });

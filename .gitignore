@@ -1,9 +1,17 @@
 docs/
 vendor/
-*.exe
 node_modules/
 service-notification/node_modules/
+
+# Build outputs
 *.exe
+dist/
+.next/
+
+# Python caches
+__pycache__/
+.pytest_cache/
+*.pyc
 
 # Local secrets — never commit
 .secrets

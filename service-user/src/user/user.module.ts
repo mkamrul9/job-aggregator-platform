@@ -3,6 +3,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
+import { PrismaService } from '../prisma.service';
 import { join } from 'path';
 
 @Module({
@@ -20,7 +21,7 @@ import { join } from 'path';
     ]),
   ],
   controllers: [UserController],
-  providers: [UserService, UserRepository],
+  providers: [UserService, UserRepository, PrismaService],
   exports: [UserService], // Export if other modules need user lookup
 })
 export class UserModule {}

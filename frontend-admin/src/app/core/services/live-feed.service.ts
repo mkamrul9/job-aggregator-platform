@@ -3,10 +3,11 @@ import { io, Socket } from 'socket.io-client';
 import { BehaviorSubject, Observable } from 'rxjs';
 
 export interface LiveJob {
-  Title: string;
-  Company: string;
-  URL: string;
-  ScrapedAt?: string;
+  title: string;
+  company: string;
+  url: string;
+  raw_description?: string;
+  scraped_at?: string;
 }
 
 @Injectable({
@@ -24,7 +25,7 @@ export class LiveFeedService {
 
     // Listen for the specific event we emit from the backend
     this.socket.on('live-job-feed', (job: LiveJob) => {
-      job.ScrapedAt = new Date().toLocaleTimeString();
+      job.scraped_at = new Date().toLocaleTimeString();
       const currentJobs = this.jobsSubject.getValue();
       
       // Add the new job to the top of the list and keep only the latest 50
