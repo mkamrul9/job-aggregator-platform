@@ -157,10 +157,11 @@ We use a **feature-branch workflow**. **Never commit directly to `main`.**
 
 ### Branch Naming Conventions
 
-All branches must follow this format: `<type>/<short-description>`
+All branches must follow this format: `<type>/<short-description>` or production phase format: `codex/production-pNN-<short-name>`.
 
 | Type | When to use | Example |
 |---|---|---|
+| `codex/` | Production roadmap phase execution | `codex/production-p01-service-baseline` |
 | `feat/` | New feature | `feat/elasticsearch-indexer` |
 | `fix/` | Bug fix | `fix/kafka-retry-on-startup` |
 | `refactor/` | Code improvement, no behaviour change | `refactor/scraper-goroutine-pool` |

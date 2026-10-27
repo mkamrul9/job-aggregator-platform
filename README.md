@@ -25,6 +25,7 @@
 
 ## 📋 Table of Contents
 
+- [Independent Service Directory (Project Index)](#-independent-service-directory-project-index)
 - [What This Project Does](#-what-this-project-does)
 - [Architecture Overview](#️-architecture-overview)
 - [Microservices At a Glance](#-microservices-at-a-glance)
@@ -45,6 +46,25 @@
 
 ---
 
+## 📦 Independent Service Directory (Project Index)
+
+Each service in this polyglot monorepo is maintained as an **independently owned, testable, and demonstrable portfolio project** with its own configuration contract, dependency manifest, and test suite. Reviewers and recruiters can evaluate individual technologies in isolation without running the entire cluster.
+
+| Project / Service | Primary Technology | Problem Solved & Role | Owning Phase | Documentation |
+|---|---|---|---|---|
+| **Python Resume Extractor** | Python 3.11+, FastAPI, spaCy, PyPDF2, gRPC | Ingests PDF resumes, extracts text, and matches technical skills via NLP. | [Phase P08](PRODUCTION_ROADMAP.md) | [`service-resume/README.md`](service-resume/README.md) |
+| **Angular Operations Dashboard** | Angular 18, TypeScript, SCSS, RxJS, Socket.io | Real-time monitoring, live ingestion telemetry, and moderation console. | [Phase P12](PRODUCTION_ROADMAP.md) | [`frontend-admin/README.md`](frontend-admin/README.md) |
+| **Go Job Collection Engine** | Go 1.23, Playwright-Go, segmentio/kafka-go | High-throughput concurrent job scraping and Kafka event publishing. | [Phase P07](PRODUCTION_ROADMAP.md) | [`service-scraper/README.md`](service-scraper/README.md) |
+| **NestJS Identity & Profile API** | NestJS 10, TypeScript, Prisma, PostgreSQL 15 | Candidate authentication, profile persistence, and gRPC resume coordination. | [Phase P05](PRODUCTION_ROADMAP.md) | [`service-user/README.md`](service-user/README.md) |
+| **Node.js Ingestion & Search API** | Node.js 20, Express, KafkaJS, MongoDB, Elasticsearch | Streaming event consumer, dual-write persistence, and paginated search API. | [Phase P07](PRODUCTION_ROADMAP.md) | [`service-ingestion/README.md`](service-ingestion/README.md) |
+| **Node.js Notification Service** | Node.js 20, Express, Socket.io, Nodemailer, Prometheus | WebSocket live feed broadcasting, email alerts, and Prometheus metrics. | [Phase P11](PRODUCTION_ROADMAP.md) | [`service-notification/README.md`](service-notification/README.md) |
+| **React / Next.js Candidate App** | Next.js 14, React 18, TypeScript, Tailwind/CSS | Public job discovery, interactive search, resume upload, and auth workspace. | [Phase P06](PRODUCTION_ROADMAP.md) | [`frontend-next/README.md`](frontend-next/README.md) |
+
+> 📖 **Comprehensive Specifications:** For deep technical specifications, data ownership, command statuses, and planned standalone demonstrations, see the [`SERVICE_CATALOG.md`](SERVICE_CATALOG.md).  
+> 🗺️ **Phased Production Roadmap:** For the full 18-phase implementation plan, see [`PRODUCTION_ROADMAP.md`](PRODUCTION_ROADMAP.md).
+
+---
+
 ## 🌟 What This Project Does
 
 This platform is an intelligent, self-hosted career companion that aggregates job listings from across the web, matches them to candidate profiles using AI, and delivers real-time alerts.
@@ -62,6 +82,7 @@ This platform is an intelligent, self-hosted career companion that aggregates jo
 ## 🗺️ Architecture Overview
 
 This platform follows a **polyglot microservices** pattern — each service is written in the language best suited to its job:
+
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -170,13 +191,23 @@ Proactive alerting engine for matched job events.
 
 ---
 
-### 🖥️ Frontend — `frontend-next/` (Next.js + React)
+### 🖥️ Frontend Candidate App — `frontend-next/` (Next.js + React)
 Candidate-facing web portal. Served through Nginx at `http://localhost`.
 
 - Live **Job Feed** auto-loaded from the Ingestion Service API
 - **Search bar** with real-time keyword filtering (`?q=`)
 - **AI Resume Parser** — upload a PDF and instantly see your extracted skills
 - Firebase Auth integration for user login and profile management
+
+---
+
+### 📊 Operations Dashboard — `frontend-admin/` (Angular 18)
+Real-time operations, system telemetry, and moderation console for platform administrators.
+
+- Connects to `service-notification` via WebSockets (Socket.io)
+- Streams new job additions live as they are ingested
+- Displays worker throughput, error counters, and queue telemetry
+- Provides an independent synthetic demonstration mode for Angular portfolio evaluation
 
 ---
 

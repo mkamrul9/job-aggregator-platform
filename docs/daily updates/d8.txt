@@ -1,0 +1,12 @@
+Intern ID: ZYNVEX-CERT-0369
+
+Today's Work:
+
+Integrated the Firebase Admin SDK into the NestJS User Service to securely manage and verify JSON Web Tokens (JWT) for authentication.
+Engineered a custom NestJS authentication guard (`FirebaseAuthGuard`) to intercept incoming requests and actively validate Firebase JWTs before granting access to protected routes.
+Implemented a robust Prisma `upsert` mechanism within the User Service to intelligently synchronize and store users in the local PostgreSQL database using their Firebase UID as the primary key.
+Downgraded `@prisma/client` to version 5.21.0 to ensure stable compatibility with the established schema configuration and `DATABASE_URL` structure.
+Exposed a secure `POST /users/sync` REST endpoint to seamlessly align frontend Firebase authenticated sessions with the backend relational database.
+Authored comprehensive post-development documentation (`phase8.md`) detailing the Firebase JWT validation flow and the PostgreSQL user synchronization logic.
+
+GitHub Commit Link: https://github.com/mkamrul9/job-aggregator-platform/commit/4bc4e879d07c99ddad817c2bdb1489426a903686

@@ -1,0 +1,13 @@
+Intern ID: ZYNVEX-CERT-0369
+
+Today's Work:
+
+Phase 18 completed.
+- Initialized service-notification directory and installed express, kafkajs, nodemailer.
+- Implemented index.js to consume jobs.new from Kafka and send simulated match emails via Ethereal SMTP.
+- Provided a simple Express /health endpoint for the notification service.
+- Containerized the service via Dockerfile.
+- Added notification-service to docker-compose.yml.
+- Routed /api/notifications/ traffic to the service through Nginx Gateway.
+
+GitHub Commit Link: https://github.com/mkamrul9/job-aggregator-platform/commit/1b14341489e30e4f1e49d0469c8f2bc525b962b5

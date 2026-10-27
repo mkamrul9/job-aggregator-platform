@@ -4,7 +4,7 @@ name: Job Aggregator CI/CD
 # Trigger the workflow on pushes to the main branch or on pull requests
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "codex/**" ]
   pull_request:
     branches: [ "main" ]
 

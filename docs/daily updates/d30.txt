@@ -1,0 +1,9 @@
+Day 30: Frontend Redesign & Design System
+
+Work Completed:
+- Addressed connection bug in Candidate Portal where Next.js was attempting to reach Elasticsearch on localhost.
+- Injected `ES_NODE=http://elasticsearch:9200` into `docker-compose.yml`.
+- Removed Tailwind CSS from `frontend-next` to align with strict industry guidelines requiring Vanilla CSS for maximum control.
+- Engineered a robust, scalable Vanilla CSS Design System in `globals.css` using custom CSS variables (color palette, spacing, shadows, micro-animations, glassmorphism).
+- Completely refactored `page.tsx`, `JobSearch.tsx`, `ResumeUpload.tsx`, and `AuthComponent.tsx` to adopt semantic class names and the new design system.
+- Established the UI/UX foundation for the entire ecosystem moving forward.

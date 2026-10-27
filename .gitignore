@@ -1,20 +1,47 @@
-docs/
-vendor/
+# Dependencies
 node_modules/
-service-notification/node_modules/
+**/node_modules/
+vendor/
+**/vendor/
 
-# Build outputs
-*.exe
+# Build and runtime outputs
 dist/
+**/dist/
 .next/
+**/.next/
+build/
+**/build/
+out/
+*.exe
+.turbo/
+coverage/
 
-# Python caches
+# Python caches and virtual environments
 __pycache__/
+**/__pycache__/
 .pytest_cache/
-*.pyc
+**/.pytest_cache/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.coverage
+htmlcov/
 
-# Local secrets — never commit
+# Local environment configurations and secrets — never commit
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+!**/.env.example
 .secrets
-.env.local
 *.pem
 *.key
+docs/token_cmd.txt
+
+# Operating System & IDE artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

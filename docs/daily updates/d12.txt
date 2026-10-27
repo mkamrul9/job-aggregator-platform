@@ -1,0 +1,7 @@
+Daily Update: Phase 12 Completion
+- Containerized User Service (NestJS) using a multi-stage Docker build and node:22-slim.
+- Containerized Resume Service (FastAPI) capturing the spaCy NLP environment.
+- Fixed Prisma OpenSSL binding crashes by utilizing Debian-based node images instead of Alpine.
+- Migrated Kafka to official apache/kafka KRaft image to resolve bitnami/kafka image deprecation issues.
+- Fixed volume mounting issues allowing gRPC shared protos to load inside the User Service.
+- Everything is now fully integrated into docker-compose and successfully running!
