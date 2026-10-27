@@ -28,7 +28,7 @@ const http = require('http');
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
 const EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const EMULATOR_URL = `http://${EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts`;
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '8000', 10);
 
 let totalAssertions = 0;
 let passedAssertions = 0;
@@ -59,9 +59,29 @@ function assert(condition, description, detail) {
 
 async function request(url, options = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let overallTimer = null;
+
+    const cleanup = () => {
+      if (overallTimer) {
+        clearTimeout(overallTimer);
+        overallTimer = null;
+      }
+    };
+
+    const settle = (err, result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    };
+
     const u = new URL(url);
-    const body = options.body ? JSON.stringify(options.body) : null;
-    let timedOut = false;
+    const body = options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : null;
 
     const req = http.request(
       {
@@ -79,25 +99,36 @@ async function request(url, options = {}) {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => {
-          if (timedOut) return;
           let data = null;
           try {
             data = JSON.parse(raw);
           } catch {
             data = raw;
           }
-          resolve({ status: res.statusCode, headers: res.headers, data });
+          settle(null, { status: res.statusCode, headers: res.headers, data });
+        });
+        res.on('error', (err) => {
+          settle(err);
         });
       },
     );
 
+    // Hard overall deadline across DNS, connect, response headers and payload stream
+    overallTimer = setTimeout(() => {
+      const err = new Error(`HTTP request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
+      req.destroy(err);
+      settle(err);
+    }, REQUEST_TIMEOUT_MS);
+
+    // Socket inactivity timeout
     req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      timedOut = true;
-      req.destroy(new Error(`HTTP request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`));
+      const err = new Error(`HTTP socket idle timeout after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
+      req.destroy(err);
+      settle(err);
     });
 
     req.on('error', (err) => {
-      if (!timedOut) reject(err);
+      settle(err);
     });
 
     if (body) req.write(body);
@@ -295,8 +326,8 @@ async function run() {
   assert(deleteRes.data && (deleteRes.data.status === 'PENDING' || deleteRes.data.status === 'PENDING_GRACE_PERIOD'), 'Status is PENDING / PENDING_GRACE_PERIOD', deleteRes.data && deleteRes.data.status);
   assert(Boolean(deleteRes.data && deleteRes.data.scheduled_for), 'Scheduled deletion timestamp is present', deleteRes.data && deleteRes.data.scheduled_for);
 
-  // Step 15: Deletion Request Idempotency
-  console.log('\n[15/16] Testing deletion request idempotency with identical key...');
+  // Step 15: Deletion Request Idempotency & Cross-Candidate Ownership
+  console.log('\n[15/16] Testing deletion request idempotency & cross-candidate ownership isolation...');
   const deleteRes2 = await request(`${API_BASE}/users/account/delete`, {
     method: 'POST',
     headers: {
@@ -310,6 +341,21 @@ async function run() {
   });
   assert(deleteRes2.status === 200 || deleteRes2.status === 201, 'Idempotent deletion call returns HTTP 200/201', deleteRes2.status);
   assert(deleteRes2.data && deleteRes2.data.request_id === deleteRes.data.request_id, 'Duplicate request returns identical request_id', deleteRes2.data && deleteRes2.data.request_id);
+
+  // Cross-candidate isolation: Candidate B reuses Candidate A's idempotency key
+  const candidateBDeleteRes = await request(`${API_BASE}/users/account/delete`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateB.token}`,
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: {
+      confirmation: 'DELETE_MY_ACCOUNT',
+      reason: 'Candidate B independent deletion using reused key',
+    },
+  });
+  assert(candidateBDeleteRes.status === 200 || candidateBDeleteRes.status === 201, 'Candidate B deletion succeeds with HTTP 200/201', candidateBDeleteRes.status);
+  assert(candidateBDeleteRes.data && candidateBDeleteRes.data.request_id !== deleteRes.data.request_id, 'Candidate B receives their own distinct request_id (no foreign data leak)', candidateBDeleteRes.data && candidateBDeleteRes.data.request_id);
 
   // Step 16: Account Lifecycle Status Query
   console.log('\n[16/16] Testing account status query (/users/account/status)...');

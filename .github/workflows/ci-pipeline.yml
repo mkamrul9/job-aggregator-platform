@@ -227,6 +227,10 @@ jobs:
         working-directory: ./frontend-next
         run: npm run lint
 
+      - name: Run Auth Regressions
+        working-directory: ./frontend-next
+        run: npm test
+
       - name: Build Next.js Application
         working-directory: ./frontend-next
         run: npm run build

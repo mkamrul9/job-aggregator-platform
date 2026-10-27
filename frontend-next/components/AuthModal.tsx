@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../lib/auth-context';
+import { useAuth, BackendSyncError } from '../lib/auth-context';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -9,7 +9,7 @@ interface AuthModalProps {
 }
 
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
-  const { signIn, signUp, sendPasswordReset, activateDemoMode, isEmulator } = useAuth();
+  const { signIn, signUp, sendPasswordReset, activateDemoMode, isEmulator, status, retrySync } = useAuth();
 
   const [tab, setTab] = useState<'signin' | 'register' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
@@ -50,6 +50,23 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     onClose();
   };
 
+  const handleRetrySync = async () => {
+    setLoading(true);
+    setLocalError('');
+    try {
+      await retrySync();
+      setSuccessMsg('Database synchronization succeeded! Loading workspace...');
+      setTimeout(() => {
+        onClose();
+      }, 700);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setLocalError(`Synchronization retry failed: ${msg}. Please check backend connection.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError('');
@@ -85,17 +102,27 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     try {
       if (tab === 'signin') {
         await signIn(email, password);
-        setSuccessMsg('Session authenticated. Loading workspace...');
+        setSuccessMsg('Session authenticated and workspace loaded!');
       } else {
-        await signUp(email, password, name || 'New Candidate');
-        setSuccessMsg('Account registered and synchronized! Verification email sent.');
+        const res = await signUp(email, password, name || 'New Candidate');
+        if (res.emailVerificationSent) {
+          setSuccessMsg('Account registered and synchronized! Verification email sent.');
+        } else {
+          setSuccessMsg('Account registered and synchronized! (Verification email dispatch deferred in current environment).');
+        }
       }
       setTimeout(() => {
         onClose();
       }, 700);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setLocalError(msg);
+      if (err instanceof BackendSyncError || (err as { name?: string })?.name === 'BackendSyncError') {
+        setLocalError(
+          `Authenticated with credentials, but database profile synchronization failed: ${(err as Error).message}. Your session is active; you can retry synchronization below without re-entering credentials.`
+        );
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        setLocalError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -304,7 +331,29 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               lineHeight: 1.4,
             }}
           >
-            {localError}
+            <div>{localError}</div>
+            {status === 'SYNC_ERROR' && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={handleRetrySync}
+                  disabled={loading}
+                  style={{
+                    backgroundColor: 'var(--seekers-teal-500)',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-xs)',
+                    padding: '0.35rem 0.65rem',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    opacity: loading ? 0.7 : 1,
+                  }}
+                >
+                  {loading ? 'Retrying Synchronization...' : '↻ Retry Database Synchronization'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 

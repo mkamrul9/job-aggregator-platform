@@ -62,11 +62,12 @@ model AccountDeletionRequest {
   status         String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, CANCELLED
   requestedAt    DateTime  @default(now())
   scheduledFor   DateTime  // 30-day grace period execution date
-  idempotencyKey String?   @unique
+  idempotencyKey String?
   reason         String?
   executedAt     DateTime?
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, idempotencyKey])
   @@index([userId, status])
 }
 

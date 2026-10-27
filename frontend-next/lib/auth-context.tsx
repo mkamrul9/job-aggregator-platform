@@ -6,6 +6,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import {
@@ -49,6 +50,18 @@ export interface DeletionRequestResponse {
   requested_at: string;
 }
 
+export class BackendSyncError extends Error {
+  constructor(message: string, public readonly originalError?: unknown) {
+    super(message);
+    this.name = 'BackendSyncError';
+  }
+}
+
+export interface SignUpResult {
+  profile: UserProfile;
+  emailVerificationSent: boolean;
+}
+
 interface AuthContextValue {
   status: AuthStatus;
   user: FirebaseUser | null;
@@ -57,15 +70,15 @@ interface AuthContextValue {
   error: string | null;
   isDemo: boolean;
   isEmulator: boolean;
-  signIn: (email: string, pass: string) => Promise<void>;
-  signUp: (email: string, pass: string, name: string) => Promise<void>;
+  signIn: (email: string, pass: string) => Promise<UserProfile>;
+  signUp: (email: string, pass: string, name: string) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   exportAccountData: () => Promise<DataExportResponse>;
   requestAccountDeletion: (reason?: string) => Promise<DeletionRequestResponse>;
-  retrySync: () => Promise<void>;
+  retrySync: () => Promise<UserProfile | null>;
   activateDemoMode: () => void;
   exitDemoMode: () => void;
 }
@@ -105,14 +118,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDemo, setIsDemo] = useState<boolean>(false);
+  const activeUidRef = useRef<string | null>(null);
 
   // Perform backend user synchronization with PostgreSQL
-  const syncWithBackend = useCallback(async (currentUser: FirebaseUser) => {
+  const syncWithBackend = useCallback(async (currentUser: FirebaseUser): Promise<UserProfile> => {
+    activeUidRef.current = currentUser.uid;
     setStatus('SYNCING');
     setError(null);
 
     try {
       const idToken = await currentUser.getIdToken(false);
+      if (activeUidRef.current !== currentUser.uid) {
+        throw new BackendSyncError('Synchronization aborted: active candidate changed.');
+      }
       setToken(idToken);
 
       const syncRes = await fetchUserEndpoint('/sync', {
@@ -142,44 +160,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const profileData: UserProfile = await profileRes.json();
-      setProfile(profileData);
-      setStatus('READY');
-      setIsDemo(false);
+      if (activeUidRef.current === currentUser.uid) {
+        setProfile(profileData);
+        setStatus('READY');
+        setIsDemo(false);
+      }
+      return profileData;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[Auth Sync Error]', msg);
-      setError(`Account authenticated, but PostgreSQL sync failed: ${msg}. You can retry without re-authenticating.`);
-      setStatus('SYNC_ERROR');
-      // Do NOT declare account readiness on sync error!
+      if (activeUidRef.current === currentUser.uid) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Auth Sync Error]', msg);
+        setError(`Account authenticated, but PostgreSQL sync failed: ${msg}. You can retry without re-authenticating.`);
+        setStatus('SYNC_ERROR');
+      }
+      if (err instanceof BackendSyncError) {
+        throw err;
+      }
+      const syncErrMsg = err instanceof Error ? err.message : String(err);
+      throw new BackendSyncError(syncErrMsg, err);
     }
   }, []);
 
-  // Subscribe to Firebase token & session lifecycle
+  // Subscribe to Firebase token & session lifecycle (independent of status view-state)
   useEffect(() => {
     const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        activeUidRef.current = firebaseUser.uid;
         setUser(firebaseUser);
-        await syncWithBackend(firebaseUser);
+        try {
+          await syncWithBackend(firebaseUser);
+        } catch {
+          // Handled inside syncWithBackend via state (status: SYNC_ERROR)
+          // Caught here to prevent unhandled rejection in background listener
+        }
       } else {
+        activeUidRef.current = null;
         setUser(null);
         setToken(null);
-        // Only set SIGNED_OUT if not in explicit DEMO_MODE
         setStatus((prev) => (prev === 'DEMO_MODE' ? 'DEMO_MODE' : 'SIGNED_OUT'));
-        if (status !== 'DEMO_MODE') {
-          setProfile(null);
-        }
+        setProfile((prev) => (prev && prev.name === 'Farhan Ahmed (Demo)' ? prev : null));
       }
     });
 
     return () => unsubscribe();
-  }, [syncWithBackend, status]);
+  }, [syncWithBackend]);
 
-  const signIn = async (email: string, pass: string) => {
+  const signIn = async (email: string, pass: string): Promise<UserProfile> => {
     setError(null);
+    let credUser: FirebaseUser;
     try {
       const cred = await signInWithEmailAndPassword(auth, email, pass);
-      setUser(cred.user);
-      await syncWithBackend(cred.user);
+      credUser = cred.user;
+      activeUidRef.current = credUser.uid;
+      setUser(credUser);
     } catch (err: unknown) {
       const fbErr = err as { code?: string; message?: string };
       let humanMsg = fbErr.message || 'Authentication failed. Please verify credentials.';
@@ -193,23 +226,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(humanMsg);
       throw new Error(humanMsg);
     }
+
+    // Backend sync is separated: sync failures throw BackendSyncError and keep Firebase session intact
+    return await syncWithBackend(credUser);
   };
 
-  const signUp = async (email: string, pass: string, name: string) => {
+  const signUp = async (
+    email: string,
+    pass: string,
+    name: string,
+  ): Promise<SignUpResult> => {
     setError(null);
+    let credUser: FirebaseUser;
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
-      if (name && cred.user) {
-        await updateFirebaseProfile(cred.user, { displayName: name });
+      credUser = cred.user;
+      if (name && credUser) {
+        await updateFirebaseProfile(credUser, { displayName: name });
       }
-      setUser(cred.user);
-      await syncWithBackend(cred.user);
-      // Automatically dispatch email verification request
-      try {
-        await sendEmailVerification(cred.user);
-      } catch {
-        // Non-fatal if verification email fails in test emulator
-      }
+      activeUidRef.current = credUser.uid;
+      setUser(credUser);
     } catch (err: unknown) {
       const fbErr = err as { code?: string; message?: string };
       let humanMsg = fbErr.message || 'Registration failed. Please check form inputs.';
@@ -221,10 +257,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(humanMsg);
       throw new Error(humanMsg);
     }
+
+    let emailVerificationSent = false;
+    try {
+      await sendEmailVerification(credUser);
+      emailVerificationSent = true;
+    } catch {
+      emailVerificationSent = false;
+    }
+
+    const profileData = await syncWithBackend(credUser);
+    return { profile: profileData, emailVerificationSent };
   };
 
   const signOut = async () => {
     setError(null);
+    activeUidRef.current = null;
     try {
       await firebaseSignOut(auth);
     } finally {
@@ -325,10 +373,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.json();
   };
 
-  const retrySyncAction = async () => {
-    if (user) {
-      await syncWithBackend(user);
+  const retrySyncAction = async (): Promise<UserProfile | null> => {
+    if (!user) {
+      throw new Error('No authenticated candidate session to synchronize.');
     }
+    return await syncWithBackend(user);
   };
 
   const activateDemoModeAction = () => {

@@ -82,11 +82,11 @@ Nginx exposes these routes under `/api/users/` (or directly via `/users/` when a
   - 12. Server-enforced role boundary rejection (403 Forbidden on privileged admin route)
   - 13. Personal data export request recording (`POST /users/account/export`)
   - 14. Scheduled account deletion request with 30-day grace period (`POST /users/account/delete`)
-  - 15. Deletion request idempotency via `Idempotency-Key`
+  - 15. Deletion request idempotency & cross-candidate ownership isolation via composite `(userId, idempotencyKey)` constraint
   - 16. Account lifecycle status query (`GET /users/account/status`)
 - **Type Checking (`npx tsc --noEmit`):** `[Verified]` — zero TypeScript compilation errors.
 - **Prisma Client (`npx prisma generate`):** `[Verified]` — Prisma Client v5.22.0.
-- **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`).
+- **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261027180000_p05_scoped_deletion_idempotency`).
 - **Truthful Scope Limitations & Deferrals:**
   - Resume upload currently relies on a shared filesystem volume (`./uploads` or configured via `UPLOAD_DIR`); cloud object storage (S3/GCS) is planned for P07/P08.
   - Account deletion and export requests register persistent lifecycle states (`PENDING` with 30-day scheduled grace period); background asynchronous queue processing for physical archive bundling and cross-system erasure is deferred to P13.

@@ -204,6 +204,19 @@ describe('UserService', () => {
       expect(result.request_id).toBe('del-req-uuid-1');
       expect(result.status).toBe('PENDING');
       expect(result.scheduled_for).toBe(scheduledFor.toISOString());
+      expect(mockUserRepository.createDeletionRequest).toHaveBeenCalledWith(
+        'firebase-uid-123',
+        'idem-key-abc',
+        'Relocating abroad',
+      );
+    });
+
+    it('should throw NotFoundException if candidate is not registered', async () => {
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      await expect(
+        service.requestAccountDeletion('unknown-uid', 'key-123', 'reason'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

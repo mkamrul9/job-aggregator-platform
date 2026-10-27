@@ -177,10 +177,15 @@ export class UserRepository {
     idempotencyKey?: string,
     reason?: string,
   ): Promise<AccountDeletionRequest> {
-    // 1. If idempotency key provided, check for existing request
+    // 1. If idempotency key provided, check for existing request strictly scoped to the authenticated candidate
     if (idempotencyKey) {
       const existing = await this.prisma.accountDeletionRequest.findUnique({
-        where: { idempotencyKey },
+        where: {
+          userId_idempotencyKey: {
+            userId,
+            idempotencyKey,
+          },
+        },
       });
       if (existing) {
         return existing;
@@ -204,15 +209,36 @@ export class UserRepository {
     const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
     const scheduledFor = new Date(Date.now() + gracePeriodMs);
 
-    return this.prisma.accountDeletionRequest.create({
-      data: {
-        userId,
-        status: 'PENDING',
-        scheduledFor,
-        idempotencyKey: idempotencyKey || null,
-        reason: reason || null,
-      },
-    });
+    try {
+      return await this.prisma.accountDeletionRequest.create({
+        data: {
+          userId,
+          status: 'PENDING',
+          scheduledFor,
+          idempotencyKey: idempotencyKey || null,
+          reason: reason || null,
+        },
+      });
+    } catch (error: unknown) {
+      // Handle concurrent repeated requests safely:
+      // If a concurrent request inserted (userId, idempotencyKey) first,
+      // return the authenticated candidate's record instead of failing.
+      const prismaError = error as { code?: string };
+      if (prismaError?.code === 'P2002' && idempotencyKey) {
+        const existing = await this.prisma.accountDeletionRequest.findUnique({
+          where: {
+            userId_idempotencyKey: {
+              userId,
+              idempotencyKey,
+            },
+          },
+        });
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
   }
 
   async getAccountStatus(userId: string): Promise<{
