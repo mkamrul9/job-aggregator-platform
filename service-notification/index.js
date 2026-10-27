@@ -3,59 +3,126 @@ const express = require('express');
 const { Kafka } = require('kafkajs');
 const nodemailer = require('nodemailer');
 const promClient = require('prom-client');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = 'jobs.new';
+const PORT = process.env.PORT || 4000;
+const SOCKET_CORS_ORIGIN = (
+  process.env.SOCKET_CORS_ORIGIN || 'http://localhost:4200,http://localhost:3003'
+).split(',');
 
-const app = express();
-const http = require('http'); // Required for Socket.io
-const { Server } = require('socket.io');
+// 1. Prometheus Metrics Setup
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
 
-const port = 4000;
-
-const server = http.createServer(app);
-
-// 1. Enable default system metrics collection (RAM, CPU, Event Loop Lag)
-const collectDefaultMetrics = promClient.collectDefaultMetrics;
-collectDefaultMetrics({ register: promClient.register });
-
-// 2. Create a custom metric to track how many emails we send
 const emailsSentCounter = new promClient.Counter({
   name: 'job_notifications_sent_total',
-  help: 'Total number of job match emails sent to users'
+  help: 'Total number of job match emails sent to users',
+  registers: [register],
 });
 
-const SOCKET_CORS_ORIGIN = (process.env.SOCKET_CORS_ORIGIN || 'http://localhost:4200,http://localhost:3003').split(',');
-
-// Initialize Socket.io with CORS enabled for the frontend(s)
-const io = new Server(server, {
-  cors: {
-    origin: SOCKET_CORS_ORIGIN,
-    methods: ["GET", "POST"]
+// 2. Transporter configuration
+function createTransporter() {
+  if (process.env.SMTP_HOST) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT, 10) || 587,
+      auth: {
+        user: process.env.SMTP_USER || '',
+        pass: process.env.SMTP_PASS || '',
+      },
+    });
   }
-});
+  // Safe default: JSON transport for non-production environments to avoid accidental real sends
+  return nodemailer.createTransport({
+    jsonTransport: true,
+  });
+}
 
-// Listen for frontend connections
-io.on('connection', (socket) => {
-  console.log(`🟢 Admin Client Connected: ${socket.id}`);
-  socket.on('disconnect', () => console.log(`🔴 Admin Client Disconnected: ${socket.id}`));
-});
-// 1. Configure the Fake SMTP Server (Ethereal Email)
-// In production, you would swap this with AWS SES or SendGrid credentials
-const transporter = nodemailer.createTransport({
-  host: 'smtp.ethereal.email',
-  port: 587,
-  auth: {
-      user: 'fake_ethereal_user@ethereal.email', // Replace with generated Ethereal creds
-      pass: 'fake_ethereal_password'
+function createNotificationApp(customRegister = register) {
+  const app = express();
+  app.use(express.json());
+
+  // 3. Simple Health Check Endpoint
+  app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'Notification Service is running.' });
+  });
+
+  // 4. Expose the /metrics endpoint for Prometheus to scrape
+  app.get('/metrics', async (req, res) => {
+    res.set('Content-Type', customRegister.contentType);
+    res.end(await customRegister.metrics());
+  });
+
+  return app;
+}
+
+async function processJobNotification(messageValue, { io, transporter, counter = emailsSentCounter, matchedUsers } = {}) {
+  if (!messageValue) return null;
+
+  const jobData = JSON.parse(messageValue.toString());
+
+  // 1. Broadcast the new job to all connected clients instantly
+  if (io) {
+    io.emit('live-job-feed', jobData);
   }
-});
 
-// 2. Initialize Kafka Client
-const kafka = new Kafka({ clientId: 'notification-service', brokers: [KAFKA_BROKER] });
-const consumer = kafka.consumer({ groupId: 'email-notification-group' });
+  // 2. Simulated matching logic or passed users
+  const recipients = matchedUsers || [
+    { email: 'candidateA@example.com', name: 'Alice' },
+  ];
 
-async function startKafkaConsumer() {
+  if (transporter) {
+    for (const user of recipients) {
+      try {
+        const info = await transporter.sendMail({
+          from: '"Job Aggregator" <alerts@jobaggregator.local>',
+          to: user.email,
+          subject: `New Job Match: ${jobData.title} at ${jobData.company}`,
+          text: `Hello ${user.name},\n\nWe found a new job matching your skills!\n\nTitle: ${jobData.title}\nCompany: ${jobData.company}\nLink: ${jobData.url}\n\nGood luck!`,
+        });
+
+        if (counter) {
+          counter.inc();
+        }
+
+        const previewUrl = nodemailer.getTestMessageUrl(info);
+        if (previewUrl) {
+          console.log(`📧 Email sent to ${user.email}. Preview: ${previewUrl}`);
+        } else {
+          console.log(`📧 Notification prepared for ${user.email}`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to send email to ${user.email}:`, error);
+      }
+    }
+  }
+
+  return jobData;
+}
+
+async function startServer() {
+  const app = createNotificationApp();
+  const server = http.createServer(app);
+
+  const io = new Server(server, {
+    cors: {
+      origin: SOCKET_CORS_ORIGIN,
+      methods: ['GET', 'POST'],
+    },
+  });
+
+  io.on('connection', (socket) => {
+    console.log(`🟢 Client Connected: ${socket.id}`);
+    socket.on('disconnect', () => console.log(`🔴 Client Disconnected: ${socket.id}`));
+  });
+
+  const transporter = createTransporter();
+  const kafka = new Kafka({ clientId: 'notification-service', brokers: [KAFKA_BROKER] });
+  const consumer = kafka.consumer({ groupId: 'email-notification-group' });
+
   let retries = 5;
   while (retries > 0) {
     try {
@@ -65,63 +132,49 @@ async function startKafkaConsumer() {
       console.error(`❌ Kafka connection failed, retries left: ${retries}`, err);
       retries -= 1;
       if (retries === 0) throw err;
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }
 
-  await consumer.subscribe({ topic: TOPIC, fromBeginning: false }); // Only notify on NEW jobs
-
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
   console.log(`✅ Notification Service listening to: ${TOPIC}`);
 
   await consumer.run({
     eachMessage: async ({ message }) => {
       try {
-        if (!message.value) return; // Ignore tombstones
-        
-        const jobData = JSON.parse(message.value.toString());
-        
-        // 1. Broadcast the new job to all connected Angular clients instantly
-        io.emit('live-job-feed', jobData);
-        // Simulated matching logic: 
-        // e.g., We queried the DB and found 2 users matching this job's keywords
-        const matchedUsers = [
-          { email: 'candidateA@example.com', name: 'Alice' }
-        ];
-
-        for (const user of matchedUsers) {
-          try {
-            const info = await transporter.sendMail({
-              from: '"Job Aggregator" <alerts@jobaggregator.local>',
-              to: user.email,
-              subject: `New Job Match: ${jobData.title} at ${jobData.company}`,
-              text: `Hello ${user.name},\n\nWe found a new job matching your skills!\n\nTitle: ${jobData.title}\nCompany: ${jobData.company}\nLink: ${jobData.url}\n\nGood luck!`
-            });
-            
-            emailsSentCounter.inc(); // Increment the metric every time an email sends
-            console.log(`📧 Email sent to ${user.email}. Preview: ${nodemailer.getTestMessageUrl(info)}`);
-          } catch (error) {
-            console.error(`❌ Failed to send email to ${user.email}:`, error);
-          }
-        }
+        await processJobNotification(message.value, {
+          io,
+          transporter,
+          counter: emailsSentCounter,
+        });
       } catch (err) {
         console.error('❌ Error processing message:', err);
       }
     },
   });
+
+  server.listen(PORT, () => {
+    console.log(`🚀 Notification Express server running on port ${PORT}`);
+  });
+
+  process.on('SIGINT', async () => {
+    server.close();
+    await consumer.disconnect();
+    process.exit(0);
+  });
+
+  return { server, io };
 }
 
-// 3. Simple Health Check Endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'Notification Service is running.' });
-});
+module.exports = {
+  createNotificationApp,
+  createTransporter,
+  processJobNotification,
+  startServer,
+  register,
+  emailsSentCounter,
+};
 
-// 4. Expose the /metrics endpoint for Prometheus to scrape
-app.get('/metrics', async (req, res) => {
-  res.set('Content-Type', promClient.register.contentType);
-  res.end(await promClient.register.metrics());
-});
-
-server.listen(port, async () => {
-  console.log(`🚀 Notification Express server running on port ${port}`);
-  await startKafkaConsumer().catch(console.error);
-});
+if (require.main === module) {
+  startServer().catch(console.error);
+}

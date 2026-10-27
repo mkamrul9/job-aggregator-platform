@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 import spacy
 from spacy.matcher import PhraseMatcher
 import io
@@ -30,6 +30,10 @@ def extract_skills_from_text(text: str):
         canonical_skill = CANONICAL_SKILLS.get(span.text.lower(), span.text)
         extracted_skills.add(canonical_skill)
     return list(extracted_skills)
+
+@app.get("/health")
+def health_check():
+    return {"status": "Resume Extractor Service is running."}
 
 @app.post("/parse")
 async def parse_resume(file: UploadFile = File(...)):

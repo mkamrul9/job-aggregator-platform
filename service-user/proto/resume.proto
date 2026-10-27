@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package resume;
+
+// The service definition
+service ResumeParser {
+  // A standard remote procedure call
+  rpc ParseResume (ParseRequest) returns (ParseResponse);
+}
+
+// The request payload
+message ParseRequest {
+  string file_path = 1; // In a real app, this might be an AWS S3 URL
+}
+
+// The response payload
+message ParseResponse {
+  bool success = 1;
+  repeated string skills = 2; // 'repeated' means it's an array
+}

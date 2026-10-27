@@ -4,7 +4,14 @@ import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { PrismaService } from '../prisma.service';
+import { existsSync } from 'fs';
 import { join } from 'path';
+
+const localProtoPath = join(process.cwd(), 'proto/resume.proto');
+const sharedProtoPath = join(process.cwd(), '../shared-protos/resume.proto');
+const resolvedProtoPath =
+  process.env.RESUME_PROTO_PATH ||
+  (existsSync(localProtoPath) ? localProtoPath : sharedProtoPath);
 
 @Module({
   imports: [
@@ -14,7 +21,7 @@ import { join } from 'path';
         transport: Transport.GRPC,
         options: {
           package: 'resume',
-          protoPath: join(process.cwd(), '../shared-protos/resume.proto'),
+          protoPath: resolvedProtoPath,
           url: process.env.RESUME_GRPC_URL || 'localhost:50051',
         },
       },

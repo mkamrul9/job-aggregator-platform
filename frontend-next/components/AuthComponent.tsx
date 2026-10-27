@@ -44,8 +44,9 @@ export default function AuthComponent() {
       const token = await credential.user.getIdToken();
       await syncUserWithBackend(token);
       setSuccess(isSignUp ? 'Account created! Welcome to Seekers.' : `Welcome back!`);
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Something went wrong.';
+      setError(message);
     }
   };
 

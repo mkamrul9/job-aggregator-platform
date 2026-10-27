@@ -1,11 +1,11 @@
 # frontend-admin/Dockerfile
 
 # Stage 1: Build the Angular app
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 # Compile the app for production (outputs to /app/dist/frontend-admin)

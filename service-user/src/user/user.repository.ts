@@ -18,7 +18,7 @@ export class UserRepository {
     return this.prisma.profile.upsert({
       where: { userId },
       update: { extractedSkills: skills },
-      create: { userId, extractedSkills: skills }
+      create: { userId, extractedSkills: skills },
     });
   }
 }

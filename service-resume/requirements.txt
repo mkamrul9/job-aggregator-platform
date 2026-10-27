@@ -1,7 +1,7 @@
-fastapi
-uvicorn
-python-multipart
-pypdf2
-spacy
-grpcio
-grpcio-tools
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+python-multipart>=0.0.12,<1.0.0
+pypdf>=5.1.0,<6.0.0
+spacy>=3.8.0,<4.0.0
+grpcio>=1.68.0,<2.0.0
+grpcio-tools>=1.68.0,<2.0.0

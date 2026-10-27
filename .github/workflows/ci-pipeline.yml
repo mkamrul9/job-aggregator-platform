@@ -1,7 +1,7 @@
 # .github/workflows/ci-pipeline.yml
 name: Job Aggregator CI/CD
 
-# Trigger the workflow on pushes to the main branch or on pull requests
+# Trigger the workflow on pushes to main or codex feature branches, and pull requests to main
 on:
   push:
     branches: [ "main", "codex/**" ]
@@ -22,6 +22,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+
+      - name: Run Go Vet
+        working-directory: ./service-scraper
+        run: go vet ./...
 
       - name: Run Go Unit Tests
         working-directory: ./service-scraper
@@ -65,7 +69,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install Dependencies & Generate Prisma
         working-directory: ./service-user
@@ -73,20 +77,122 @@ jobs:
           npm ci
           npx prisma generate
 
+      - name: Run ESLint
+        working-directory: ./service-user
+        run: npm run lint
+
       - name: Run Jest Unit Tests
         working-directory: ./service-user
         run: npm run test
 
   # -------------------------------------------------------------
-  # JOB 4: Build Docker Images (Only runs if all tests pass)
+  # JOB 4: Test the Ingestion Service
   # -------------------------------------------------------------
-  build-docker-images:
-    needs: [test-scraper, test-ai-parser, test-user-service]
+  test-ingestion:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Using Docker Compose to verify all multi-stage builds complete successfully
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        working-directory: ./service-ingestion
+        run: npm ci
+
+      - name: Run Unit Tests
+        working-directory: ./service-ingestion
+        run: npm test
+
+  # -------------------------------------------------------------
+  # JOB 5: Test the Notification Service
+  # -------------------------------------------------------------
+  test-notification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        working-directory: ./service-notification
+        run: npm ci
+
+      - name: Run Unit Tests
+        working-directory: ./service-notification
+        run: npm test
+
+  # -------------------------------------------------------------
+  # JOB 6: Test & Build Frontend Next.js
+  # -------------------------------------------------------------
+  test-frontend-next:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        working-directory: ./frontend-next
+        run: npm ci
+
+      - name: Run ESLint
+        working-directory: ./frontend-next
+        run: npm run lint
+
+      - name: Build Next.js Application
+        working-directory: ./frontend-next
+        run: npm run build
+
+  # -------------------------------------------------------------
+  # JOB 7: Test & Build Frontend Admin (Angular)
+  # -------------------------------------------------------------
+  test-frontend-admin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        working-directory: ./frontend-admin
+        run: npm ci
+
+      - name: Build Angular Application
+        working-directory: ./frontend-admin
+        run: npm run build
+
+  # -------------------------------------------------------------
+  # JOB 8: Build Docker Images (Only runs if all 7 test suites pass)
+  # -------------------------------------------------------------
+  build-docker-images:
+    needs:
+      - test-scraper
+      - test-ai-parser
+      - test-user-service
+      - test-ingestion
+      - test-notification
+      - test-frontend-next
+      - test-frontend-admin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Build All Services
         run: docker compose build

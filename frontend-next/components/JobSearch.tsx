@@ -30,7 +30,18 @@ export default function JobSearch() {
 
   // Fetch initial jobs on component mount
   React.useEffect(() => {
-    fetchJobs();
+    let ignore = false;
+    fetch('/api/jobs')
+      .then((res) => res.json())
+      .then((data) => {
+        if (!ignore && data.jobs) setJobs(data.jobs);
+      })
+      .catch((error) => {
+        if (!ignore) console.error('Failed to fetch jobs', error);
+      });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -86,7 +97,7 @@ export default function JobSearch() {
       {!loading && jobs.length > 0 && (
         <>
           <div className="section-label">
-            {jobs.length} result{jobs.length !== 1 ? 's' : ''} for "{searchTerm}"
+            {jobs.length} result{jobs.length !== 1 ? 's' : ''} for &quot;{searchTerm}&quot;
           </div>
           <div className="jobs-list">
             {jobs.map((job, i) => (

@@ -25,13 +25,13 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
-| `service-resume` | Python Resume Extractor | Python 3.11+, FastAPI, spaCy, PyPDF2, gRPC | P08 | Isolated unit tests pass; standalone presentation planned |
-| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, RxJS, Socket.io | P12 | Production build passes; live feed requires backend socket |
-| `service-scraper` | Go Job Collection Engine | Go 1.23, Playwright-Go, Kafka-Go | P07 | `go test` and `go vet` pass; module mode verified; CLI runner planned |
-| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | Local TypeScript check & 1 unit test pass; Linux install/CI and ESLint need P02 repairs |
-| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 20, Express, KafkaJS, MongoDB, ES | P07 | Syntax checks pass; test runner is placeholder |
-| `service-notification`| Node.js Notification Delivery Service | Node.js 20, Express, Socket.io, KafkaJS, Nodemailer | P11 | Syntax checks pass; test runner is placeholder |
-| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript | P06 | ESLint issues & Turbopack build failure await P02 diagnosis |
+| `service-resume` | Python Resume Extractor | Python 3.11+, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest unit tests pass (3/3); pypdf migration complete; GET /health added |
+| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, RxJS, Socket.io | P12 | Production build passes; test:ci script added; enabled in Compose & gateway |
+| `service-scraper` | Go Job Collection Engine | Go 1.23, Playwright-Go, Kafka-Go | P07 | `go test` and `go vet` pass cleanly; module mode verified |
+| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | ESLint passes (0 errors); tsc & Jest pass; Prisma migration 20261027000000_init established |
+| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | Aligned with Elasticsearch 8.x; 8 unit tests pass; Express & regex escaping verified |
+| `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | Safe jsonTransport default; 5 unit tests pass; Socket.io & metric counter verified |
+| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack production build passes; ES 8.x client aligned |
 
 ---
 

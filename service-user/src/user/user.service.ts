@@ -1,4 +1,10 @@
-import { Injectable, OnModuleInit, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Inject,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import type { ClientGrpc } from '@nestjs/microservices';
 import { lastValueFrom } from 'rxjs';
 import { Observable } from 'rxjs';
@@ -20,12 +26,13 @@ export class UserService implements OnModuleInit {
 
   constructor(
     @Inject('RESUME_PACKAGE') private client: ClientGrpc,
-    private readonly userRepository: UserRepository
+    private readonly userRepository: UserRepository,
   ) {}
 
   onModuleInit() {
     // Dynamically bind the gRPC service
-    this.resumeService = this.client.getService<ResumeParserService>('ResumeParser');
+    this.resumeService =
+      this.client.getService<ResumeParserService>('ResumeParser');
   }
 
   async findOrCreateUser(data: { id: string; email: string }) {
@@ -35,7 +42,7 @@ export class UserService implements OnModuleInit {
   async processUserResume(userId: string, fileUrl: string) {
     // 1. Make the ultra-fast gRPC call to Python
     const grpcResponse = this.resumeService.parseResume({ filePath: fileUrl });
-    
+
     // NestJS uses RxJS Observables, so we convert it to a Promise
     const result = await lastValueFrom(grpcResponse);
 
@@ -43,6 +50,9 @@ export class UserService implements OnModuleInit {
       // 2. Save the extracted skills to PostgreSQL using Repository
       return this.userRepository.updateSkills(userId, result.skills);
     }
-    throw new HttpException('Resume could not be parsed. Ensure the PDF contains selectable text.', HttpStatus.UNPROCESSABLE_ENTITY);
+    throw new HttpException(
+      'Resume could not be parsed. Ensure the PDF contains selectable text.',
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
   }
 }

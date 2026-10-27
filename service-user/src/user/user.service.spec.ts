@@ -6,7 +6,6 @@ import { of } from 'rxjs';
 
 describe('UserService', () => {
   let service: UserService;
-  let repository: UserRepository;
 
   // 1. Create a mock version of our database repository
   const mockUserRepository = {
@@ -16,7 +15,9 @@ describe('UserService', () => {
   // 2. Create a mock version of the ClientGrpc
   const mockClientGrpc = {
     getService: jest.fn().mockReturnValue({
-      parseResume: jest.fn().mockReturnValue(of({ success: true, skills: ['Python', 'Java'] })),
+      parseResume: jest
+        .fn()
+        .mockReturnValue(of({ success: true, skills: ['Python', 'Java'] })),
     }),
   };
 
@@ -43,12 +44,11 @@ describe('UserService', () => {
     }).compile();
 
     service = module.get<UserService>(UserService);
-    repository = module.get<UserRepository>(UserRepository);
   });
 
   it('should successfully sync a user', async () => {
     const mockUserData = { id: 'firebase-uid-123', email: 'test@example.com' };
-    
+
     // Set up the mock to return a simulated PostgreSQL response
     mockUserRepository.upsertUser.mockResolvedValue({
       id: mockUserData.id,
@@ -60,6 +60,9 @@ describe('UserService', () => {
 
     expect(result.email).toEqual('test@example.com');
     // Ensure the service actually called the repository with the correct arguments
-    expect(repository.upsertUser).toHaveBeenCalledWith(mockUserData.id, mockUserData.email);
+    expect(mockUserRepository.upsertUser).toHaveBeenCalledWith(
+      mockUserData.id,
+      mockUserData.email,
+    );
   });
 });

@@ -6,6 +6,11 @@ from unittest.mock import patch, MagicMock
 
 client = TestClient(app)
 
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "Resume Extractor Service is running."
+
 def test_parse_resume_rejects_non_pdf():
     # Test that the API correctly rejects invalid file types
     response = client.post(

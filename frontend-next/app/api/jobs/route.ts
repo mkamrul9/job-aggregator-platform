@@ -1,6 +1,16 @@
 import { NextResponse } from 'next/server';
 import { Client } from '@elastic/elasticsearch';
 
+interface JobSource {
+  title?: string;
+  company?: string;
+  location?: string;
+  url?: string;
+  raw_description?: string;
+  skills?: string[];
+  [key: string]: unknown;
+}
+
 // In production, this would be an internal Docker URL (e.g., http://elasticsearch:9200)
 // For local Next.js dev outside of Docker, it's localhost
 const ES_NODE = process.env.ES_NODE || 'http://localhost:9200';
@@ -18,7 +28,7 @@ export async function GET(request: Request) {
 
     if (query) {
       // Perform a fuzzy full-text search against the job title and description
-      result = await esClient.search({
+      result = await esClient.search<JobSource>({
         index: 'jobs_index',
         from,
         size: limit,
@@ -32,7 +42,7 @@ export async function GET(request: Request) {
       });
     } else {
       // No query — return all recent jobs
-      result = await esClient.search({
+      result = await esClient.search<JobSource>({
         index: 'jobs_index',
         from,
         size: limit,
@@ -42,7 +52,9 @@ export async function GET(request: Request) {
     }
 
     // Map the Elasticsearch response into a clean array for the frontend
-    const hits = (result.hits.hits as any[]).map((hit: any) => hit._source);
+    const hits = result.hits.hits
+      .map((hit) => hit._source)
+      .filter((doc): doc is JobSource => doc !== undefined);
     const total = typeof result.hits.total === 'number'
       ? result.hits.total
       : result.hits.total?.value ?? 0;
