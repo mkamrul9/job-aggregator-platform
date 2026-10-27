@@ -95,8 +95,16 @@ npm run build
 
 ---
 
-## 5. Demonstration Mode & Boundary
+## 5. Live Authentication & Demo Boundary (Phase P05 Verified)
 
-- **Synthetic Fixtures:** 12 curated South Asia / Bangladesh technology job listings conforming strictly to the OpenAPI 3.1 specification (`contracts/openapi/seekers-api-v1.yaml`).
-- **Truthful Labelling:** Explicitly labelled demo ribbon and provenance modal explaining the local mock state and $0 free-tier constraints.
+The candidate web application supports both real Firebase authentication and isolated portfolio demonstration mode:
+
+- **Live Firebase Authentication:** Real user registration, login, email verification status, password reset, session refresh, and logout via Firebase Auth (emulator or production).
+- **Relational Profile Persistence:** Authenticated candidates automatically synchronize with `service-user` PostgreSQL backend (`POST /api/v1/users/sync`), enabling persistent profile editing (`PUT /api/v1/users/profile`), skills cloud customization, and privacy controls (`POST /api/v1/users/account/export`, `POST /api/v1/users/account/delete`).
+- **Portfolio Demonstration Mode:** When users click "Explore Portfolio Demo", the app enters isolated demo mode (`DEMO_MODE`), granting immediate read-only access to synthetic candidate personas without contaminating or syncing to live PostgreSQL databases.
+- **Responsive Viewport Verification:**
+  - `320px` (min compact phone): Verified zero horizontal overflow (`scrollWidth <= innerWidth`)
+  - `360px` / `390px` (mobile viewport): Responsive navbar, bottom sheets, mobile modals
+  - `768px` (tablet portrait): Reflowed 2-column grid and clean slide-in drawers
+  - `1280px+` (desktop): Dense 3-column scannable workspace layout
 - **Outbound Aggregator Notice:** Clearly states that an outbound click is not a completed job application; applications are managed externally by original employer job boards.

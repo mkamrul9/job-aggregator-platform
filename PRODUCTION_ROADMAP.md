@@ -253,11 +253,34 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 **Outcome:** a candidate can securely create and manage an account across sessions.
 
-- Configure Firebase web/server credentials and development emulators correctly. Implement sign-up/sign-in, email verification, password reset, persistent auth state, refresh, logout, revoked/expired sessions, and useful error messages. Add social login only if included in P03.
-- Make Firebase-to-database synchronization idempotent and visible; handle failed sync, missing email, changed email, concurrent first login, and unique conflicts. Return appropriate response DTOs.
-- Implement profile read/edit, desired roles, skills, location/remote preferences, onboarding progress, settings, and authorization at the API. Remove the misleading password-hash placeholder through a migration.
-- Establish account deletion/export request entry points and the deletion lifecycle; complete cross-system deletion verification in P13. Require stronger admin authentication and server-enforced permissions.
-- Deliver the NestJS project's independent API demo: service-local quickstart with its own database and identity emulator/provider, OpenAPI requests for its completed account/profile workflows, ownership tests, and documented adapters for optional resume/platform integrations. A recruiter can evaluate NestJS behavior without the full platform, while integration tests still exercise its real consumers.
+- **Real Firebase Authentication Lifecycle:**
+  - Configured Firebase Client SDK (`frontend-next/lib/firebase.ts`) and Admin SDK (`service-user/src/auth/firebase-admin.provider.ts`) connecting predictably to Auth emulator (`localhost:9099`) or production Firebase.
+  - Implemented registration, login, email verification status, password reset, session refresh, and logout in `AuthModal.tsx` and authoritative `AuthProvider` (`frontend-next/lib/auth-context.tsx`).
+  - RFC 7807 structured auth error responses (`TOKEN_EXPIRED`, `TOKEN_REVOKED`, `ACCOUNT_DISABLED`).
+  - Truthfully isolated Demo Mode: clicking "Explore Portfolio Demo" isolates synthetic candidate personas without corrupting or synchronizing with live PostgreSQL databases.
+- **Reliable Firebase-to-PostgreSQL Synchronization:**
+  - Idempotent `POST /users/sync` endpoint in `service-user`: verifies Firebase claims, resolves email/identity conflicts safely, and upserts user record with role assignment.
+  - Explicit synchronization state machine in candidate frontend (`STARTUP`, `SIGNED_OUT`, `SYNCING`, `READY`, `SYNC_ERROR`, `DEMO_MODE`).
+  - Unsynchronized accounts remain blocked with a clear retry trigger; synchronization errors never falsely present an account as fully ready.
+- **Relational Profiles, Onboarding, and Skills Persistence:**
+  - Prisma forward migration `20261027100000_p05_identity_and_profiles` adding `RemoteEligibility` enum, persistent profile attributes (`name`, `title`, `skills`, `extractedSkills`, `locations`, `remotePreference`, `minSalary`, `currency`, `onboardingCompleted`, `onboardingStep`).
+  - Safely dropped misleading `passwordHash` placeholder column.
+  - Profile read (`GET /users/profile`) and persistent update (`PUT /users/profile`) with DTO validation (`UpdateProfileDto`) and OpenAPI-conforming response (`UserProfileResponseDto`).
+  - Connected `ProfileWorkspace.tsx` in Next.js candidate app: live profile editing, interactive skill tag adding/removal, and preference saving.
+- **Server-Enforced Ownership & Role Boundaries:**
+  - `RolesGuard` and `@Roles('ADMIN')` decorator enforcing server-side authorization via Firebase custom claims and database query fallback.
+  - Verified cross-user isolation: User B cannot view or modify User A's profile (`test/standalone-smoke.js`).
+  - Non-admin candidates requesting privileged routes receive 403 Forbidden with RFC 7807 problem details.
+- **Honest, Durable Account Deletion & Data Export Lifecycle:**
+  - Forward-migrated `AccountDeletionRequest` with 30-day grace period `scheduledFor`, `idempotencyKey`, and explicit `"DELETE_MY_ACCOUNT"` confirmation.
+  - Forward-migrated `AccountExportRequest` recording personal data archive generation requests.
+  - Status endpoint `GET /users/account/status` returning active lifecycle state.
+  - Connected `DataControlModal.tsx` providing real user triggers and displaying durable scheduled dates.
+- **Standalone NestJS API Quickstart & Smoke Verification:**
+  - Dedicated standalone recipe: `service-user` runs independently with local PostgreSQL (`docker compose up -d user-postgres`) and Firebase Auth emulator (`firebase.json`).
+  - Standalone smoke integration test suite (`service-user/test/standalone-smoke.js` / `npm run test:smoke`): 100% pass across unauthenticated rejection (401), emulator JWT verification, candidate sync, profile persistence, cross-tenant isolation, role boundaries (403), data export, and 30-day scheduled erasure.
+  - 25 Jest unit tests pass in `service-user` (`npm test`).
+  - Real browser visual and responsive verification across 320px, 360px, 390px, 768px, and 1280px widths (zero horizontal overflow confirmed).
 
 **Completion gate:** complete auth/profile browser journeys pass; reload and token expiry behave correctly; user A cannot access user B's data; synchronization failure cannot show account readiness; profile changes persist; mobile forms work with keyboard/autofill; the documented standalone NestJS API demonstration and real integration checks pass.
 

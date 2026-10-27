@@ -212,18 +212,18 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint, TypeScript compilation, Jest tests, and Docker multi-stage build all pass cleanly in CI. Initial migration history is tracked.
-- **Standalone-Readiness Gaps (to complete in P05):**
-  - Implement full profile CRUD, saved jobs, and applications controller endpoints specified in `contracts/openapi/seekers-api-v1.yaml`.
-  - Add Firebase Auth emulator configuration profile for zero-cloud local testing.
-- **Planned Standalone Demonstration (P05):**
-  - Dedicated local runner starting service-user with its own PostgreSQL and Firebase Auth emulator.
-  - Interactive Swagger OpenAPI UI (`/api/docs`) demonstrating account synchronization, profile mutations, and application tracking.
-  - Independent recruiter evaluation without running the frontend, scraper, ingestion, or Kafka.
+- **Current Verification Status:** ESLint, TypeScript compilation, 25 Jest unit tests, and standalone smoke integration test (`npm run test:smoke`) pass cleanly. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Completed in Phase P05:**
+  - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
+  - Persistent candidate profile read & update (`GET/PUT /users/profile`).
+  - Scheduled account deletion with 30-day grace period and idempotency (`POST /users/account/delete`).
+  - Personal data export request tracking (`POST /users/account/export`).
+  - Role-based server-side authorization enforcement (`RolesGuard` with `@Roles('ADMIN')`).
+  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099 and PostgreSQL.
 - **Intended Deployment Boundary:**
   - Container: `service-user/Dockerfile`
   - Ports: `3000` (internal) / `3002` (host)
-  - Owning Feature Phase: **P05**
+  - Owning Feature Phase: **P05 (Completed)**
 
 ---
 

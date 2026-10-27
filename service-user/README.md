@@ -49,23 +49,37 @@ The service serves authenticated HTTP endpoints and communicates with backend se
 
 | Method | Route | Description | Auth Required |
 |---|---|---|---|
-| `POST` | `/users/sync` | Candidate upsert after Firebase login | Yes (Bearer JWT) |
+| `POST` | `/users/sync` | Idempotent candidate sync after Firebase login | Yes (Bearer JWT) |
+| `GET` | `/users/profile` | Retrieve candidate profile and onboarding state | Yes (Bearer JWT) |
+| `PUT` | `/users/profile` | Update profile, skills, preferences, and onboarding step | Yes (Bearer JWT) |
+| `POST` | `/users/account/export` | Request full account data export archive | Yes (Bearer JWT) |
+| `POST` | `/users/account/delete` | Request account erasure with 30-day grace period | Yes (Bearer JWT, `confirmText: "DELETE_MY_ACCOUNT"`) |
+| `GET` | `/users/account/status` | Retrieve lifecycle status of deletion/export requests | Yes (Bearer JWT) |
+| `GET` | `/users/admin/test-privileged` | Role-enforced endpoint requiring admin permissions | Yes (`ADMIN` role via `RolesGuard`) |
 | `POST` | `/users/upload-resume` | Upload PDF resume, forward to gRPC parser, save skills | Yes (Bearer JWT) |
 
-Nginx exposes these routes under `/api/users/`. Profile read/edit endpoints are planned for P05 and are not implemented yet.
+Nginx exposes these routes under `/api/users/` (or directly via `/users/` when accessed standalone).
 
 ---
 
 ## 3. Current Capabilities & Baseline Status
 
-- **Unit Testing (`npm test`):** `[Verified locally]` — 1 mocked `UserService` unit test passes. Linux CI fails earlier during `npm ci`; P02 must repair the lockfile before claiming a clean CI pass.
+- **Unit Testing (`npm test`):** `[Verified locally]` — 25 unit tests pass (Guards, Controllers, Repositories, Services).
+- **Standalone Smoke Testing (`npm run test:smoke`):** `[Verified locally]` — Full integration suite against real PostgreSQL and Firebase Auth Emulator:
+  - Unauthenticated access rejection (401 Unauthorized)
+  - Real emulator JWT generation & verification
+  - Idempotent candidate user synchronization (`POST /users/sync`)
+  - Profile read and persistent update (`GET/PUT /users/profile`)
+  - Cross-user data isolation (User B cannot read/write User A's profile)
+  - Server-enforced role boundary rejection (403 Forbidden for candidate on admin route)
+  - Data export request registration (`POST /users/account/export`)
+  - Scheduled account deletion with 30-day grace period (`POST /users/account/delete`)
 - **Type Checking (`npx tsc --noEmit`):** `[Verified]` — zero TypeScript compilation errors.
-- **Prisma Client (`npx prisma generate`):** `[Verified]` — generates typed client from `schema.prisma`.
-- **Linting (`npm run lint`):** `[Observed-but-unverified]` — 59 errors and 3 warnings recorded for remediation in Phase P02.
+- **Prisma Client (`npx prisma generate`):** `[Verified]` — Prisma Client v5.22.0.
+- **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`).
 - **Known Limitations:**
-  - Prisma migration history (`prisma/migrations`) was previously uncommitted; baseline migration to be established in P02.
-  - Resume upload relies on a shared host filesystem volume (`/uploads`) rather than cloud object storage.
-  - Authentication requires either live Google credentials or local Firebase emulator configuration.
+  - Resume upload relies on a shared host filesystem volume (`/uploads`) rather than cloud object storage (S3/GCS planned for P07).
+  - Background asynchronous worker for export archive bundling and hard deletion execution runs asynchronously on scheduled intervals (P06+).
 
 ---
 
@@ -75,7 +89,8 @@ Nginx exposes these routes under `/api/users/`. Profile read/edit endpoints are 
 
 - Node.js 20.x
 - npm 10.x+
-- PostgreSQL 15 (standalone or via Docker)
+- PostgreSQL 15 (standalone or via Docker port 5433)
+- Firebase CLI (`firebase-tools` for running the local Auth emulator)
 
 ### Installation
 
@@ -95,6 +110,14 @@ Key configuration settings (see `.env.example`):
 - `DATABASE_URL`: PostgreSQL connection string (default: `postgresql://admin:password123@localhost:5433/job_aggregator_users?schema=public`)
 - `RESUME_GRPC_URL`: Address of gRPC resume parser (default: `localhost:50051`)
 - `FIREBASE_AUTH_EMULATOR_HOST`: Set to `localhost:9099` for local emulator authentication
+- `GCP_PROJECT_ID`: Firebase project ID (default: `seekers-dev`)
+
+### Database Migrations
+
+Apply Prisma migrations against the active database:
+```bash
+npm run prisma:migrate
+```
 
 ### Running the Service
 
@@ -109,18 +132,32 @@ npm run start:prod
 ### Running Tests
 
 ```bash
-# Run unit tests:
+# Run unit test suite:
 npm test
 
-# Run e2e tests:
-npm run test:e2e
+# Run standalone integration smoke test (requires PostgreSQL & Firebase Emulator):
+npm run test:smoke
 ```
 
 ---
 
-## 5. Planned Standalone Demonstration (Phase P05)
+## 5. Standalone Quickstart (Phase P05 Verified)
 
-In Phase P05, this NestJS service will feature an independent API demonstration:
-- **Local Emulator Quickstart:** One-command startup with its own PostgreSQL container and Firebase Auth emulator.
-- **Interactive OpenAPI Specification:** Swagger UI exposing all endpoints with sample request/response payloads.
-- **Mock gRPC Adapter:** Allows resume upload and skill extraction testing without operating the Python container.
+Run `service-user` completely independently without needing other microservices:
+
+1. **Start PostgreSQL:**
+   ```bash
+   docker compose up -d user-postgres
+   ```
+2. **Start Firebase Auth Emulator:**
+   ```bash
+   npx firebase emulators:start --only auth
+   ```
+3. **Start NestJS Service:**
+   ```bash
+   npm run start:dev
+   ```
+4. **Run Smoke Test Suite:**
+   ```bash
+   npm run test:smoke
+   ```

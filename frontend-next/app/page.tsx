@@ -12,9 +12,9 @@ import AuthModal from '../components/AuthModal';
 import FeedbackModal from '../components/FeedbackModal';
 import DataControlModal from '../components/DataControlModal';
 import DemoInfoModal from '../components/DemoInfoModal';
+import { AuthProvider } from '../lib/auth-context';
 import {
   SYNTHETIC_JOBS,
-  INITIAL_USER_PROFILE,
   INITIAL_TRACKED_APPLICATIONS,
   INITIAL_SAVED_JOBS,
   INITIAL_ALERT_SUBSCRIPTIONS,
@@ -22,16 +22,13 @@ import {
   TrackedApplication,
   JobSummary,
   AlertSubscription,
-  UserProfile
 } from '../lib/mock-data';
 
-export default function Home() {
+function CandidatePortalContent() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<ActiveTab>('discover');
 
-  // Candidate Data State
-  const [profile, setProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
-  const [candidateName, setCandidateName] = useState<string | null>('Farhan Ahmed');
+  // Candidate Data State (Workspaces)
   const [savedJobs, setSavedJobs] = useState<JobSummary[]>(INITIAL_SAVED_JOBS);
   const [applications, setApplications] = useState<TrackedApplication[]>(INITIAL_TRACKED_APPLICATIONS);
   const [alerts, setAlerts] = useState<AlertSubscription[]>(INITIAL_ALERT_SUBSCRIPTIONS);
@@ -44,7 +41,7 @@ export default function Home() {
     seniority: '',
     jobType: '',
     minSalary: 0,
-    sort: 'recent'
+    sort: 'recent',
   });
   const [searchInput, setSearchInput] = useState('');
   const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
@@ -65,7 +62,7 @@ export default function Home() {
         const query = filters.q.toLowerCase();
         const matchesTitle = job.title.toLowerCase().includes(query);
         const matchesCompany = job.company.toLowerCase().includes(query);
-        const matchesSkills = job.skills.some(s => s.toLowerCase().includes(query));
+        const matchesSkills = job.skills.some((s) => s.toLowerCase().includes(query));
         const matchesDesc = job.description.toLowerCase().includes(query);
         if (!matchesTitle && !matchesCompany && !matchesSkills && !matchesDesc) return false;
       }
@@ -102,8 +99,8 @@ export default function Home() {
   }, [filters]);
 
   // Saved Jobs Set for fast lookup
-  const savedJobIds = useMemo(() => new Set(savedJobs.map(j => j.id)), [savedJobs]);
-  const trackedJobIds = useMemo(() => new Set(applications.map(a => a.job_id)), [applications]);
+  const savedJobIds = useMemo(() => new Set(savedJobs.map((j) => j.id)), [savedJobs]);
+  const trackedJobIds = useMemo(() => new Set(applications.map((a) => a.job_id)), [applications]);
 
   // Active filter count
   const activeFilterCount = useMemo(() => {
@@ -118,7 +115,7 @@ export default function Home() {
   // Handlers
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setFilters(prev => ({ ...prev, q: searchInput }));
+    setFilters((prev) => ({ ...prev, q: searchInput }));
   };
 
   const handleResetFilters = () => {
@@ -129,7 +126,7 @@ export default function Home() {
       seniority: '',
       jobType: '',
       minSalary: 0,
-      sort: 'recent'
+      sort: 'recent',
     });
     setSearchInput('');
   };
@@ -137,9 +134,9 @@ export default function Home() {
   const handleToggleSave = (e: React.MouseEvent, job: JobDetail) => {
     e.stopPropagation();
     if (savedJobIds.has(job.id)) {
-      setSavedJobs(prev => prev.filter(j => j.id !== job.id));
+      setSavedJobs((prev) => prev.filter((j) => j.id !== job.id));
     } else {
-      setSavedJobs(prev => [job, ...prev]);
+      setSavedJobs((prev) => [job, ...prev]);
     }
   };
 
@@ -152,299 +149,244 @@ export default function Home() {
       status: 'APPLIED',
       notes: 'Tracked directly from job discovery.',
       applied_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
-    setApplications(prev => [newApp, ...prev]);
+    setApplications((prev) => [newApp, ...prev]);
   };
 
   const handleUpdateAppStatus = (id: string, status: TrackedApplication['status']) => {
-    setApplications(prev => prev.map(a => a.id === id ? { ...a, status, updated_at: new Date().toISOString() } : a));
+    setApplications((prev) =>
+      prev.map((app) =>
+        app.id === id ? { ...app, status, updated_at: new Date().toISOString() } : app,
+      ),
+    );
   };
 
   const handleUpdateAppNotes = (id: string, notes: string) => {
-    setApplications(prev => prev.map(a => a.id === id ? { ...a, notes, updated_at: new Date().toISOString() } : a));
+    setApplications((prev) =>
+      prev.map((app) =>
+        app.id === id ? { ...app, notes, updated_at: new Date().toISOString() } : app,
+      ),
+    );
   };
 
   const handleRemoveApplication = (id: string) => {
-    setApplications(prev => prev.filter(a => a.id !== id));
+    setApplications((prev) => prev.filter((app) => app.id !== id));
   };
 
   const handleToggleAlertActive = (id: string) => {
-    setAlerts(prev => prev.map(a => a.id === id ? { ...a, active: !a.active } : a));
+    setAlerts((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, active: !a.active } : a)),
+    );
   };
 
   const handleDeleteAlert = (id: string) => {
-    setAlerts(prev => prev.filter(a => a.id !== id));
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const handleCreateAlert = (newAlert: Omit<AlertSubscription, 'id' | 'created_at'>) => {
-    const alert: AlertSubscription = {
-      ...newAlert,
-      id: `alert_sub_${Date.now()}`,
-      created_at: new Date().toISOString()
+  const handleCreateAlert = (newAlertData: Omit<AlertSubscription, 'id' | 'created_at'>) => {
+    const newAlert: AlertSubscription = {
+      ...newAlertData,
+      id: `alert_${Date.now()}`,
+      created_at: new Date().toISOString(),
     };
-    setAlerts(prev => [alert, ...prev]);
+    setAlerts((prev) => [newAlert, ...prev]);
   };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      
-      {/* Universal Navigation */}
+      {/* Navigation */}
       <Navbar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         savedCount={savedJobs.length}
         applicationsCount={applications.length}
         alertsCount={alerts.length}
-        candidateName={candidateName}
         onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenFeedback={() => {
-          setReportingJob(null);
-          setIsFeedbackOpen(true);
-        }}
+        onOpenFeedback={() => setIsFeedbackOpen(true)}
         onOpenDemoInfo={() => setIsDemoInfoOpen(true)}
+        onOpenDataControl={() => setIsDataControlOpen(true)}
       />
 
       {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '1.5rem 0 3.5rem' }}>
+      <main style={{ flex: 1, padding: '1.5rem 0' }}>
         <div className="seekers-container">
-
-          {/* ─── TAB 1: DISCOVER ────────────────────────────────────────── */}
+          {/* ─── TAB 1: DISCOVER ROLES ──────────────────────────────────── */}
           {activeTab === 'discover' && (
             <div>
-              
-              {/* Search-First Banner */}
-              <div style={{ marginBottom: '1.25rem' }}>
-                <h1 style={{
-                  fontFamily: 'var(--font-heading)',
-                  fontSize: 'clamp(1.25rem, 3vw, 1.75rem)',
-                  fontWeight: 700,
-                  color: 'var(--seekers-text-primary)',
-                  letterSpacing: '-0.02em',
-                  marginBottom: '0.35rem'
-                }}>
-                  Find Your Next Engineering Role
+              {/* Search Header Banner */}
+              <div className="search-banner">
+                <h1
+                  style={{
+                    fontFamily: 'var(--font-heading)',
+                    fontSize: '1.5rem',
+                    fontWeight: 800,
+                    color: 'var(--seekers-text-primary)',
+                    marginBottom: '0.35rem',
+                  }}
+                >
+                  Find Software Engineering Roles in South Asia
                 </h1>
-                <p style={{ color: 'var(--seekers-text-secondary)', fontSize: '0.9375rem' }}>
-                  Aggregated from leading Bangladesh tech employers and regional remote teams.
+                <p
+                  style={{
+                    fontSize: '0.875rem',
+                    color: 'var(--seekers-text-secondary)',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  Aggregated and deduplicated across authentic Bangladesh & regional tech job sources.
                 </p>
-              </div>
 
-              {/* Search Bar */}
-              <form onSubmit={handleSearchSubmit} className="search-container">
-                <div className="search-input-wrap">
-                  <span className="search-icon">🔍</span>
-                  <input
-                    type="text"
-                    className="input-text"
-                    placeholder="Search by role, company, or tech stack (e.g. Go, React, Mobile)..."
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    id="main-job-search-input"
-                  />
-                </div>
+                {/* Search Bar */}
+                <form onSubmit={handleSearchSubmit} className="search-bar-row">
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <input
+                      type="text"
+                      className="search-input"
+                      placeholder="Title, technology, or company (e.g. Go, React, Brain Station 23)..."
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                      id="job-search-input"
+                      aria-label="Search job listings"
+                    />
+                  </div>
 
-                <div>
-                  <select
-                    className="select-input"
-                    value={filters.location}
-                    onChange={(e) => setFilters(prev => ({ ...prev, location: e.target.value }))}
-                    id="location-filter-select"
-                  >
-                    <option value="">All Locations</option>
-                    <option value="Dhaka">Dhaka (Tech Hubs)</option>
-                    <option value="Chattogram">Chattogram</option>
-                    <option value="Remote">Remote Only</option>
-                  </select>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     type="submit"
                     className="btn-primary"
-                    style={{ flex: 1, whiteSpace: 'nowrap' }}
-                    id="search-submit-btn"
+                    style={{ minHeight: '44px', padding: '0 1.25rem' }}
+                    id="job-search-btn"
                   >
                     Search Roles
                   </button>
+                </form>
 
-                  {/* Mobile Filters Trigger (<768px) */}
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setIsMobileFilterOpen(true)}
-                    style={{ minHeight: '44px', padding: '0.5rem 0.85rem' }}
-                    id="mobile-filters-trigger"
-                    aria-label="Open filter sheet"
-                  >
-                    Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
-                  </button>
-                </div>
-              </form>
+                {/* Active Filter Indicators */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: '1rem',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)' }}>
+                      Showing {filteredJobs.length} regional vacancies
+                    </span>
 
-              {/* Desktop Filters Bar (≥768px) */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '0.5rem 1rem',
-                marginBottom: '1.25rem',
-                paddingBottom: '0.85rem',
-                borderBottom: '1px solid var(--seekers-border-subtle)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--seekers-text-muted)' }}>
-                    Filter By:
-                  </span>
+                    {activeFilterCount > 0 && (
+                      <span
+                        style={{
+                          backgroundColor: 'var(--seekers-teal-dim)',
+                          color: 'var(--seekers-teal-400)',
+                          fontSize: '0.75rem',
+                          padding: '0.15rem 0.5rem',
+                          borderRadius: 'var(--radius-xs)',
+                        }}
+                      >
+                        {activeFilterCount} active filters
+                      </span>
+                    )}
+                  </div>
 
-                  {/* Remote Eligibility Filter */}
-                  <select
-                    className="select-input"
-                    style={{ minHeight: '36px', padding: '0.25rem 0.75rem', fontSize: '0.8125rem', width: 'auto' }}
-                    value={filters.remote}
-                    onChange={(e) => setFilters(prev => ({ ...prev, remote: e.target.value }))}
-                  >
-                    <option value="">Arrangement: All</option>
-                    <option value="FULLY_REMOTE">Fully Remote</option>
-                    <option value="HYBRID">Hybrid</option>
-                    <option value="ON_SITE">On-Site</option>
-                  </select>
-
-                  {/* Seniority Filter */}
-                  <select
-                    className="select-input"
-                    style={{ minHeight: '36px', padding: '0.25rem 0.75rem', fontSize: '0.8125rem', width: 'auto' }}
-                    value={filters.seniority}
-                    onChange={(e) => setFilters(prev => ({ ...prev, seniority: e.target.value }))}
-                  >
-                    <option value="">Seniority: All</option>
-                    <option value="ENTRY">Entry Level</option>
-                    <option value="MID">Mid Level</option>
-                    <option value="SENIOR">Senior</option>
-                    <option value="LEAD">Lead / Architect</option>
-                  </select>
-
-                  {/* Job Type Filter */}
-                  <select
-                    className="select-input"
-                    style={{ minHeight: '36px', padding: '0.25rem 0.75rem', fontSize: '0.8125rem', width: 'auto' }}
-                    value={filters.jobType}
-                    onChange={(e) => setFilters(prev => ({ ...prev, jobType: e.target.value }))}
-                  >
-                    <option value="">Type: All</option>
-                    <option value="FULL_TIME">Full Time</option>
-                    <option value="CONTRACT">Contract</option>
-                  </select>
-                </div>
-
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)' }}>Sort:</span>
-                  <select
-                    className="select-input"
-                    style={{ minHeight: '36px', padding: '0.25rem 0.75rem', fontSize: '0.8125rem', width: 'auto' }}
-                    value={filters.sort}
-                    onChange={(e) => setFilters(prev => ({ ...prev, sort: e.target.value as 'recent' | 'relevance' }))}
-                  >
-                    <option value="recent">Most Recent</option>
-                    <option value="relevance">Relevance</option>
-                  </select>
-
-                  {(filters.q || activeFilterCount > 0) && (
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {/* Mobile Filter Sheet Button (<768px) */}
                     <button
                       type="button"
-                      className="btn-ghost"
-                      onClick={handleResetFilters}
-                      style={{ fontSize: '0.8125rem', minHeight: '36px', padding: '0.25rem 0.5rem' }}
+                      className="btn-secondary mobile-filter-btn"
+                      onClick={() => setIsMobileFilterOpen(true)}
                     >
-                      Clear All ✕
+                      Filters {activeFilterCount > 0 ? `(${activeFilterCount})` : ''}
                     </button>
-                  )}
+
+                    {activeFilterCount > 0 && (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={handleResetFilters}
+                        style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}
+                      >
+                        Reset filters
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Active Filter Chips */}
-              {(filters.q || activeFilterCount > 0) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}>Active Filters:</span>
-                  {filters.q && (
-                    <span className="badge badge-amber">
-                      Query: &quot;{filters.q}&quot;
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFilters(prev => ({ ...prev, q: '' }));
-                          setSearchInput('');
-                        }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: '0.25rem' }}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  )}
-                  {filters.location && (
-                    <span className="badge badge-amber">
-                      Location: {filters.location}
-                      <button
-                        type="button"
-                        onClick={() => setFilters(prev => ({ ...prev, location: '' }))}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: '0.25rem' }}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  )}
-                  {filters.remote && (
-                    <span className="badge badge-amber">
-                      {filters.remote}
-                      <button
-                        type="button"
-                        onClick={() => setFilters(prev => ({ ...prev, remote: '' }))}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: '0.25rem' }}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  )}
-                  {filters.seniority && (
-                    <span className="badge badge-amber">
-                      {filters.seniority}
-                      <button
-                        type="button"
-                        onClick={() => setFilters(prev => ({ ...prev, seniority: '' }))}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: '0.25rem' }}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  )}
-                </div>
-              )}
+              {/* Desktop Filters Bar (>=768px) */}
+              <div className="desktop-filters-row">
+                <select
+                  className="filter-select"
+                  value={filters.location}
+                  onChange={(e) => setFilters({ ...filters, location: e.target.value })}
+                  aria-label="Filter by location"
+                >
+                  <option value="">All Locations</option>
+                  <option value="Dhaka">Dhaka, Bangladesh</option>
+                  <option value="Chattogram">Chattogram, Bangladesh</option>
+                  <option value="Sylhet">Sylhet, Bangladesh</option>
+                  <option value="Remote">Regional Remote</option>
+                </select>
 
-              {/* Results Count Summary */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '1rem',
-                fontSize: '0.875rem',
-                color: 'var(--seekers-text-secondary)'
-              }}>
-                <div>
-                  Showing <strong style={{ color: 'var(--seekers-text-primary)' }}>{filteredJobs.length}</strong> role{filteredJobs.length !== 1 ? 's' : ''}
-                  {filters.q && <span> for &quot;{filters.q}&quot;</span>}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}>
-                  South Asia Engineering Catalog (12 listings)
-                </div>
+                <select
+                  className="filter-select"
+                  value={filters.remote}
+                  onChange={(e) => setFilters({ ...filters, remote: e.target.value })}
+                  aria-label="Filter by remote arrangement"
+                >
+                  <option value="">Remote Arrangement</option>
+                  <option value="FULLY_REMOTE">Fully Remote</option>
+                  <option value="HYBRID">Hybrid</option>
+                  <option value="ON_SITE">On-Site</option>
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={filters.seniority}
+                  onChange={(e) => setFilters({ ...filters, seniority: e.target.value })}
+                  aria-label="Filter by seniority level"
+                >
+                  <option value="">Seniority Level</option>
+                  <option value="ENTRY">Entry Level</option>
+                  <option value="MID">Mid Level</option>
+                  <option value="SENIOR">Senior</option>
+                  <option value="LEAD">Lead / Architect</option>
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={filters.jobType}
+                  onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
+                  aria-label="Filter by employment type"
+                >
+                  <option value="">Employment Type</option>
+                  <option value="FULL_TIME">Full Time</option>
+                  <option value="CONTRACT">Contract</option>
+                  <option value="PART_TIME">Part Time</option>
+                  <option value="INTERNSHIP">Internship</option>
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={filters.sort}
+                  onChange={(e) => setFilters({ ...filters, sort: e.target.value as FilterState['sort'] })}
+                  aria-label="Sort job listings"
+                >
+                  <option value="recent">Most Recent</option>
+                  <option value="salary">Highest Compensation</option>
+                </select>
               </div>
 
               {/* Job Listings Feed */}
               {filteredJobs.length === 0 ? (
                 <div className="empty-state">
-                  <div className="empty-icon">🔎</div>
+                  <div className="empty-icon">🔍</div>
                   <div className="empty-title">No listings match your criteria</div>
                   <div className="empty-desc">
-                    Try clearing one or more filters or broadening your search terms across tech stacks.
+                    Try broadening your keywords or clearing seniority and location filters.
                   </div>
                   <button
                     type="button"
@@ -468,7 +410,6 @@ export default function Home() {
                   ))}
                 </div>
               )}
-
             </div>
           )}
 
@@ -476,12 +417,14 @@ export default function Home() {
           {activeTab === 'saved' && (
             <div>
               <div style={{ marginBottom: '1.25rem' }}>
-                <h1 style={{
-                  fontFamily: 'var(--font-heading)',
-                  fontSize: '1.35rem',
-                  fontWeight: 700,
-                  color: 'var(--seekers-text-primary)'
-                }}>
+                <h1
+                  style={{
+                    fontFamily: 'var(--font-heading)',
+                    fontSize: '1.35rem',
+                    fontWeight: 700,
+                    color: 'var(--seekers-text-primary)',
+                  }}
+                >
                   Saved Roles ({savedJobs.length})
                 </h1>
                 <p style={{ fontSize: '0.875rem', color: 'var(--seekers-text-secondary)', marginTop: '0.2rem' }}>
@@ -546,12 +489,10 @@ export default function Home() {
           {/* ─── TAB 5: PROFILE & SKILLS ─────────────────────────────────── */}
           {activeTab === 'profile' && (
             <ProfileWorkspace
-              profile={profile}
-              onUpdateProfile={setProfile}
               onOpenDataControl={() => setIsDataControlOpen(true)}
+              onOpenAuth={() => setIsAuthOpen(true)}
             />
           )}
-
         </div>
       </main>
 
@@ -583,14 +524,10 @@ export default function Home() {
         totalFilteredCount={filteredJobs.length}
       />
 
-      {/* 3. Auth Modal */}
+      {/* 3. Real Auth Modal */}
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
-        onLoginSuccess={(name) => {
-          setCandidateName(name);
-          setActiveTab('discover');
-        }}
       />
 
       {/* 4. Feedback / Report Modal */}
@@ -607,7 +544,6 @@ export default function Home() {
       <DataControlModal
         isOpen={isDataControlOpen}
         onClose={() => setIsDataControlOpen(false)}
-        profile={profile}
         applications={applications}
         savedJobs={savedJobs}
       />
@@ -617,7 +553,14 @@ export default function Home() {
         isOpen={isDemoInfoOpen}
         onClose={() => setIsDemoInfoOpen(false)}
       />
-
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <CandidatePortalContent />
+    </AuthProvider>
   );
 }

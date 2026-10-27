@@ -3,33 +3,22 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
-import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-
 import type { Request } from 'express';
 import type { DecodedIdToken } from 'firebase-admin/auth';
+import { getFirebaseAuth } from './firebase-admin.provider';
 
 export interface AuthenticatedRequest extends Request {
-  user?: DecodedIdToken;
-}
-
-// Make sure Firebase is initialized before verifying tokens
-// If no app is initialized, initialize one here with default credentials (mocked for now since we don't have the key).
-if (!getApps().length) {
-  try {
-    initializeApp({
-      credential: applicationDefault(),
-    });
-  } catch {
-    console.warn(
-      'Firebase app could not be initialized with default credentials. Verification might fail.',
-    );
-  }
+  user?: DecodedIdToken & {
+    role?: string;
+  };
 }
 
 @Injectable()
 export class FirebaseAuthGuard implements CanActivate {
+  private readonly logger = new Logger(FirebaseAuthGuard.name);
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const authHeader = request.headers.authorization;
@@ -39,23 +28,62 @@ export class FirebaseAuthGuard implements CanActivate {
       typeof authHeader !== 'string' ||
       !authHeader.startsWith('Bearer ')
     ) {
-      throw new UnauthorizedException(
-        'Missing or invalid Authorization header',
-      );
+      throw new UnauthorizedException({
+        code: 'MISSING_AUTHORIZATION_TOKEN',
+        message: 'Authorization header with Bearer token is required.',
+      });
     }
 
-    const token = authHeader.slice(7);
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      throw new UnauthorizedException({
+        code: 'EMPTY_BEARER_TOKEN',
+        message: 'Bearer token value cannot be empty.',
+      });
+    }
 
     try {
-      // Verify the JWT with Firebase
-      const decodedToken = await getAuth().verifyIdToken(token);
+      const auth = getFirebaseAuth();
+      // Verify token with revocation check
+      const decodedToken = await auth.verifyIdToken(token, true);
 
-      // Attach the decoded user payload to the request object
-      // so our controllers can access it (e.g., request.user.uid)
+      // Attach decoded user token payload to request object
       request.user = decodedToken;
       return true;
-    } catch {
-      throw new UnauthorizedException('Invalid Firebase token');
+    } catch (err: unknown) {
+      const firebaseError = err as { code?: string; message?: string };
+      const code = firebaseError.code || 'INVALID_TOKEN';
+
+      if (code === 'auth/id-token-expired') {
+        throw new UnauthorizedException({
+          code: 'TOKEN_EXPIRED',
+          message:
+            'Authentication session expired. Please refresh your session.',
+        });
+      }
+
+      if (code === 'auth/id-token-revoked') {
+        throw new UnauthorizedException({
+          code: 'TOKEN_REVOKED',
+          message:
+            'Authentication token has been revoked. Please sign in again.',
+        });
+      }
+
+      if (code === 'auth/user-disabled') {
+        throw new UnauthorizedException({
+          code: 'ACCOUNT_DISABLED',
+          message: 'Candidate account has been disabled.',
+        });
+      }
+
+      this.logger.debug(
+        `Token verification failed: ${firebaseError.message || code}`,
+      );
+      throw new UnauthorizedException({
+        code: 'INVALID_AUTHENTICATION_TOKEN',
+        message: 'Invalid or forged authentication token.',
+      });
     }
   }
 }

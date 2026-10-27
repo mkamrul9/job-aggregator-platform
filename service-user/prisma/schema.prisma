@@ -14,20 +14,71 @@ enum Role {
   ADMIN
 }
 
+enum RemoteEligibility {
+  FULLY_REMOTE
+  HYBRID
+  ON_SITE
+  UNSPECIFIED
+}
+
 model User {
-  id           String   @id
-  email        String   @unique
-  passwordHash String // Will be populated by Firebase Auth uid later
-  role         Role     @default(CANDIDATE)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  profile      Profile?
+  id               String                   @id // Firebase UID
+  email            String                   @unique
+  emailVerified    Boolean                  @default(false)
+  role             Role                     @default(CANDIDATE)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  profile          Profile?
+  deletionRequests AccountDeletionRequest[]
+  exportRequests   AccountExportRequest[]
+
+  @@index([role])
 }
 
 model Profile {
-  id              String   @id @default(uuid())
-  userId          String   @unique
-  resumeUrl       String?
-  extractedSkills String[] // PostgreSQL supports array types
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String            @id @default(uuid())
+  userId              String            @unique
+  name                String            @default("")
+  title               String?
+  skills              String[]          @default([]) // Candidate-managed reviewed skills
+  extractedSkills     String[]          @default([]) // Extracted skills from parser (isolated)
+  resumeUrl           String?
+  locations           String[]          @default([])
+  remotePreference    RemoteEligibility @default(UNSPECIFIED)
+  minSalary           Float?
+  currency            String            @default("BDT")
+  onboardingCompleted Boolean           @default(false)
+  onboardingStep      Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AccountDeletionRequest {
+  id             String    @id @default(uuid())
+  userId         String
+  status         String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, CANCELLED
+  requestedAt    DateTime  @default(now())
+  scheduledFor   DateTime  // 30-day grace period execution date
+  idempotencyKey String?   @unique
+  reason         String?
+  executedAt     DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model AccountExportRequest {
+  id          String    @id @default(uuid())
+  userId      String
+  status      String    @default("READY") // PENDING, READY, FAILED
+  format      String    @default("JSON")
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+  archiveUrl  String?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
 }
