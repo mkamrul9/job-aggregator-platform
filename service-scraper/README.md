@@ -18,7 +18,7 @@ A concurrent web scraping and data extraction engine written in Go that harvests
 
 ## 2. Architecture & Concurrency Model
 
-The scraper is built around an event-driven worker pool pattern using Go channels and goroutines:
+The scraper launches a goroutine per configured URL and returns results through a channel. A bounded worker pool, normalization, and the stdout/file adapter in the intended design below are planned for P07; they are not current runtime features.
 
 ```
                +----------------------------------+
@@ -56,8 +56,7 @@ The scraper is built around an event-driven worker pool pattern using Go channel
 The publisher logic is isolated behind an explicit Go interface (`publisher.go`):
 ```go
 type EventPublisher interface {
-    Publish(topic string, key string, payload []byte) error
-    Close() error
+    Publish(job DBJob) error
 }
 ```
 This enables zero-infrastructure unit testing via `MockPublisher` and provides the foundation for the planned standalone CLI file output adapter.
@@ -72,7 +71,7 @@ This enables zero-infrastructure unit testing via `MockPublisher` and provides t
 - **Known Limitations:**
   - Scraping targets currently consist of hardcoded LinkedIn URL patterns with one source selector set.
   - No dynamic scheduling, per-source rate limiters, or robots.txt compliance manager yet implemented.
-  - Startup currently fails immediately if Kafka broker is unavailable when integrated mode runs.
+  - Failed Kafka publishing is logged; there is no durable retry/replay path yet.
 
 ---
 
@@ -91,20 +90,13 @@ cd service-scraper
 # Download Go module dependencies
 go mod download
 
-# Install Playwright browser dependencies (if running headless scraping locally)
-go run github.com/playwright-community/playwright-go/cmd/playwright@v0.4901.0 install --with-deps
+# Browser/driver provisioning must match go.mod; P02 will verify a reproducible
+# setup. The current executable attempts driver installation at startup.
 ```
 
 ### Configuration
 
-Copy the example configuration:
-```bash
-cp .env.example .env
-```
-Key configuration settings (see `.env.example`):
-- `KAFKA_BROKER`: Address of Kafka broker (default: `localhost:9092`)
-- `KAFKA_JOB_TOPIC`: Event topic (default: `jobs.new`)
-- `HEADLESS`: Toggle headless browser execution (default: `true`)
+The executable reads `KAFKA_BROKER` from its process environment; its code fallback is `kafka:9092`. Set `localhost:9092` explicitly for host-based development. The `.env.example` is a reference for that variable; the Go application does not automatically load `.env`. The topic (`jobs.new`), headless mode, and target URLs are currently hardcoded. Configurable limits and fixture/file-output modes are planned.
 
 ### Running Tests
 

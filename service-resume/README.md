@@ -1,6 +1,6 @@
 # Python Resume Extractor (`service-resume`)
 
-An automated natural language processing (NLP) service that extracts structured candidate technical skills and profile information from unstructured PDF resumes.
+A Python service that extracts text from PDF resumes and matches a fixed dictionary of technical skills. General profile extraction is not implemented.
 
 > **Role in Seekers Platform:** Part of the Seekers polyglot microservices platform. This service operates as an independent extraction engine consumed via gRPC by `service-user` during candidate profile onboarding, and can be evaluated independently via its HTTP OpenAPI interface without running the full platform fleet.
 
@@ -62,10 +62,10 @@ The service provides dual interfaces into the exact same underlying extraction e
 ## 3. Current Capabilities & Baseline Status
 
 - **Unit Tests (`pytest test_main.py`):** `[Verified]` — 2 unit tests passing (validates PDF text extraction mock and invalid MIME type rejection).
-- **FastAPI HTTP App (`main:app`):** `[Verified]` — boots and serves Swagger docs on port 8000.
-- **gRPC Server (`grpc_server.py`):** `[Verified]` — boots and binds to `0.0.0.0:50051`.
+- **FastAPI HTTP App (`main:app`):** Implements `/parse` and Swagger docs; fresh startup verification belongs to P02.
+- **gRPC Server (`grpc_server.py`):** Implements parsing on port `50051`; the existing two tests do not exercise gRPC startup or delivery.
 - **Known Limitations:**
-  - Skill extraction currently matches against a static 15-skill dictionary rather than an adaptive ML model.
+  - Skill extraction currently matches against 16 dictionary entries rather than an adaptive ML model.
   - Relies on shared local disk paths passed over gRPC rather than an object storage abstraction.
   - PyPDF2 reports deprecation notices; migration to pypdf is scheduled for P02.
 
@@ -95,14 +95,7 @@ python -m spacy download en_core_web_sm
 
 ### Configuration
 
-Copy the example configuration:
-```bash
-cp .env.example .env
-```
-Key configuration settings (see `.env.example` for details):
-- `PORT`: HTTP port for FastAPI (default: `8000`)
-- `GRPC_PORT`: gRPC listen port (default: `50051`)
-- `UPLOAD_DIR`: Local buffer directory for uploaded resumes
+The Python application does not currently load `.env` or read configurable upload limits, model names, or gRPC ports. Set the HTTP host/port with the Uvicorn arguments below; gRPC uses the hardcoded port `50051` and the model is `en_core_web_sm`. Upload limits and configurable settings require implementation before they can be relied on.
 
 ### Running the Service
 

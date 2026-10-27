@@ -8,14 +8,14 @@
 
 ## 1. Catalog Overview & Monorepo Principles
 
-The Seekers platform is designed as an enterprise-grade job aggregation and candidate intelligence system. The repository is organized as a polyglot microservices monorepo where each service maintains its own technology specialization, configuration contract, dependency manifest, test suite, and independently verifiable entry point.
+The Seekers prototype is organized as a polyglot microservices monorepo with a production roadmap. Every project retains its technology specialization and dependency manifest. Independent quickstarts, complete test suites, and production verification are still being established.
 
 A primary requirement of this architecture is that **each project is independently demonstrable** for technology-specific evaluations (e.g. evaluating the Python extractor without spinning up PostgreSQL, Kafka, or React; or evaluating the Angular operations dashboard without the entire backend fleet). Standalone demonstrations use the exact same core business logic as platform mode, with external dependencies replaced by clearly labelled adapters or synthetic fixtures.
 
 ### Global Command Status Taxonomy
 
 To maintain engineering honesty, all commands in this catalog are classified using three explicit tiers:
-- **`[Verified]`**: Tested and confirmed working in this audit baseline.
+- **`[Verified]`**: A reported local check passed in the P01 baseline; it is not proof of a fresh CI pass or a full user journey.
 - **`[Observed-but-unverified]`**: Present in package scripts or configuration, executed but exhibiting known blockers/partial output.
 - **`[Planned]`**: Designed for implementation in the owning feature phase (P02–P16); not yet working or implemented.
 
@@ -28,10 +28,10 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 | `service-resume` | Python Resume Extractor | Python 3.11+, FastAPI, spaCy, PyPDF2, gRPC | P08 | Isolated unit tests pass; standalone presentation planned |
 | `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, RxJS, Socket.io | P12 | Production build passes; live feed requires backend socket |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Playwright-Go, Kafka-Go | P07 | `go test` and `go vet` pass; module mode verified; CLI runner planned |
-| `service-user` | NestJS Identity & Profile API | NestJS 10, TypeScript, Prisma, PostgreSQL | P05 | TypeScript check & 1 unit test pass; ESLint errors to resolve in P02 |
+| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | Local TypeScript check & 1 unit test pass; Linux install/CI and ESLint need P02 repairs |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 20, Express, KafkaJS, MongoDB, ES | P07 | Syntax checks pass; test runner is placeholder |
 | `service-notification`| Node.js Notification Delivery Service | Node.js 20, Express, Socket.io, KafkaJS, Nodemailer | P11 | Syntax checks pass; test runner is placeholder |
-| `frontend-next` | React/Next.js Candidate App | Next.js 14, React 18, TypeScript | P06 | ESLint issues & Turbopack build failure diagnosed for P02 |
+| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript | P06 | ESLint issues & Turbopack build failure await P02 diagnosis |
 
 ---
 
@@ -55,12 +55,12 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 - **Commands & Verification:**
   - Test: `pytest test_main.py` — `[Verified]` (passes in local environment; notes PyPDF2 deprecation warning)
   - Lint/Format: `flake8 .` / `black --check .` — `[Planned]` (scheduled for P02 pipeline)
-  - Local Run (HTTP): `uvicorn main:app --host 0.0.0.0 --port 8000 --reload` — `[Verified]`
-  - Local Run (gRPC): `python grpc_server.py` — `[Verified]`
+  - Local Run (HTTP): `uvicorn main:app --host 0.0.0.0 --port 8000 --reload` — `[Observed-but-unverified]` (fresh startup not established by the two tests)
+  - Local Run (gRPC): `python grpc_server.py` — `[Observed-but-unverified]` (not covered by the existing HTTP tests)
 - **Required Infrastructure:**
   - None required for standalone parsing.
   - Inter-service mode requires shared volume access (`/uploads`) with `service-user`.
-- **Current Verification Status:** Functional NLP core with passing mock-based unit tests. PyPDF2 generates deprecation notices; spaCy currently checks a 15-skill static dictionary.
+- **Current Verification Status:** Two HTTP tests pass, including a mocked PDF path. PyPDF2 generates deprecation notices; the dictionary has 16 entries. The application does not consume a `.env` file or configurable upload-limit settings yet.
 - **Standalone-Readiness Gaps:**
   - No lightweight, self-contained HTML/web upload UI served by Python.
   - Anonymous HTTP endpoint does not enforce upload size or rate bounds.
@@ -80,7 +80,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 ### 3.2 `frontend-admin` — Angular Operations Dashboard
 
 - **Purpose & Role:** Provides operational monitoring, real-time job ingestion telemetry, and moderation tools for platform administrators.
-- **Primary Technology:** Angular 18, TypeScript 5.4, SCSS, RxJS 7.8, Socket.io-client 4.7.
+- **Primary Technology:** Angular 18, TypeScript 5.5, SCSS, RxJS 7.8, Socket.io-client 4.8; current app uses NgModules.
 - **Data Ownership:** UI presentation layer; owns no persistence. Consumes live WebSocket events from `service-notification` and REST telemetry endpoints.
 - **Entry Points & Interfaces:**
   - Web UI: Port `4200` (local dev `ng serve`) / Port `80` inside Nginx production container
@@ -92,9 +92,9 @@ To maintain engineering honesty, all commands in this catalog are classified usi
   - Build: `npm run build` — `[Verified]` (production compilation succeeds)
   - Test: `npm test -- --watch=false --browsers=ChromeHeadless` — `[Observed-but-unverified]` (requires configured headless browser)
   - Lint: `npm run lint` — `[Planned]` (scheduled for P02)
-  - Local Dev: `npm start` (`ng serve --port 4200`) — `[Verified]`
+  - Local Dev: `npm start` (`ng serve`, default port 4200) — `[Observed-but-unverified]` (fresh runtime verification still required)
 - **Required Infrastructure:**
-  - Standalone mode: None (synthetic feed).
+  - Planned standalone mode: No backend fleet required after P12's synthetic feed is implemented. There is no working demo switch or `.env` loading today.
   - Integrated mode: `service-notification` (Socket.io on port 4000) and API gateway.
 - **Current Verification Status:** Compiles cleanly to production bundle (`dist/frontend-admin`). In Compose, the service is currently commented out and its socket endpoint assumes localhost rather than gateway routing.
 - **Standalone-Readiness Gaps:**
@@ -102,7 +102,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
   - Header, sidebar, and metric panels contain placeholder values.
   - Needs Angular upgrade and supported release validation.
 - **Planned Standalone Demonstration (P12):**
-  - Built-in synthetic demonstration mode (`NG_APP_DEMO_MODE=true`) streaming realistic simulated job intake events and throughput graphs.
+  - A planned synthetic demonstration mode with an explicit configuration contract, streaming simulated job intake events. No `NG_APP_*` switch is currently implemented.
   - Filterable audit logs, mock metric gauges, and job moderation inspection cards.
   - Independent recruiter evaluation without operating Kafka, Elasticsearch, or backend services.
 - **Intended Deployment Boundary:**
@@ -133,7 +133,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
   - Integrated mode: Apache Kafka broker (`KAFKA_BROKER`).
 - **Current Verification Status:** Core logic and concurrency channels compile cleanly. Unit tests exercise the mock publisher. Real scraper relies on hardcoded example targets and single selector set.
 - **Standalone-Readiness Gaps:**
-  - Scraping logic tightly coupled to Kafka publishing on startup; fails immediately if Kafka is unavailable.
+  - The executable always configures Kafka and has no implemented stdout/file adapter. Publish failures are logged without durable replay.
   - Scrapes mock/hardcoded LinkedIn URLs with no source selector abstraction or rate limiting.
 - **Planned Standalone Demonstration (P07):**
   - Standalone CLI mode (`--output=json` / `--fixture=sample.html`) allowing offline testing against local HTML snapshots.
@@ -148,13 +148,13 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 ### 3.4 `service-user` — NestJS Identity & Profile API
 
 - **Purpose & Role:** Provides authenticated user profile management, candidate skill inventories, resume upload coordination, and Firebase token verification.
-- **Primary Technology:** NestJS 10, TypeScript 5.1, Prisma ORM 5.x, PostgreSQL 15, `@grpc/grpc-js`, Firebase Admin SDK.
-- **Data Ownership:** Authoritative owner of PostgreSQL database `job_aggregator_users`. Owns User, Profile, Skill, and Resume metadata entities.
+- **Primary Technology:** NestJS 11, TypeScript 5.7, Prisma ORM 5.x, PostgreSQL 15, `@grpc/grpc-js`, Firebase Admin SDK.
+- **Data Ownership:** PostgreSQL database `job_aggregator_users`, with the current `User` and `Profile` models. Skills and the optional resume URL are fields on `Profile`, not separate entities.
 - **Entry Points & Interfaces:**
   - REST API: Port `3000` (exposed on host `3002` via Docker Compose)
-    - `POST /user/sync` (Firebase JWT authentication & profile sync)
-    - `GET /user/profile` (authenticated profile retrieval)
-    - `POST /user/upload-resume` (multipart upload & gRPC dispatch)
+    - `POST /users/sync` (Firebase JWT authentication & account upsert)
+    - `POST /users/upload-resume` (multipart upload & gRPC dispatch)
+    - Gateway prefix: `/api/users/`; profile read/edit endpoints are planned, not implemented.
   - gRPC Client: Connects to `service-resume` on `RESUME_GRPC_URL`
 - **Dependency Manifests & Lockfiles:**
   - Manifest: `service-user/package.json`
@@ -189,7 +189,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 ### 3.5 `service-ingestion` — Node.js Job Ingestion & Search API
 
 - **Purpose & Role:** High-throughput streaming consumer that ingests raw job listings from Kafka, deduplicates records, persists full documents to MongoDB, and projects searchable records into Elasticsearch. Also serves the REST search endpoint.
-- **Primary Technology:** Node.js 20, Express 4.x, KafkaJS 2.x, MongoDB Node Driver 6.x, `@elastic/elasticsearch` 8.x/9.x.
+- **Primary Technology:** Node.js 20 container, Express 5.x, KafkaJS 2.x, MongoDB Node Driver 7.x, `@elastic/elasticsearch` 9.x; server/client alignment is a P02 blocker.
 - **Data Ownership:** Authoritative owner of MongoDB database `job_platform` (collection: `jobs`). Dual-writes search projections to Elasticsearch index `jobs_index`.
 - **Entry Points & Interfaces:**
   - Kafka Consumer: Topic `jobs.new` (Consumer Group: `mongo-ingestion-group`)
@@ -226,7 +226,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 ### 3.6 `service-notification` — Node.js Notification Delivery Service
 
 - **Purpose & Role:** Listens for newly ingested jobs on Kafka, broadcasts real-time updates to connected admin dashboards via WebSockets (Socket.io), and dispatches email alerts to matching candidates using Nodemailer.
-- **Primary Technology:** Node.js 20, Express 4.x, Socket.io 4.x, KafkaJS 2.x, Nodemailer 6.x, prom-client 15.x.
+- **Primary Technology:** Node.js 20 container, Express 5.x, Socket.io 4.x, KafkaJS 2.x, Nodemailer 9.x, prom-client 15.x.
 - **Data Ownership:** Stateless delivery worker. Exposes Prometheus operational metrics (`job_notifications_sent_total`, process metrics).
 - **Entry Points & Interfaces:**
   - Kafka Consumer: Topic `jobs.new` (Consumer Group: `email-notification-group`)
@@ -263,7 +263,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 ### 3.7 `frontend-next` — React/Next.js Candidate App
 
 - **Purpose & Role:** Primary public-facing candidate portal for discovering job opportunities, executing full-text searches, managing candidate authentication, and uploading resumes.
-- **Primary Technology:** Next.js 14.2, React 18, TypeScript 5.x, Tailwind CSS / Vanilla CSS, Firebase Client SDK, `@elastic/elasticsearch`.
+- **Primary Technology:** Next.js 16.3.0, React 19.2.8, TypeScript 5.x, Tailwind CSS / Vanilla CSS, Firebase Client SDK, `@elastic/elasticsearch` 9.x.
 - **Data Ownership:** Web client; caches search results in React state. Server-side API route `/api/jobs` queries Elasticsearch directly.
 - **Entry Points & Interfaces:**
   - Web UI: Port `3000` (local dev) / Port `3003` (Docker host port)
@@ -277,8 +277,8 @@ To maintain engineering honesty, all commands in this catalog are classified usi
   - Local Dev: `npm run dev` — `[Observed-but-unverified]` (runs on port 3000)
 - **Required Infrastructure:**
   - Elasticsearch (`ES_NODE`) for internal server-side search route.
-  - API Gateway (`nginx`) for reverse proxying `/api/user/*` and `/api/resume/*`.
-  - Firebase project or local Firebase Auth emulator.
+  - API Gateway (`nginx`) for reverse proxying `/api/users/*` and `/api/resume/*`.
+  - Firebase project; client-side emulator connection is not implemented yet.
 - **Current Verification Status:** Rich UI components present (JobSearch, ResumeUpload, AuthComponent, Navbar). Production build fails under Windows sandbox/Turbopack, and lint errors require resolution.
 - **Standalone-Readiness Gaps:**
   - Turbopack build failure and stale generated types must be fixed in P02.
@@ -299,7 +299,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 | Component | Technology | Primary Role | Host Port | Internal Port |
 |---|---|---|---|---|
-| `api-gateway` | Nginx Alpine | Reverse proxy, path routing, SSL termination | `80` | `80` |
+| `api-gateway` | Nginx Alpine | HTTP reverse proxy and path routing; TLS is not configured | `80` | `80` |
 | `kafka` | Apache Kafka (KRaft) | Asynchronous event bus (`jobs.new`) | `9092` | `9092` |
 | `user-postgres`| PostgreSQL 15 | Relational persistence for user accounts & profiles | `5433` | `5432` |
 | `job-mongo` | MongoDB 6+ | Unstructured document store for ingested jobs | `27017` | `27017` |
@@ -313,5 +313,5 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 1. **Remote Repository URL:** Configured with clean, credential-free URL (`https://github.com/mkamrul9/job-aggregator-platform.git`) using Git Credential Manager (`manager`). No credentials embedded in Git configuration.
 2. **Environment Files:** All `.env` and `.env.*` files are untracked and ignored via root and service-level `.gitignore` files.
-3. **Configuration Examples:** Each project provides an `.env.example` file specifying variable definitions, local development defaults, and security boundaries.
+3. **Configuration Examples:** Tracked examples contain variables actually consumed by a current service or SDK. The root Compose file currently uses hardcoded values, and Angular/Python apps do not load `.env`; their unused draft examples stay local. A reference file is not proof of an environment loader or an enforced security limit.
 4. **Local Secrets:** Kept strictly local (e.g. `.secrets`, `docs/token_cmd.txt` are gitignored).

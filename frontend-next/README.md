@@ -8,8 +8,8 @@ The candidate-facing web portal for the Seekers platform, providing job discover
 
 ## 1. Primary Technology Stack
 
-- **Framework:** Next.js 14.2 (App Router architecture)
-- **UI Library:** React 18 with TypeScript 5.x
+- **Framework:** Next.js 16.3.0 (App Router architecture)
+- **UI Library:** React 19.2.8 with TypeScript 5.x
 - **Styling:** Tailwind CSS & Vanilla CSS (Custom design system: Sora / Plus Jakarta Sans, charcoal & amber palette)
 - **Identity:** Firebase Client SDK (Email/Password, Session state)
 - **Search Client:** `@elastic/elasticsearch` (used in server-side `/api/jobs` route)
@@ -45,8 +45,8 @@ The candidate-facing web portal for the Seekers platform, providing job discover
 
 - **`JobSearch.tsx`:** Interactive search bar, keyword filters, and job card results list.
 - **`ResumeUpload.tsx`:** Client-side PDF file picker, upload progress indicator, and extracted skill badges.
-- **`AuthComponent.tsx`:** Modal supporting candidate registration, email/password login, and Firebase-to-NestJS user sync.
-- **`Navbar.tsx`:** Responsive navigation header with authentication status and navigation links.
+- **`AuthComponent.tsx`:** Inline candidate registration/login form and Firebase-to-NestJS sync request. Full session management is planned.
+- **`Navbar.tsx`:** Brand header and feedback dialog. Feedback currently logs to the browser console; production submission and complete mobile navigation are planned.
 
 ---
 
@@ -85,7 +85,7 @@ cp .env.example .env.local
 Key configuration settings (see `.env.example`):
 - `ES_NODE`: Elasticsearch address for server-side search route (default: `http://localhost:9200`)
 - `NEXT_PUBLIC_FIREBASE_API_KEY`: Firebase public web API key
-- `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL`: Local emulator URL (default: `http://localhost:9099`)
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` and `NEXT_PUBLIC_FIREBASE_PROJECT_ID`: Firebase public project configuration. Client emulator wiring and configurable API base URLs are not implemented; adding an environment variable alone does not enable them.
 
 ### Running Locally
 

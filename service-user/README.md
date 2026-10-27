@@ -8,8 +8,8 @@ The central candidate identity, profile management, and account data service for
 
 ## 1. Primary Technology Stack
 
-- **Framework:** NestJS 10 (Modular architecture: Controllers, Services, Guards)
-- **Language:** TypeScript 5.1 (Strict type-checking)
+- **Framework:** NestJS 11 (Modular architecture: Controllers, Services, Guards)
+- **Language:** TypeScript 5.7 (current compiler settings do not enable every strict check)
 - **Database & ORM:** PostgreSQL 15 with Prisma ORM 5.x
 - **Authentication:** Firebase Admin SDK (`FirebaseAuthGuard`)
 - **Inter-Service RPC:** `@grpc/grpc-js` and `@grpc/proto-loader`
@@ -49,15 +49,16 @@ The service serves authenticated HTTP endpoints and communicates with backend se
 
 | Method | Route | Description | Auth Required |
 |---|---|---|---|
-| `POST` | `/user/sync` | Idempotent candidate sync after Firebase login | Yes (Bearer JWT) |
-| `GET` | `/user/profile` | Retrieve candidate profile and skill inventory | Yes (Bearer JWT) |
-| `POST` | `/user/upload-resume` | Upload PDF resume, forward to gRPC parser, save skills | Yes (Bearer JWT) |
+| `POST` | `/users/sync` | Candidate upsert after Firebase login | Yes (Bearer JWT) |
+| `POST` | `/users/upload-resume` | Upload PDF resume, forward to gRPC parser, save skills | Yes (Bearer JWT) |
+
+Nginx exposes these routes under `/api/users/`. Profile read/edit endpoints are planned for P05 and are not implemented yet.
 
 ---
 
 ## 3. Current Capabilities & Baseline Status
 
-- **Unit Testing (`npm test`):** `[Verified]` — 1 Jest unit test passes (`AppController`).
+- **Unit Testing (`npm test`):** `[Verified locally]` — 1 mocked `UserService` unit test passes. Linux CI fails earlier during `npm ci`; P02 must repair the lockfile before claiming a clean CI pass.
 - **Type Checking (`npx tsc --noEmit`):** `[Verified]` — zero TypeScript compilation errors.
 - **Prisma Client (`npx prisma generate`):** `[Verified]` — generates typed client from `schema.prisma`.
 - **Linting (`npm run lint`):** `[Observed-but-unverified]` — 59 errors and 3 warnings recorded for remediation in Phase P02.

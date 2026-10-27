@@ -4,7 +4,9 @@ Prepared: 27 October 2026 (Asia/Dhaka). Source baseline: `ca67811` on `main`.
 
 Updated: 27 October 2026. Portfolio requirement: preserve the polyglot microservices architecture and make every service/app independently presentable for technology-specific job applications. The Angular dashboard remains Angular.
 
-**Status: Phase P01 completed on feature branch codex/production-p01-service-baseline. Source baseline secured and independent service catalog established.**
+**Status:** P01 source-baseline changes are committed on `codex/production-p01-service-baseline` (`e9eb12d`, followed by `633cca1`). P02 is planned and has not started. P01's Linux CI remains red because the user-service lockfile omits optional dependencies; production readiness and credential-revocation verification must not be inferred from the P01 completion report.
+
+Repository publication policy: keep maintained service READMEs, this active roadmap, the service catalog, architecture reference, source, tests, and working configuration/deployment files. Keep personal research, historical daily/phase notes, agent prompts, and execution logs local and ignored. Only configuration examples consumed by an existing application belong in the published baseline. Do not blanket-ignore future maintained documentation or rewrite already-pushed history to remove ordinary documentation.
 
 The existing repository is a prototype with useful foundations. It is not ready for a public production launch or a claim that it supports millions of users. This roadmap turns it into a complete candidate product composed of independently owned, built, tested, deployable, and demonstrable services/apps, establishes dependable operations, and then proves capacity against a defined workload. A recruiter must be able to assess one relevant project without running or understanding the entire platform. Existing phase notes under `docs/` describe earlier development; the production phases below use the separate identifiers **P01–P18**.
 
@@ -12,7 +14,7 @@ The existing repository is a prototype with useful foundations. It is not ready 
 
 Reviewed the first-party candidate frontend, admin frontend, all five backend service directories, database schema, protobuf contract and generated-code requirements, Dockerfiles, Compose configuration, gateway, CI, metrics configuration, deployment and seed scripts, repository hygiene, architecture documentation, and historical development notes. Third-party dependency source is not an application code review target. Broad architecture and research-idea documents are background material, not evidence that those capabilities exist.
 
-Performed local lint/type checks, existing unit tests where practical, frontend build attempts, Compose configuration validation, and read-only inspection of existing container state and gateway logs. No application feature was changed, database migrated, container restarted, email sent, credential rotated, commit created, or push performed. Build checks generated local output. The stack was not rebuilt from a clean checkout, and no full browser journey or load test has passed in this assessment.
+The original pre-P01 assessment performed local lint/type checks, existing unit tests where practical, frontend build attempts, Compose configuration validation, and read-only inspection of existing container state and gateway logs. It changed no application feature or database and did not restart containers, send mail, rotate credentials, commit, or push. Build checks generated local output. The stack was not rebuilt from a clean checkout, and no full browser journey or load test passed in that assessment. Subsequent P01 source-baseline work is identified in the status above.
 
 ### Verified baseline
 
@@ -137,7 +139,7 @@ The web must work well on mobile before a native app exists. Stable authenticate
 9. For each affected project, verify both its standalone entry point and its real integration contract at the relevant phase gate. Update its own documentation, configuration examples, evidence, and release notes alongside platform documentation. Preserve all seven existing service/app identities; do not merge away a technology-specific portfolio project.
 10. Keep each phase bounded while delivering portfolio value incrementally: P05 establishes the NestJS showcase, P06 the Next.js/search experience, P07 the Go and ingestion showcases, P08 the Python extractor, P11 the notification showcase, and P12 the Angular dashboard. Earlier infrastructure work lays their foundations; P16 packages and revalidates them rather than postponing every standalone experience until launch.
 
-**Current request ends at this document. It does not execute P01, make commits, or push.** Once implementation is requested, start at P01.
+Each implementation request follows its authorized phase boundary. P01 source-baseline commits already exist; the current follow-up curates the published files and prepares P02. It does not implement P02 or merge to `main`.
 
 ## 5. Sequential implementation phases
 
@@ -150,9 +152,9 @@ The web must work well on mobile before a native app exists. Stable authenticate
 - Correct ignore rules, preserve useful documentation, add safe `.env.example` files, validate required configuration, and document Firebase emulator/development setup. Existing `.secrets` is not a production secrets-management solution.
 - Establish contribution rules, branch protection requirements, dependency/secret scanning, ownership, and a phase evidence log. Document scans that require a connected provider.
 - Create a versioned service catalog covering all seven existing service/app directories: purpose, primary stack, owner, interfaces, owned data, actual build/test/run commands, infrastructure dependencies, current standalone/integration readiness, planned demo approach, and owning feature phase. Use explicit planned/not-yet-verified labels rather than inventing successful commands or deployments.
-- Create or improve a focused README and safe configuration example for each project, preserving Angular as Angular and Python as Python. Add a platform README index of the individual projects and their relevant role/technology. These are documentation/configuration templates; working demo runners, new UI, and runtime decoupling are delivered in later phases.
+- Create or improve a focused README for each project and safe configuration examples only for settings consumed by the current implementation, preserving Angular as Angular and Python as Python. Document future configuration in the roadmap instead of publishing no-op `.env.example` files. Add a platform README index of the individual projects and their relevant role/technology. Working demo runners, new UI, and runtime decoupling are delivered in later phases.
 
-**Completion gate:** no active known exposed credential; safe remote configuration; secret checks pass; only intended source and lockfiles are tracked; clean clone can enter the documented setup path; all seven project identities, focused README/configuration templates, dependency boundaries, and standalone-readiness gaps are recorded; Angular is explicitly retained; no unreviewed history rewrite. Full standalone application functionality is not a P01 claim.
+**Completion gate:** no active known exposed credential; safe remote configuration; secret checks pass; only intended source, lockfiles, useful configuration, and maintained documentation are tracked; clean clone can enter the documented setup path; all seven project identities, focused READMEs, actual configuration requirements, dependency boundaries, and standalone-readiness gaps are recorded; Angular is explicitly retained; no unreviewed history rewrite. Full standalone application functionality is not a P01 claim.
 
 **Checkpoint:** `chore(repo): secure source baseline and document independent services` → verified push.
 
@@ -458,7 +460,7 @@ Every defect fix adds a regression when it guards meaningful behavior. Coverage 
 
 ## 9. Phase evidence and completion record
 
-All production phases are currently **planned**. At each checkpoint, record:
+P01 source-baseline work has been committed; its inherited CI and any unverified security gates remain explicit. P02–P18 are **planned**. Keep detailed agent execution logs local; record concise change/test evidence in commit or PR descriptions and maintained documentation only where useful to contributors. At each checkpoint, record:
 
 - Phase/subphase identifier and the exact capability checklist.
 - Source branch, reviewed commit SHA, verified remote SHA, PR and required CI links.
@@ -473,4 +475,4 @@ The roadmap does not mark historical demo milestones as production-complete. A f
 
 ## 10. Immediate next step
 
-When implementation is requested, use `PHASE_01_PROMPT.md` to start P01 with a concrete repository/credential remediation and independent-service catalog checklist. Keep the remaining phases planned until their own completion gates pass. No implementation, commit, push, or deployment has been performed as part of producing or updating this roadmap.
+The next implementation request should use the locally supplied Phase 2 prompt and the P02 scope above. Start with a clean Linux reproduction of the missing `@emnapi/core@1.11.3` and `@emnapi/runtime@1.11.3` lockfile entries, then complete P02's build, configuration, migration, CI, and readiness gates. Do not bypass an unresolved credential-revocation requirement. Keep prompts and execution logs out of GitHub; publish only useful source/configuration/test/documentation changes and stop at the requested phase boundary.

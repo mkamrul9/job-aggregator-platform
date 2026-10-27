@@ -40,6 +40,28 @@ htmlcov/
 *.key
 docs/token_cmd.txt
 
+# Local learning archives and agent handoffs; keep maintained project docs tracked.
+/docs/daily updates/
+/docs/phase*.md
+/docs/fix_phase7.md
+/docs/idea.txt
+/docs/26_UNSOLVED_ENGINEERING_PROBLEMS.md
+/docs/ENTERPRISE_PRODUCTION_ARCHITECTURE.md
+/PHASE_*_PROMPT.md
+/PHASE_EVIDENCE_LOG.md
+
+# Draft configuration templates not consumed by the current applications.
+/.env.example
+/frontend-admin/.env.example
+/service-resume/.env.example
+
+# Unreferenced framework starter artwork (local copies may remain).
+/frontend-next/public/file.svg
+/frontend-next/public/globe.svg
+/frontend-next/public/next.svg
+/frontend-next/public/vercel.svg
+/frontend-next/public/window.svg
+
 # Operating System & IDE artifacts
 .DS_Store
 Thumbs.db

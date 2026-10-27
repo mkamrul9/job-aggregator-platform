@@ -44,4 +44,5 @@ Thumbs.db
 # Environment
 .env
 .env.*
-!.env.example
+# No .env loading exists yet; retain the draft example locally.
+/.env.example

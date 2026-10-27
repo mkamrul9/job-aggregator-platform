@@ -195,6 +195,14 @@ git push origin feat/my-new-feature
 
 ## 📝 Commit Message Conventions
 
+### What belongs in a commit
+
+Commit application source, dependency manifests and lockfiles, required generated protocol code, migrations, configuration actually consumed by the application, CI/deployment files, meaningful tests and fixtures, and maintained project documentation. Keep the service READMEs, service catalog, architecture reference, and active production roadmap useful and accurate.
+
+Keep personal learning notes, daily reports, agent handoff prompts, execution transcripts, unused draft configuration, editor-local settings, generated dependencies/caches/build output, and unreferenced starter assets local. Targeted ignore rules preserve these local files without hiding future maintained documentation under `docs/`.
+
+Review `git status --short` and `git diff --cached --stat` before committing. Stage explicit paths or reviewed hunks; do not use an indiscriminate `git add .` or `git add -A`. Verify documentation links and distinguish implemented behavior from planned features. Removing a file from tracking does not erase earlier commits; history rewrites require separate coordination.
+
 We follow [Conventional Commits](https://www.conventionalcommits.org/) strictly. Commits that don't conform will be flagged in code review.
 
 ### Format

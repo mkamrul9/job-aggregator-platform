@@ -1,5 +1,7 @@
 # Architecture Deep-Dive: Job Aggregator Platform
 
+> **Status:** This is a historical architecture explanation, not a production-readiness certificate or current version inventory. Use the source code, service READMEs, [service catalog](SERVICE_CATALOG.md), and [active roadmap](PRODUCTION_ROADMAP.md) for current interfaces, verified checks, and planned capabilities.
+
 > **Who this document is for:** Anyone who wants to understand how this platform works — developers contributing code, technical leads reviewing the design, or curious learners exploring a real-world microservices system. No prior knowledge of the codebase is assumed.
 
 ---

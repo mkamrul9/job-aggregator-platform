@@ -9,9 +9,9 @@ A stream-processing worker and REST search service that consumes newly scraped j
 ## 1. Primary Technology Stack
 
 - **Runtime:** Node.js 20.x
-- **Web Framework:** Express 4.x
+- **Web Framework:** Express 5.x
 - **Event Streaming:** KafkaJS 2.x (Consumer Group: `mongo-ingestion-group`)
-- **Document Store:** MongoDB Node Driver 6.x (Database: `job_platform`, Collection: `jobs`)
+- **Document Store:** MongoDB Node Driver 7.x (Database: `job_platform`, Collection: `jobs`)
 - **Search Engine:** `@elastic/elasticsearch` (Index: `jobs_index`)
 - **Security:** ReDoS input escaping, CORS origin protection
 
@@ -78,7 +78,7 @@ npm install
 
 ### Configuration
 
-Copy the example configuration:
+The application reads variables from its process environment. It does not load `.env` automatically; the example documents supported settings for explicit environment injection:
 ```bash
 cp .env.example .env
 ```

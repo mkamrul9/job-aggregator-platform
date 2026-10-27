@@ -2,15 +2,15 @@
 
 <h1>⚡ Job Aggregator Platform</h1>
 
-<p><strong>A production-grade, polyglot microservices platform that scrapes job listings, parses resumes with AI/NLP, matches candidates to roles, and delivers real-time alerts — all powered by an event-driven Kafka backbone.</strong></p>
+<p><strong>A polyglot microservices prototype for job discovery, PDF skill extraction, and event-driven processing. Production hardening and independent service demonstrations follow the roadmap below.</strong></p>
 
 <br/>
 
 [![Go](https://img.shields.io/badge/Go-1.23-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)](https://nestjs.com/)
+[![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)](https://nestjs.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
-[![Next.js](https://img.shields.io/badge/Next.js-15-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Kafka](https://img.shields.io/badge/Apache_Kafka-KRaft-231F20?style=for-the-badge&logo=apache-kafka&logoColor=white)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Latest-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://mongodb.com/)
@@ -48,17 +48,17 @@
 
 ## 📦 Independent Service Directory (Project Index)
 
-Each service in this polyglot monorepo is maintained as an **independently owned, testable, and demonstrable portfolio project** with its own configuration contract, dependency manifest, and test suite. Reviewers and recruiters can evaluate individual technologies in isolation without running the entire cluster.
+Each service in this polyglot monorepo has its own technology and dependency manifest. Independent demonstrations are a roadmap requirement, not a claim that every service already runs without the platform. The service READMEs and catalog distinguish current behavior, verified checks, and planned capabilities. Some startup instructions and configuration below describe the legacy prototype; P02 will establish a clean reproducible setup.
 
 | Project / Service | Primary Technology | Problem Solved & Role | Owning Phase | Documentation |
 |---|---|---|---|---|
 | **Python Resume Extractor** | Python 3.11+, FastAPI, spaCy, PyPDF2, gRPC | Ingests PDF resumes, extracts text, and matches technical skills via NLP. | [Phase P08](PRODUCTION_ROADMAP.md) | [`service-resume/README.md`](service-resume/README.md) |
 | **Angular Operations Dashboard** | Angular 18, TypeScript, SCSS, RxJS, Socket.io | Real-time monitoring, live ingestion telemetry, and moderation console. | [Phase P12](PRODUCTION_ROADMAP.md) | [`frontend-admin/README.md`](frontend-admin/README.md) |
 | **Go Job Collection Engine** | Go 1.23, Playwright-Go, segmentio/kafka-go | High-throughput concurrent job scraping and Kafka event publishing. | [Phase P07](PRODUCTION_ROADMAP.md) | [`service-scraper/README.md`](service-scraper/README.md) |
-| **NestJS Identity & Profile API** | NestJS 10, TypeScript, Prisma, PostgreSQL 15 | Candidate authentication, profile persistence, and gRPC resume coordination. | [Phase P05](PRODUCTION_ROADMAP.md) | [`service-user/README.md`](service-user/README.md) |
+| **NestJS Identity & Profile API** | NestJS 11, TypeScript, Prisma, PostgreSQL 15 | Candidate authentication, profile persistence, and gRPC resume coordination. | [Phase P05](PRODUCTION_ROADMAP.md) | [`service-user/README.md`](service-user/README.md) |
 | **Node.js Ingestion & Search API** | Node.js 20, Express, KafkaJS, MongoDB, Elasticsearch | Streaming event consumer, dual-write persistence, and paginated search API. | [Phase P07](PRODUCTION_ROADMAP.md) | [`service-ingestion/README.md`](service-ingestion/README.md) |
 | **Node.js Notification Service** | Node.js 20, Express, Socket.io, Nodemailer, Prometheus | WebSocket live feed broadcasting, email alerts, and Prometheus metrics. | [Phase P11](PRODUCTION_ROADMAP.md) | [`service-notification/README.md`](service-notification/README.md) |
-| **React / Next.js Candidate App** | Next.js 14, React 18, TypeScript, Tailwind/CSS | Public job discovery, interactive search, resume upload, and auth workspace. | [Phase P06](PRODUCTION_ROADMAP.md) | [`frontend-next/README.md`](frontend-next/README.md) |
+| **React / Next.js Candidate App** | Next.js 16.3, React 19.2, TypeScript, Tailwind/CSS | Prototype search, resume upload, and sign-in UI; full workspace planned. | [Phase P06](PRODUCTION_ROADMAP.md) | [`frontend-next/README.md`](frontend-next/README.md) |
 
 > 📖 **Comprehensive Specifications:** For deep technical specifications, data ownership, command statuses, and planned standalone demonstrations, see the [`SERVICE_CATALOG.md`](SERVICE_CATALOG.md).  
 > 🗺️ **Phased Production Roadmap:** For the full 18-phase implementation plan, see [`PRODUCTION_ROADMAP.md`](PRODUCTION_ROADMAP.md).
@@ -206,8 +206,8 @@ Real-time operations, system telemetry, and moderation console for platform admi
 
 - Connects to `service-notification` via WebSockets (Socket.io)
 - Streams new job additions live as they are ingested
-- Displays worker throughput, error counters, and queue telemetry
-- Provides an independent synthetic demonstration mode for Angular portfolio evaluation
+- Worker throughput, error counters, and queue telemetry are planned
+- An independent synthetic demonstration mode is planned for P12
 
 ---
 
@@ -416,7 +416,7 @@ job-aggregator-platform/
 │   ├── ISSUE_TEMPLATE/            # Bug report & feature request templates
 │   └── PULL_REQUEST_TEMPLATE.md   # PR description template
 │
-└── docs/                          # Additional architecture documentation
+└── SERVICE_CATALOG.md             # Current service interfaces, checks, and planned demos
 ```
 
 ---

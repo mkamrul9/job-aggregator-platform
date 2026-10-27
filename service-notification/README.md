@@ -9,10 +9,10 @@ An event-driven notification service that broadcasts live job ingestion events t
 ## 1. Primary Technology Stack
 
 - **Runtime:** Node.js 20.x
-- **Server Framework:** Express 4.x with HTTP Server
+- **Server Framework:** Express 5.x with HTTP Server
 - **Real-Time WebSockets:** Socket.io 4.x (CORS-enabled)
 - **Event Streaming:** KafkaJS 2.x (Consumer Group: `email-notification-group`)
-- **Email Delivery:** Nodemailer 6.x
+- **Email Delivery:** Nodemailer 9.x
 - **Telemetry & Metrics:** `prom-client` 15.x (Default runtime metrics + custom `job_notifications_sent_total`)
 
 ---
@@ -78,15 +78,15 @@ npm install
 
 ### Configuration
 
-Copy the example configuration:
+The application reads variables from its process environment; it does not load `.env` automatically. The example only documents the supported Kafka/CORS settings:
 ```bash
 cp .env.example .env
 ```
 Key configuration settings (see `.env.example`):
-- `PORT`: HTTP and Socket.io port (default: `4000`)
 - `KAFKA_BROKER`: Kafka broker address (default: `localhost:9092`)
 - `SOCKET_CORS_ORIGIN`: Allowed origins for WebSocket connections (default: `http://localhost:4200,http://localhost:3003`)
-- `SMTP_HOST` / `SMTP_PORT`: Mail server credentials
+
+The server port (`4000`), SMTP settings, and recipient are currently hardcoded. `PORT` or `SMTP_*` environment variables do not configure them. Provider configuration and safe local capture delivery must be implemented before testing actual mail workflows.
 
 ### Running Locally
 

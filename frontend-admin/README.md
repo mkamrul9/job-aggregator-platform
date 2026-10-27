@@ -8,9 +8,9 @@ A dedicated operations, system telemetry, and job moderation console built with 
 
 ## 1. Primary Technology Stack
 
-- **Framework:** Angular 18 (Standalone modules, SCSS styling, TypeScript 5.4)
+- **Framework:** Angular 18 (NgModule architecture, SCSS styling, TypeScript 5.5)
 - **State Management & Streaming:** RxJS 7.8 (`BehaviorSubject`, `Observable`)
-- **Real-Time Transport:** Socket.io-client 4.7
+- **Real-Time Transport:** Socket.io-client 4.8
 - **Build Tool:** Angular CLI 18.2 (`@angular-devkit/build-angular`)
 - **Production Server:** Nginx Alpine reverse proxy
 
@@ -38,15 +38,15 @@ The admin frontend connects to the platform's notification and metric streams:
 ### Key UI Features
 
 - **Live Job Ingestion Feed:** Displays incoming jobs scraped in real time with company, title, and timestamp.
-- **System Health & Metrics:** Operational panels for tracking ingestion throughput and worker health.
-- **Moderation Console:** Review incoming listings, flag source anomalies, and inspect raw payloads.
+- **System Health & Metrics:** Planned for P12; current status indicators are static.
+- **Moderation Console:** Planned for P12; no production moderation workflow is implemented.
 
 ---
 
 ## 3. Current Capabilities & Baseline Status
 
 - **Production Build (`npm run build`):** `[Verified]` — compiles successfully to production bundle in `dist/frontend-admin`.
-- **Development Server (`npm start`):** `[Verified]` — serves locally at `http://localhost:4200`.
+- **Development Server (`npm start`):** Command exists; a fresh runtime verification is still required. Expected local URL: `http://localhost:4200`.
 - **Live Feed Service (`live-feed.service.ts`):** Implements `RxJS BehaviorSubject` connected to Socket.io `live-job-feed` topic.
 - **Known Limitations:**
   - Hardcoded to connect to `http://localhost:4000` directly rather than through an environment-aware gateway route.
@@ -71,14 +71,7 @@ npm install
 
 ### Configuration
 
-Copy the example environment configuration:
-```bash
-cp .env.example .env
-```
-Key configuration settings (see `.env.example`):
-- `NG_APP_SOCKET_URL`: Socket.io endpoint (default: `http://localhost:4000`)
-- `NG_APP_API_URL`: Backend REST API URL (default: `http://localhost:80`)
-- `NG_APP_DEMO_MODE`: Toggle standalone synthetic demo mode (Phase P12)
+The current Angular build does not load a project `.env` file. The socket URL is hardcoded in `src/app/core/services/live-feed.service.ts`. Configurable endpoints and a separate synthetic demo mode are planned; no `NG_APP_*` environment variable currently enables them.
 
 ### Running Locally
 
