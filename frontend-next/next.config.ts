@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  experimental: {
+    cpus: 1,
+    workerThreads: false,
+  },
   async rewrites() {
     const userServiceUrl =
       process.env.USER_SERVICE_URL ||

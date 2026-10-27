@@ -186,20 +186,42 @@ export default function JobDetailDrawer({
             padding: '1rem'
           }}>
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {job.status === 'EXPIRED' ? (
+                <button
+                  type="button"
+                  disabled
+                  className="btn-primary"
+                  style={{ flex: 1, minWidth: '180px', opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  Vacancy Closed
+                </button>
+              ) : (
+                <a
+                  href={`/api/v1/jobs/${job.id}/outbound`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary"
+                  style={{ flex: 1, minWidth: '180px' }}
+                  id="outbound-apply-btn"
+                >
+                  Apply on Source
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                </a>
+              )}
+
               <a
-                href={job.canonical_url}
+                href={`/jobs/${job.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn-primary"
-                style={{ flex: 1, minWidth: '180px' }}
-                id="outbound-apply-btn"
+                className="btn-secondary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}
+                id="shareable-page-btn"
               >
-                Apply on Source
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                  <polyline points="15 3 21 3 21 9"></polyline>
-                  <line x1="10" y1="14" x2="21" y2="3"></line>
-                </svg>
+                Permalink ↗
               </a>
 
               <button

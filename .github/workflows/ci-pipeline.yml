@@ -162,10 +162,23 @@ jobs:
         run: npm run test:smoke
 
   # -------------------------------------------------------------
-  # JOB 4: Test the Ingestion Service
+  # JOB 4: Test the Ingestion Service (Unit & Strict Integration)
   # -------------------------------------------------------------
   test-ingestion:
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: 'false'
+          ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+        ports:
+          - 9200:9200
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -182,6 +195,30 @@ jobs:
       - name: Run Unit Tests
         working-directory: ./service-ingestion
         run: npm test
+
+      - name: Wait for Elasticsearch
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:9200/_cluster/health | grep -q '"status"'; then
+              echo "Elasticsearch is ready!"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Seed Catalog Data
+        working-directory: ./service-ingestion
+        env:
+          MONGO_URI: mongodb://localhost:27017/job_aggregator
+          ES_NODE: http://localhost:9200
+        run: npm run seed
+
+      - name: Run Strict Integration Tests
+        working-directory: ./service-ingestion
+        env:
+          MONGO_URI: mongodb://localhost:27017/job_aggregator
+          ES_NODE: http://localhost:9200
+        run: npm run test:integration
 
   # -------------------------------------------------------------
   # JOB 5: Test the Notification Service
@@ -227,7 +264,7 @@ jobs:
         working-directory: ./frontend-next
         run: npm run lint
 
-      - name: Run Auth Regressions
+      - name: Run Frontend Regressions (Auth & Job Search)
         working-directory: ./frontend-next
         run: npm test
 

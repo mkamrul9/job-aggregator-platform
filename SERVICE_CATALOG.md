@@ -229,38 +229,39 @@ All platform services interact through versioned machine-readable contracts loca
 
 ---
 
-### 3.5 `service-ingestion` — Node.js Job Ingestion & Search API
+### 3.5 `service-ingestion` — Node.js Canonical Job Catalog & Unified Search API
 
-- **Purpose & Role:** Streaming consumer that ingests raw job listings from Kafka, normalizes URLs and fields, deduplicates records, persists canonical documents to MongoDB, and projects searchable records into Elasticsearch. Also serves the authoritative REST search API.
+- **Purpose & Role:** Streaming consumer that ingests raw job listings from Kafka, normalizes URLs and fields, deduplicates records, persists canonical documents to MongoDB (authoritative catalog), and projects searchable records into Elasticsearch (rebuildable index with MongoDB fallback). Also serves the platform-wide unified REST search API.
 - **Primary Technology:** Node.js 22 LTS, Express 5.x, KafkaJS 2.x, MongoDB Node Driver 6.x, `@elastic/elasticsearch` ~8.15.0 (strictly aligned with Elasticsearch 8.10.2).
 - **Data Ownership:** Single authoritative owner of canonical jobs catalog in MongoDB (`jobs` collection) and search projection in Elasticsearch (`jobs_index`).
 - **Entry Points & Interfaces:**
   - Kafka Consumer: Topic `job.collected.v1` (legacy: `jobs.new`), Consumer Group `mongo-ingestion-group`
   - Kafka Producer: Emits `job.ingested.v1` upon successful persistence and indexing
-  - REST API: Port `5000` (internal) / `/api/v1/jobs` and legacy `/api/jobs` via API Gateway
+  - REST Search API: Port `5000` (internal) / `/api/v1/jobs` and legacy `/api/jobs` via API Gateway
+  - REST Detail API: `GET /api/v1/jobs/:id` (canonical listing details; 404 RFC 7807 if not found)
+  - REST Outbound API: `GET /api/v1/jobs/:id/outbound` (safe 302 redirect for HTML or 200 `{ destination_url }` for JSON)
 - **Dependency Manifests & Lockfiles:**
   - Manifest: `service-ingestion/package.json`
   - Lockfile: `service-ingestion/package-lock.json`
 - **Commands & Verification:**
-  - Test: `npm test` — `[Verified]` (8 real unit tests pass covering URL regex escaping, query sanitization, and health check)
-  - Syntax Check: `node --check index.js` — `[Verified]`
-  - Local Run: `node index.js` — `[Observed-but-unverified]`
+  - Unit Tests: `npm test` — `[Verified]` (24 unit tests covering URL normalization, regex escaping, stable UUIDs, outbound URL safety, query validation, and endpoint mocks)
+  - Integration Tests: `npm run test:integration` — `[Verified]` (18 strict integration tests against live MongoDB and Elasticsearch)
+  - Standalone Seed: `npm run seed` — `[Verified]` (seeds 12 curated Bangladesh tech jobs into MongoDB and ES)
+  - Standalone Run: `npm run start:standalone` (`node bin/standalone.js`) — `[Verified]` (runs search API without Kafka)
 - **Required Infrastructure:**
-  - Standalone mode: MongoDB 6+ and Elasticsearch 8.x (with local JSON fixture replay adapter).
-  - Integrated mode: Kafka broker (`jobs.new` / `job.collected.v1`), MongoDB, Elasticsearch.
-- **Current Verification Status:** Upgraded to Node 22; `@elastic/elasticsearch` aligned to 8.x; 8 unit tests pass; Docker packaging passes in CI.
-- **Standalone-Readiness Gaps (to complete in P07):**
-  - Add deterministic JSON event replay adapter to demonstrate ingestion pipeline without running Kafka.
-  - Implement full cursor-based pagination and facet queries defined in `contracts/openapi/seekers-api-v1.yaml`.
-  - Implement durable dead-letter queue (DLQ) and retry backoff for unparseable job payloads.
-- **Planned Standalone Demonstration (P07):**
-  - CLI/script runner injecting synthetic Bangladesh tech jobs into ingestion pipeline.
-  - Real-time MongoDB persistence and Elasticsearch search query demonstration with curl/OpenAPI examples.
-  - Index rebuild and reconciliation drill demonstrating recovery of Elasticsearch from MongoDB.
+  - Standalone mode: MongoDB 6+ and Elasticsearch 8.x (zero Kafka dependency required to run search API).
+  - Integrated mode: Kafka broker (`job.collected.v1`), MongoDB, Elasticsearch.
+- **Current Verification Status:** Node 22, Express 5, 24 unit tests, 18 integration tests passing; CI updated to run MongoDB/Elasticsearch services and integration tests; Docker packaging passes in CI.
+- **Completed in Phase P06:**
+  - Canonical job catalog persistence in MongoDB with unique indexes on `id` and `canonical_url`.
+  - Deterministic keyset cursor pagination (`cursor`) for `date_desc`, `salary_desc`, and `relevance`.
+  - Full filter suite (`q`, `location`, `remote_eligibility`, `job_type`, `seniority`, `min_salary`, `currency`).
+  - Safe outbound URL validation rejecting private/loopback IPs, link-local metadata (169.254.169.254), credentials, and non-http(s) schemes.
+  - Transparent search engine fallback to MongoDB if Elasticsearch is unavailable.
 - **Intended Deployment Boundary:**
   - Container: `service-ingestion/Dockerfile`
   - Ports: `5000` (internal) / mapped through Gateway
-  - Owning Feature Phase: **P07**
+  - Owning Feature Phase: **P06 (Completed)**
 
 ---
 
@@ -300,39 +301,41 @@ All platform services interact through versioned machine-readable contracts loca
 
 ### 3.7 `frontend-next` — React/Next.js Candidate App
 
-- **Purpose & Role:** Primary public-facing candidate portal for discovering job opportunities, executing full-text searches, managing candidate authentication, and uploading resumes.
-- **Primary Technology:** Next.js 16.3.0, React 19.2.8, TypeScript 5.x, Tailwind CSS / Vanilla CSS, Firebase Client SDK, `@elastic/elasticsearch` ~8.15.0.
+- **Purpose & Role:** Primary public-facing candidate portal for discovering job opportunities, executing multi-faceted searches, viewing shareable job details with structured data, managing candidate authentication, and uploading resumes.
+- **Primary Technology:** Next.js 16.3.0, React 19.2.8, TypeScript 5.x, Vanilla CSS / design tokens, Firebase Client SDK. (Direct `@elastic/elasticsearch` dependency removed).
 - **Data Ownership:** Web presentation client; owns no database persistence. Caches search results and candidate profile in client state.
-- **Search Transition Strategy (P03/P06):**
-  - Legacy state: Server-side route `/api/jobs` queried Elasticsearch directly with an independent client.
-  - Target architecture: `service-ingestion` is the single authoritative owner of search logic at `/api/v1/jobs` (and gateway `/api/jobs`).
-  - Next.js transitions to consuming the unified gateway endpoint via client-side fetch or thin server action proxy, eliminating direct database coupling from the web tier.
+- **Search Architecture (P06 Complete):**
+  - Fully decoupled from direct database connections: proxies `/api/v1/jobs`, `/api/v1/jobs/[id]`, `/api/v1/jobs/[id]/outbound`, and legacy `/api/jobs` through to `service-ingestion` (`INGESTION_API_URL`).
+  - Next.js server handles manual redirect forwarding for safe 302 outbound application journeys.
+  - Candidate portal UI communicates exclusively through live API endpoints with bounded retry and honest error states.
 - **Entry Points & Interfaces:**
   - Web UI: Port `3000` (local dev) / Port `3003` (Docker host port) / `http://localhost/` via Gateway
-  - Public Client API: Consumes `/api/v1/jobs`, `/api/v1/jobs/{id}`, `/api/v1/users/*` via Nginx Gateway
+  - Shareable Detail Route: `/jobs/[id]` (SSR with OpenGraph metadata, JSON-LD `JobPosting` schema, custom 404 page)
+  - Public Client API: Proxies `/api/v1/jobs`, `/api/v1/jobs/{id}`, `/api/v1/users/*` via Nginx Gateway
 - **Dependency Manifests & Lockfiles:**
   - Manifest: `frontend-next/package.json`
-  - Lockfile: `frontend-next/package-lock.json` (synchronized with `@emnapi` Linux peer dependencies)
+  - Lockfile: `frontend-next/package-lock.json`
 - **Commands & Verification:**
-  - Lint: `npm run lint` — `[Verified]` (all 6 ESLint errors resolved in P02; passes with 0 errors)
+  - Lint: `npm run lint` — `[Verified]` (0 errors, 0 warnings across all components and pages)
+  - Test: `npm test` — `[Verified]` (runs both `auth-provider-regression.mjs` and `job-search-regression.mjs`; all 9 regressions pass)
   - Build: `npm run build` — `[Verified]` (Turbopack production compilation succeeds cleanly)
-  - Local Dev: `npm run dev` — `[Verified]` (Next.js development server runs on port 3000)
+  - Local Dev: `npm run dev` — `[Verified]` (Next.js development server runs on port 3000/3003)
 - **Required Infrastructure:**
-  - Standalone Demo mode: Zero external infrastructure (uses synthetic JSON job fixtures and mock auth mode).
-  - Platform Integrated mode: API Gateway (`nginx`), `service-ingestion` for jobs, `service-user` for profile/auth.
-- **Current Verification Status:** Rich UI components present (JobSearch, ResumeUpload, AuthComponent, Navbar). Lint and production builds pass cleanly in CI.
-- **Standalone-Readiness Gaps (to complete in P06):**
-  - Implement explicit `NEXT_PUBLIC_DEMO_MODE=true` toggle serving pre-seeded Bangladesh tech jobs.
-  - Replace direct Elasticsearch connection in `app/api/jobs/route.ts` with gateway proxy.
-  - Replace static marketing figures ("2.4M+ jobs", "180+ sources") with dynamic catalog telemetry.
-- **Planned Standalone Demonstration (P06):**
-  - Standalone Next.js candidate experience running entirely against bundled synthetic fixtures or mock handlers.
-  - Fully responsive job search, filter panel (location, remote, salary, seniority), and candidate account workspace.
-  - Clearly labelled UI demonstration mode ensuring zero unverified production claims.
+  - Standalone Demo mode: Zero external infrastructure (toggleable via `?demo=true` or in-app button).
+  - Platform Integrated mode: `service-ingestion` for jobs/search, `service-user` for profile/auth.
+- **Current Verification Status:** 0 lint errors/warnings, 9 regression tests passing, production build passing, mobile/desktop visual and interaction inspections verified via browser subagent.
+- **Completed in Phase P06:**
+  - Direct Elasticsearch dependency removed; Next.js routes proxy cleanly to `service-ingestion`.
+  - Public shareable `/jobs/[id]` route implemented with dynamic OpenGraph metadata and JSON-LD `JobPosting` structured data.
+  - Dedicated custom 404 page for unavailable/expired listings.
+  - Interactive Job Detail Drawer with verified outbound apply link (`/api/v1/jobs/:id/outbound`) and permalink copy.
+  - Keyset pagination controls (Next/Previous) with cursor query parameter tracking.
+  - Standalone portfolio demo mode toggle preserved and isolated with prominent amber banner.
+  - Zero mobile horizontal overflow (`scrollWidth <= innerWidth`) verified at 390px and 360px viewports.
 - **Intended Deployment Boundary:**
   - Container: `frontend-next/Dockerfile`
   - Ports: `3000` (internal) / `3003` (host)
-  - Owning Feature Phase: **P06**
+  - Owning Feature Phase: **P06 (Completed)**
 
 ---
 

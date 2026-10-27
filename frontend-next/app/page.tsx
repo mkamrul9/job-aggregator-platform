@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Navbar, { ActiveTab } from '../components/Navbar';
 import JobCard from '../components/JobCard';
 import JobDetailDrawer from '../components/JobDetailDrawer';
@@ -12,7 +13,7 @@ import AuthModal from '../components/AuthModal';
 import FeedbackModal from '../components/FeedbackModal';
 import DataControlModal from '../components/DataControlModal';
 import DemoInfoModal from '../components/DemoInfoModal';
-import { AuthProvider } from '../lib/auth-context';
+import { AuthProvider, useAuth } from '../lib/auth-context';
 import {
   SYNTHETIC_JOBS,
   INITIAL_TRACKED_APPLICATIONS,
@@ -24,7 +25,12 @@ import {
   AlertSubscription,
 } from '../lib/mock-data';
 
+type SearchState = 'idle' | 'loading' | 'success' | 'empty' | 'error';
+
 function CandidatePortalContent() {
+  const searchParams = useSearchParams();
+  const { isDemo: isAuthDemo } = useAuth();
+
   // Navigation State
   const [activeTab, setActiveTab] = useState<ActiveTab>('discover');
 
@@ -33,18 +39,34 @@ function CandidatePortalContent() {
   const [applications, setApplications] = useState<TrackedApplication[]>(INITIAL_TRACKED_APPLICATIONS);
   const [alerts, setAlerts] = useState<AlertSubscription[]>(INITIAL_ALERT_SUBSCRIPTIONS);
 
-  // Search & Filter State
+  // Demo Mode state: explicit toggle override or derived from URL/Auth state
+  const [demoOverride, setDemoOverride] = useState<boolean | null>(null);
+  const isDemoMode = demoOverride !== null ? demoOverride : (searchParams.get('demo') === 'true' || isAuthDemo);
+
+  // Search & Filter State from URL
   const [filters, setFilters] = useState<FilterState>({
-    q: '',
-    location: '',
-    remote: '',
-    seniority: '',
-    jobType: '',
-    minSalary: 0,
-    sort: 'recent',
+    q: searchParams.get('q') || '',
+    location: searchParams.get('location') || '',
+    remote: searchParams.get('remote') || '',
+    seniority: searchParams.get('seniority') || '',
+    jobType: searchParams.get('jobType') || '',
+    minSalary: parseInt(searchParams.get('minSalary') || '0', 10) || 0,
+    sort: (searchParams.get('sort') as FilterState['sort']) || 'recent',
   });
-  const [searchInput, setSearchInput] = useState('');
+  const [searchInput, setSearchInput] = useState(filters.q);
   const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
+
+  // Pagination & Keyset Cursor State
+  const [currentCursor, setCurrentCursor] = useState<string | null>(searchParams.get('cursor') || null);
+  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+
+  // Live API results and fetch state
+  const [liveJobs, setLiveJobs] = useState<JobDetail[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [searchState, setSearchState] = useState<SearchState>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
 
   // Modal / Drawer States
   const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
@@ -54,10 +76,104 @@ function CandidatePortalContent() {
   const [isDataControlOpen, setIsDataControlOpen] = useState(false);
   const [isDemoInfoOpen, setIsDemoInfoOpen] = useState(false);
 
-  // Filter Logic
-  const filteredJobs = useMemo(() => {
+  // Update browser URL query string to keep filters addressable
+  const updateUrlParams = useCallback((newFilters: FilterState, cursor: string | null = null, demo: boolean = isDemoMode) => {
+    const params = new URLSearchParams();
+    if (newFilters.q) params.set('q', newFilters.q);
+    if (newFilters.location) params.set('location', newFilters.location);
+    if (newFilters.remote) params.set('remote', newFilters.remote);
+    if (newFilters.seniority) params.set('seniority', newFilters.seniority);
+    if (newFilters.jobType) params.set('jobType', newFilters.jobType);
+    if (newFilters.minSalary > 0) params.set('minSalary', String(newFilters.minSalary));
+    if (newFilters.sort && newFilters.sort !== 'recent') params.set('sort', newFilters.sort);
+    if (cursor) params.set('cursor', cursor);
+    if (demo) params.set('demo', 'true');
+
+    const qs = params.toString();
+    const newUrl = qs ? `/?${qs}` : '/';
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', newUrl);
+    }
+  }, [isDemoMode]);
+
+  const [retryTrigger, setRetryTrigger] = useState(0);
+
+  // Trigger search when in live mode using React 19 recommended async lifecycle
+  useEffect(() => {
+    if (isDemoMode) {
+      return;
+    }
+    let ignore = false;
+    const controller = new AbortController();
+
+    async function load() {
+      // Yield to next microtask so setState is not synchronous in effect body
+      await Promise.resolve();
+      if (ignore) return;
+
+      setSearchState('loading');
+      setErrorMessage(null);
+
+      const queryParams = new URLSearchParams();
+      if (filters.q) queryParams.set('q', filters.q);
+      if (filters.location && filters.location !== 'All Locations') {
+        queryParams.set('location', filters.location);
+      }
+      if (filters.remote) queryParams.set('remote_eligibility', filters.remote);
+      if (filters.seniority) queryParams.set('seniority', filters.seniority);
+      if (filters.jobType) queryParams.set('job_type', filters.jobType);
+
+      if (filters.sort === 'salary') {
+        queryParams.set('sort', 'salary_desc');
+      } else if (filters.sort === 'relevance') {
+        queryParams.set('sort', 'relevance');
+      } else {
+        queryParams.set('sort', 'date_desc');
+      }
+
+      queryParams.set('limit', '10');
+      if (currentCursor) {
+        queryParams.set('cursor', currentCursor);
+      }
+
+      try {
+        const res = await fetch(`/api/v1/jobs?${queryParams.toString()}`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const errorBody = await res.json().catch(() => null);
+          throw new Error(errorBody?.detail || `Search API returned HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (ignore) return;
+        setLiveJobs(data.items || []);
+        setTotalCount(data.total_count || 0);
+        setNextCursor(data.next_cursor || null);
+        setSearchState((data.items || []).length === 0 ? 'empty' : 'success');
+      } catch (err: unknown) {
+        if (ignore || (err instanceof Error && err.name === 'AbortError')) return;
+        console.error('Error fetching jobs from service-ingestion:', err);
+        setSearchState('error');
+        setErrorMessage(err instanceof Error ? err.message : 'Failed to reach search service');
+      }
+    }
+
+    load();
+
+    return () => {
+      ignore = true;
+      controller.abort();
+    };
+  }, [isDemoMode, filters, currentCursor, retryTrigger]);
+
+  // Synthetic local filtering when in Demo Mode
+  const demoFilteredJobs = useMemo(() => {
+    if (!isDemoMode) return [];
     return SYNTHETIC_JOBS.filter((job) => {
-      // Query filter
       if (filters.q) {
         const query = filters.q.toLowerCase();
         const matchesTitle = job.title.toLowerCase().includes(query);
@@ -66,29 +182,14 @@ function CandidatePortalContent() {
         const matchesDesc = job.description.toLowerCase().includes(query);
         if (!matchesTitle && !matchesCompany && !matchesSkills && !matchesDesc) return false;
       }
-
-      // Location filter
       if (filters.location && filters.location !== 'All Locations') {
         if (!job.location.toLowerCase().includes(filters.location.toLowerCase())) {
           return false;
         }
       }
-
-      // Remote filter
-      if (filters.remote && job.remote_eligibility !== filters.remote) {
-        return false;
-      }
-
-      // Seniority filter
-      if (filters.seniority && job.seniority !== filters.seniority) {
-        return false;
-      }
-
-      // Job Type filter
-      if (filters.jobType && job.job_type !== filters.jobType) {
-        return false;
-      }
-
+      if (filters.remote && job.remote_eligibility !== filters.remote) return false;
+      if (filters.seniority && job.seniority !== filters.seniority) return false;
+      if (filters.jobType && job.job_type !== filters.jobType) return false;
       return true;
     }).sort((a, b) => {
       if (filters.sort === 'recent') {
@@ -96,7 +197,14 @@ function CandidatePortalContent() {
       }
       return 0;
     });
-  }, [filters]);
+  }, [isDemoMode, filters]);
+
+  // Active listings for display
+  const displayedJobs = isDemoMode ? demoFilteredJobs : liveJobs;
+  const effectiveTotalCount = isDemoMode ? demoFilteredJobs.length : totalCount;
+  const effectiveSearchState: SearchState = isDemoMode
+    ? (demoFilteredJobs.length === 0 ? 'empty' : 'success')
+    : searchState;
 
   // Saved Jobs Set for fast lookup
   const savedJobIds = useMemo(() => new Set(savedJobs.map((j) => j.id)), [savedJobs]);
@@ -115,11 +223,22 @@ function CandidatePortalContent() {
   // Handlers
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setFilters((prev) => ({ ...prev, q: searchInput }));
+    const updated = { ...filters, q: searchInput };
+    setFilters(updated);
+    setCurrentCursor(null);
+    setCursorHistory([]);
+    updateUrlParams(updated, null);
+  };
+
+  const handleFilterUpdate = (newFilters: FilterState) => {
+    setFilters(newFilters);
+    setCurrentCursor(null);
+    setCursorHistory([]);
+    updateUrlParams(newFilters, null);
   };
 
   const handleResetFilters = () => {
-    setFilters({
+    const resetState: FilterState = {
       q: '',
       location: '',
       remote: '',
@@ -127,8 +246,38 @@ function CandidatePortalContent() {
       jobType: '',
       minSalary: 0,
       sort: 'recent',
-    });
+    };
+    setFilters(resetState);
     setSearchInput('');
+    setCurrentCursor(null);
+    setCursorHistory([]);
+    updateUrlParams(resetState, null);
+  };
+
+  const handleNextPage = () => {
+    if (!nextCursor) return;
+    setCursorHistory((prev) => [...prev, currentCursor || '']);
+    setCurrentCursor(nextCursor);
+    updateUrlParams(filters, nextCursor);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handlePrevPage = () => {
+    if (cursorHistory.length === 0) return;
+    const prevStack = [...cursorHistory];
+    const prevCursor = prevStack.pop() || null;
+    setCursorHistory(prevStack);
+    setCurrentCursor(prevCursor);
+    updateUrlParams(filters, prevCursor);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleToggleDemoMode = () => {
+    const nextMode = !isDemoMode;
+    setDemoOverride(nextMode);
+    setCurrentCursor(null);
+    setCursorHistory([]);
+    updateUrlParams(filters, null, nextMode);
   };
 
   const handleToggleSave = (e: React.MouseEvent, job: JobDetail) => {
@@ -214,6 +363,49 @@ function CandidatePortalContent() {
           {/* ─── TAB 1: DISCOVER ROLES ──────────────────────────────────── */}
           {activeTab === 'discover' && (
             <div>
+              {/* Demo Mode / Live Mode Indicator Banner */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.6rem 1rem',
+                  marginBottom: '1rem',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: isDemoMode ? 'rgba(245, 158, 11, 0.12)' : 'rgba(20, 184, 166, 0.1)',
+                  border: isDemoMode ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(20, 184, 166, 0.25)',
+                  flexWrap: 'wrap',
+                  gap: '0.5rem',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.9rem' }}>{isDemoMode ? '⚡' : '🟢'}</span>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: isDemoMode ? 'var(--seekers-amber-400)' : 'var(--seekers-teal-400)' }}>
+                    {isDemoMode
+                      ? 'PORTFOLIO DEMO MODE: Browsing synthetic technology roles (OpenAPI 3.1 schema)'
+                      : 'LIVE DISCOVERY: Connected to service-ingestion (MongoDB catalog & Elasticsearch)'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleDemoMode}
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: '1px solid currentColor',
+                    color: isDemoMode ? 'var(--seekers-amber-400)' : 'var(--seekers-teal-400)',
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                  id="toggle-demo-mode-btn"
+                >
+                  {isDemoMode ? 'Switch to Live API Mode ➔' : 'Explore Portfolio Demo ➔'}
+                </button>
+              </div>
+
               {/* Search Header Banner */}
               <div className="search-banner">
                 <h1
@@ -273,8 +465,10 @@ function CandidatePortalContent() {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)' }}>
-                      Showing {filteredJobs.length} regional vacancies
+                    <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)' }} id="results-count-label">
+                      {effectiveSearchState === 'loading'
+                        ? 'Searching vacancies...'
+                        : `Showing ${displayedJobs.length} of ${effectiveTotalCount} active roles`}
                     </span>
 
                     {activeFilterCount > 0 && (
@@ -298,6 +492,7 @@ function CandidatePortalContent() {
                       type="button"
                       className="btn-secondary mobile-filter-btn"
                       onClick={() => setIsMobileFilterOpen(true)}
+                      id="mobile-filter-open-btn"
                     >
                       Filters {activeFilterCount > 0 ? `(${activeFilterCount})` : ''}
                     </button>
@@ -321,21 +516,22 @@ function CandidatePortalContent() {
                 <select
                   className="filter-select"
                   value={filters.location}
-                  onChange={(e) => setFilters({ ...filters, location: e.target.value })}
+                  onChange={(e) => handleFilterUpdate({ ...filters, location: e.target.value })}
                   aria-label="Filter by location"
+                  id="filter-location-select"
                 >
                   <option value="">All Locations</option>
                   <option value="Dhaka">Dhaka, Bangladesh</option>
                   <option value="Chattogram">Chattogram, Bangladesh</option>
-                  <option value="Sylhet">Sylhet, Bangladesh</option>
                   <option value="Remote">Regional Remote</option>
                 </select>
 
                 <select
                   className="filter-select"
                   value={filters.remote}
-                  onChange={(e) => setFilters({ ...filters, remote: e.target.value })}
+                  onChange={(e) => handleFilterUpdate({ ...filters, remote: e.target.value })}
                   aria-label="Filter by remote arrangement"
+                  id="filter-remote-select"
                 >
                   <option value="">Remote Arrangement</option>
                   <option value="FULLY_REMOTE">Fully Remote</option>
@@ -346,8 +542,9 @@ function CandidatePortalContent() {
                 <select
                   className="filter-select"
                   value={filters.seniority}
-                  onChange={(e) => setFilters({ ...filters, seniority: e.target.value })}
+                  onChange={(e) => handleFilterUpdate({ ...filters, seniority: e.target.value })}
                   aria-label="Filter by seniority level"
+                  id="filter-seniority-select"
                 >
                   <option value="">Seniority Level</option>
                   <option value="ENTRY">Entry Level</option>
@@ -359,8 +556,9 @@ function CandidatePortalContent() {
                 <select
                   className="filter-select"
                   value={filters.jobType}
-                  onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
+                  onChange={(e) => handleFilterUpdate({ ...filters, jobType: e.target.value })}
                   aria-label="Filter by employment type"
+                  id="filter-jobtype-select"
                 >
                   <option value="">Employment Type</option>
                   <option value="FULL_TIME">Full Time</option>
@@ -372,42 +570,153 @@ function CandidatePortalContent() {
                 <select
                   className="filter-select"
                   value={filters.sort}
-                  onChange={(e) => setFilters({ ...filters, sort: e.target.value as FilterState['sort'] })}
+                  onChange={(e) => handleFilterUpdate({ ...filters, sort: e.target.value as FilterState['sort'] })}
                   aria-label="Sort job listings"
+                  id="filter-sort-select"
                 >
-                  <option value="recent">Most Recent</option>
-                  <option value="salary">Highest Compensation</option>
+                  <option value="recent">Most Recent (date_desc)</option>
+                  <option value="salary">Highest Compensation (salary_desc)</option>
+                  <option value="relevance">Most Relevant (relevance)</option>
                 </select>
               </div>
 
-              {/* Job Listings Feed */}
-              {filteredJobs.length === 0 ? (
-                <div className="empty-state">
+              {/* Service Outage / Error State with Bounded Retry */}
+              {!isDemoMode && searchState === 'error' && (
+                <div
+                  style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '1.5rem',
+                    textAlign: 'center',
+                    marginBottom: '1.5rem',
+                  }}
+                  id="search-error-banner"
+                >
+                  <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>⚠️</div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--seekers-danger)', marginBottom: '0.5rem' }}>
+                    Unable to connect to job search service
+                  </h3>
+                  <p style={{ color: 'var(--seekers-text-secondary)', fontSize: '0.875rem', marginBottom: '1rem', maxWidth: '500px', margin: '0 auto 1rem' }}>
+                    {errorMessage || 'The catalog service is temporarily unreachable or undergoing maintenance.'}
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => setRetryTrigger((prev) => prev + 1)}
+                      id="retry-search-btn"
+                    >
+                      ↻ Retry Search
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={handleToggleDemoMode}
+                    >
+                      View Local Demo Fixtures
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Loading State Skeleton */}
+              {!isDemoMode && effectiveSearchState === 'loading' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }} id="search-loading-skeleton">
+                  {[1, 2, 3].map((n) => (
+                    <div
+                      key={n}
+                      style={{
+                        padding: '1.25rem',
+                        backgroundColor: 'var(--seekers-bg-surface)',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--seekers-border-subtle)',
+                        opacity: 0.6,
+                      }}
+                    >
+                      <div style={{ height: '20px', width: '40%', backgroundColor: 'var(--seekers-bg-elevated)', borderRadius: '4px', marginBottom: '8px' }} />
+                      <div style={{ height: '14px', width: '25%', backgroundColor: 'var(--seekers-bg-elevated)', borderRadius: '4px', marginBottom: '12px' }} />
+                      <div style={{ height: '12px', width: '70%', backgroundColor: 'var(--seekers-bg-elevated)', borderRadius: '4px' }} />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Empty Results State */}
+              {effectiveSearchState === 'empty' && (
+                <div className="empty-state" id="search-empty-state">
                   <div className="empty-icon">🔍</div>
                   <div className="empty-title">No listings match your criteria</div>
                   <div className="empty-desc">
-                    Try broadening your keywords or clearing seniority and location filters.
+                    Try broadening your search keywords or clearing location and seniority filters.
                   </div>
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={handleResetFilters}
+                    id="reset-empty-filters-btn"
                   >
                     Reset All Filters
                   </button>
                 </div>
-              ) : (
-                <div role="feed" aria-label="Job openings feed">
-                  {filteredJobs.map((job) => (
-                    <JobCard
-                      key={job.id}
-                      job={job}
-                      isSelected={selectedJob?.id === job.id}
-                      isSaved={savedJobIds.has(job.id)}
-                      onSelect={(j) => setSelectedJob(j)}
-                      onToggleSave={handleToggleSave}
-                    />
-                  ))}
+              )}
+
+              {/* Job Listings Feed */}
+              {effectiveSearchState === 'success' && displayedJobs.length > 0 && (
+                <div>
+                  <div role="feed" aria-label="Job openings feed" id="jobs-feed">
+                    {displayedJobs.map((job) => (
+                      <JobCard
+                        key={job.id}
+                        job={job}
+                        isSelected={selectedJob?.id === job.id}
+                        isSaved={savedJobIds.has(job.id)}
+                        onSelect={(j) => setSelectedJob(j)}
+                        onToggleSave={handleToggleSave}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Keyset Pagination Controls (Live Mode) */}
+                  {!isDemoMode && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginTop: '1.5rem',
+                        paddingTop: '1rem',
+                        borderTop: '1px solid var(--seekers-border-subtle)',
+                      }}
+                      id="pagination-controls"
+                    >
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={cursorHistory.length === 0}
+                        onClick={handlePrevPage}
+                        style={{ opacity: cursorHistory.length === 0 ? 0.4 : 1, cursor: cursorHistory.length === 0 ? 'not-allowed' : 'pointer' }}
+                        id="prev-page-btn"
+                      >
+                        ← Previous Page
+                      </button>
+
+                      <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)' }}>
+                        Page {cursorHistory.length + 1}
+                      </span>
+
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={!nextCursor}
+                        onClick={handleNextPage}
+                        style={{ opacity: !nextCursor ? 0.4 : 1, cursor: !nextCursor ? 'not-allowed' : 'pointer' }}
+                        id="next-page-btn"
+                      >
+                        Next Page →
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -519,9 +828,9 @@ function CandidatePortalContent() {
         isOpen={isMobileFilterOpen}
         onClose={() => setIsMobileFilterOpen(false)}
         filters={filters}
-        onFilterChange={setFilters}
+        onFilterChange={handleFilterUpdate}
         onReset={handleResetFilters}
-        totalFilteredCount={filteredJobs.length}
+        totalFilteredCount={effectiveTotalCount}
       />
 
       {/* 3. Real Auth Modal */}
@@ -560,7 +869,9 @@ function CandidatePortalContent() {
 export default function Home() {
   return (
     <AuthProvider>
-      <CandidatePortalContent />
+      <Suspense fallback={<div style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '2rem', color: 'var(--seekers-text-muted)' }}>Loading Seekers...</div>}>
+        <CandidatePortalContent />
+      </Suspense>
     </AuthProvider>
   );
 }

@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/ingestion.test.js",
+    "test:integration": "node --test test/integration.test.js",
+    "seed": "node scripts/seed.js",
+    "start:standalone": "node bin/standalone.js"
   },
   "keywords": [],
   "author": "",

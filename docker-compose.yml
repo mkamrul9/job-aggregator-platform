@@ -163,7 +163,7 @@ services:
       context: ./frontend-next
       dockerfile: Dockerfile
     environment:
-      - ES_NODE=http://elasticsearch:9200
+      - INGESTION_API_URL=http://ingestion-service:5000
     ports:
       - "3003:3000"
     networks:

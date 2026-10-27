@@ -293,14 +293,36 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 **Outcome:** users can find, inspect, and safely open appropriate listings.
 
-- Implement the canonical job schema, migrations/indexes, stable IDs, source attribution, publication/last-seen/expiry data, and safe HTTP(S) source-link validation. Sanitize any rich descriptions; enforce safe fetch/redirect rules.
-- Publish the single jobs/search contract selected in P03. Remove route ambiguity and duplicate business logic; constrain query types/lengths, limits, pagination, filter combinations, and expensive queries.
-- Implement keywords, location, remote policy, job type, seniority, salary/currency where available, sorting, counts/facets, URL-addressable state, pagination/cursors, and stable job detail URLs. Define behavior for unknown fields and deep pagination.
-- Build discovery and detail screens from P04. Handle delayed/cancelled requests, HTTP errors, retries, empty results, stale data, removed jobs, and safe outbound application links.
-- Implement public-page rendering, accurate metadata, canonicals, sitemap rules, valid job structured data where appropriate, and expiry/indexing behavior. Private routes stay out of public indexes.
-- Provide a clearly labelled independent Next.js candidate demo and a focused search API quickstart against representative seeded data. Demonstrate actual API queries with required catalog/search infrastructure; UI fixtures may support frontend-only evaluation but do not count as proof of live search. Keep the demo schema aligned with the versioned production API through contract checks.
+- **Canonical Job Catalog & Storage Architecture:**
+  - Authoritative document persistence in MongoDB (`jobs` collection) with unique indexes on `id` (public UUID v4) and `canonical_url`.
+  - Compound indexes on `[status, published_at, id]` and `[status, salary.min, id]` for deterministic keyset pagination.
+  - Text search index on `title`, `company`, `description`, `skills`, `location`.
+  - Rebuildable Elasticsearch projection in `jobs_index` with full-text boosting (`title^3`, `skills^2`, `company^2`, `description`) and automatic fallback to MongoDB when Elasticsearch is unavailable.
+- **Unified Search API & Parameter Contracts:**
+  - Implemented `/api/v1/jobs` and backward-compatible legacy alias `/api/jobs` (handling trailing slashes).
+  - Contracted query parameter validation matching OpenAPI 3.1: `q` (max 100), `location` (max 100), enums (`remote_eligibility`, `job_type`, `seniority`, `currency`), `min_salary`, `sort` (`date_desc`, `salary_desc`, `relevance`), `limit` (1-100, rejecting negative/oversized with 400), and opaque keyset cursor `cursor`.
+  - RFC 7807 Problem Details returned for validation errors and not-found states.
+  - Correlation tracking via `X-Correlation-ID` and search engine telemetry via `X-Search-Engine`.
+- **Safe Outbound Redirects & SSRF Protection:**
+  - `GET /api/v1/jobs/:id/outbound` validates listing active status (404 if expired).
+  - Rigorous destination validation preventing SSRF, private network probing (RFC 1918), loopback scanning (`127.0.0.0/8`), link-local metadata exploitation (`169.254.169.254`), credentials, and script/data schemes.
+  - Dual negotiation: returns safe 302 redirect for HTML browsers or 200 `{ destination_url }` for API/crawler clients.
+- **Decoupled Next.js Web Client & Public Detail Pages:**
+  - Removed direct `@elastic/elasticsearch` dependency from Next.js web tier; routes proxy cleanly through to `service-ingestion` (`INGESTION_API_URL`).
+  - Added public shareable detail route `/jobs/[id]` (`force-dynamic`) with dynamic OpenGraph metadata and JSON-LD `JobPosting` structured data for active listings.
+  - Dedicated custom 404 page for unavailable/expired listings.
+  - Interactive Job Detail Drawer with verified outbound apply link and permalink copy.
+  - Distinct loading skeletons, honest error banners with bounded retry, and clear results count telemetry.
+  - Preserved toggleable standalone portfolio demo mode (`?demo=true` or in-app button) with prominent amber banner and local fixtures.
+- **Verification & Testing Suite:**
+  - 24 unit tests in `service-ingestion` (`npm test`) covering normalization, UUID generation, URL safety, query validators, and endpoint mocks.
+  - 18 strict integration tests in `service-ingestion` (`npm run test:integration`) against live MongoDB and Elasticsearch.
+  - 9 Next.js regression tests (`npm test` in `frontend-next`) covering auth synchronization and job search/outbound proxying.
+  - Next.js Turbopack production compilation (`npm run build`) and ESLint (`npm run lint`) pass with 0 errors and 0 warnings.
+  - Real browser visual and interaction verification across desktop (1280x800) and mobile (390x844), with zero horizontal overflow confirmed.
+  - CI pipeline (`ci-pipeline.yml`) updated with live MongoDB and Elasticsearch services running unit and strict integration tests.
 
-**Completion gate:** search/detail/apply journeys and every filter pass against representative fixtures; `/api/jobs` and slash/versioned aliases have tested semantics; query plans/indexes are reviewed; error and no-result states are distinct; independent Next.js demo and seeded real-search API quickstart pass with accurate mode labels; no false “New” badges or fabricated catalog totals.
+**Completion gate:** search/detail/apply journeys and every filter pass against representative fixtures; `/api/jobs` and slash/versioned aliases have tested semantics; query plans/indexes are reviewed; error and no-result states are distinct; independent Next.js demo and seeded real-search API quickstart pass with accurate mode labels; no false “New” badges or fabricated catalog totals. `[PASS]`
 
 **Checkpoint:** `feat(jobs): deliver unified search and complete job browsing` → verified push.
 

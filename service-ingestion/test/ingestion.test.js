@@ -7,6 +7,14 @@ const {
   escapeRegex,
   processMessage,
 } = require('../index');
+const {
+  normalizeCanonicalUrl,
+  generateDeterministicUuid,
+  validateOutboundUrl,
+  sanitizeDescription,
+  toCanonicalJob,
+} = require('../src/models/job');
+const { validateSearchParams } = require('../src/search/query-validator');
 
 describe('service-ingestion unit tests', () => {
   describe('escapeRegex', () => {
@@ -21,6 +29,116 @@ describe('service-ingestion unit tests', () => {
 
     it('should leave alphanumeric text unchanged', () => {
       assert.strictEqual(escapeRegex('Senior Developer 123'), 'Senior Developer 123');
+    });
+  });
+
+  describe('canonical job model and normalization', () => {
+    it('normalizes canonical URLs by stripping tracking parameters and standardizing paths', () => {
+      const raw = 'https://Example.COM/jobs/engineering/?utm_source=linkedin&utm_campaign=spring&id=123#frag';
+      const normalized = normalizeCanonicalUrl(raw);
+      assert.strictEqual(normalized, 'https://example.com/jobs/engineering?id=123#frag');
+    });
+
+    it('generates stable, deterministic UUIDs from canonical URLs', () => {
+      const url1 = 'https://example.com/jobs/senior-go-engineer';
+      const id1 = generateDeterministicUuid(url1);
+      const id2 = generateDeterministicUuid(url1);
+      assert.strictEqual(id1, id2);
+      assert.match(id1, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    });
+
+    it('sanitizes descriptions by stripping scripts and harmful HTML tags', () => {
+      const dirty = '<p>Hello <script>alert("xss")</script>world! <style>body{}</style></p>';
+      const clean = sanitizeDescription(dirty);
+      assert.strictEqual(clean, 'Hello world!');
+    });
+
+    it('converts legacy documents to canonical schema with stable defaults', () => {
+      const legacy = {
+        title: 'Python Backend Dev',
+        company: 'Dhaka Tech',
+        url: 'https://dhakatech.com/jobs/1',
+        raw_description: 'We need Python and Django experts.',
+        scraped_at: '2026-10-27T10:00:00.000Z',
+      };
+      const canonical = toCanonicalJob(legacy);
+      assert.strictEqual(canonical.title, 'Python Backend Dev');
+      assert.strictEqual(canonical.canonical_url, 'https://dhakatech.com/jobs/1');
+      assert.strictEqual(canonical.description, 'We need Python and Django experts.');
+      assert.strictEqual(canonical.status, 'ACTIVE');
+      assert.strictEqual(canonical.remote_eligibility, 'UNSPECIFIED');
+      assert.strictEqual(canonical.job_type, 'UNSPECIFIED');
+      assert.strictEqual(canonical.seniority, 'UNSPECIFIED');
+    });
+  });
+
+  describe('outbound URL security validation', () => {
+    it('accepts valid public https URLs', () => {
+      const res = validateOutboundUrl('https://boards.greenhouse.io/company/jobs/123');
+      assert.strictEqual(res.valid, true);
+    });
+
+    it('rejects URLs with credentials', () => {
+      const res = validateOutboundUrl('https://user:pass@evil.com/job');
+      assert.strictEqual(res.valid, false);
+      assert.match(res.reason, /credentials/i);
+    });
+
+    it('rejects unsupported protocols like javascript: and data:', () => {
+      assert.strictEqual(validateOutboundUrl('javascript:alert(1)').valid, false);
+      assert.strictEqual(validateOutboundUrl('data:text/html,bad').valid, false);
+      assert.strictEqual(validateOutboundUrl('file:///etc/passwd').valid, false);
+    });
+
+    it('rejects loopback and private IP addresses by default', () => {
+      assert.strictEqual(validateOutboundUrl('http://127.0.0.1/admin').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://localhost:8080/exploit').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://192.168.1.1/router').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://10.0.0.5/internal').valid, false);
+    });
+  });
+
+  describe('search query validation', () => {
+    it('rejects negative or oversized limits with 400 Bad Request', () => {
+      const resNegative = validateSearchParams({ limit: '-5' });
+      assert.strictEqual(resNegative.valid, false);
+      assert.strictEqual(resNegative.error.status, 400);
+
+      const resOversized = validateSearchParams({ limit: '500' });
+      assert.strictEqual(resOversized.valid, false);
+      assert.strictEqual(resOversized.error.status, 400);
+    });
+
+    it('rejects overlong queries and invalid enums', () => {
+      const resLongQ = validateSearchParams({ q: 'a'.repeat(105) });
+      assert.strictEqual(resLongQ.valid, false);
+
+      const resBadEnum = validateSearchParams({ remote_eligibility: 'SOMEWHERE_ELSE' });
+      assert.strictEqual(resBadEnum.valid, false);
+
+      const resBadCurrency = validateSearchParams({ currency: 'EUR' });
+      assert.strictEqual(resBadCurrency.valid, false);
+
+      const resBadSort = validateSearchParams({ sort: 'unsupported_sort' });
+      assert.strictEqual(resBadSort.valid, false);
+    });
+
+    it('accepts valid contracted query parameters', () => {
+      const res = validateSearchParams({
+        q: 'Golang',
+        location: 'Dhaka',
+        remote_eligibility: 'FULLY_REMOTE',
+        job_type: 'FULL_TIME',
+        seniority: 'SENIOR',
+        currency: 'BDT',
+        min_salary: '100000',
+        sort: 'salary_desc',
+        limit: '25',
+      });
+      assert.strictEqual(res.valid, true);
+      assert.strictEqual(res.params.q, 'Golang');
+      assert.strictEqual(res.params.limit, 25);
+      assert.strictEqual(res.params.min_salary, 100000);
     });
   });
 
@@ -39,48 +157,118 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(res.body.error, 'Database collection not available');
     });
 
-    it('GET /api/jobs clamps pagination parameters correctly', async () => {
-      let capturedSkip = null;
-      let capturedLimit = null;
-      let capturedQuery = null;
+    it('GET /api/v1/jobs rejects oversized limit with 400 RFC 7807', async () => {
+      const mockCollection = {};
+      const app = createIngestionApp(mockCollection);
+      const res = await request(app).get('/api/v1/jobs?limit=500');
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.status, 400);
+      assert.match(res.body.detail, /limit/i);
+    });
+
+    it('GET /api/v1/jobs/:id returns 404 for non-existent job UUID', async () => {
+      const mockCollection = {
+        findOne: async () => null,
+      };
+      const app = createIngestionApp(mockCollection);
+      const res = await request(app).get('/api/v1/jobs/a0000000-0000-4000-8000-000000000001');
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.body.status, 404);
+      assert.strictEqual(res.body.title, 'Not Found');
+    });
+
+    it('GET /api/v1/jobs/:id returns 200 and JobDetail for existing job', async () => {
+      const mockJob = {
+        id: 'b0000000-0000-4000-8000-000000000002',
+        canonical_url: 'https://techcorp.com/jobs/lead-architect',
+        title: 'Lead Architect',
+        company: 'TechCorp',
+        location: 'Dhaka',
+        remote_eligibility: 'HYBRID',
+        job_type: 'FULL_TIME',
+        seniority: 'LEAD',
+        skills: ['Architecture', 'Kubernetes'],
+        description: 'Lead our distributed systems platform.',
+        status: 'ACTIVE',
+        published_at: new Date('2026-10-27T08:00:00.000Z'),
+        ingested_at: new Date('2026-10-27T08:05:00.000Z'),
+      };
 
       const mockCollection = {
-        find: (query) => {
-          capturedQuery = query;
-          return {
-            sort: () => ({
-              skip: (s) => {
-                capturedSkip = s;
-                return {
-                  limit: (l) => {
-                    capturedLimit = l;
-                    return {
-                      toArray: async () => [{ title: 'Go Engineer', company: 'Acme' }],
-                    };
-                  },
-                };
-              },
-            }),
-          };
-        },
-        countDocuments: async () => 1,
+        findOne: async ({ id }) => (id === mockJob.id ? mockJob : null),
       };
 
       const app = createIngestionApp(mockCollection);
-
-      // Test negative page and overly large limit (clamped to page=1, limit=100)
-      const res = await request(app).get('/api/jobs?page=-5&limit=500');
+      const res = await request(app).get(`/api/v1/jobs/${mockJob.id}`);
       assert.strictEqual(res.status, 200);
-      assert.strictEqual(res.body.page, 1);
-      assert.strictEqual(res.body.limit, 100);
-      assert.strictEqual(capturedSkip, 0);
-      assert.strictEqual(capturedLimit, 100);
+      assert.strictEqual(res.body.id, mockJob.id);
+      assert.strictEqual(res.body.title, 'Lead Architect');
+      assert.strictEqual(res.body.canonical_url, mockJob.canonical_url);
+    });
 
-      // Test query parameter filtering with regex escaping
-      const resQuery = await request(app).get('/api/jobs?q=C++');
-      assert.strictEqual(resQuery.status, 200);
-      assert.ok(capturedQuery.$or);
-      assert.strictEqual(capturedQuery.$or.length, 2);
+    it('GET /api/v1/jobs/:id/outbound returns 302 redirect for active job', async () => {
+      const mockJob = {
+        id: 'c0000000-0000-4000-8000-000000000003',
+        canonical_url: 'https://careers.google.com/jobs/results/12345',
+        title: 'Staff SRE',
+        company: 'Google',
+        status: 'ACTIVE',
+      };
+
+      const mockCollection = {
+        findOne: async ({ id }) => (id === mockJob.id ? mockJob : null),
+        updateOne: async () => {},
+      };
+
+      const app = createIngestionApp(mockCollection);
+      const res = await request(app)
+        .get(`/api/v1/jobs/${mockJob.id}/outbound`)
+        .set('Accept', 'text/html');
+
+      assert.strictEqual(res.status, 302);
+      assert.strictEqual(res.headers.location, mockJob.canonical_url);
+    });
+
+    it('GET /api/v1/jobs/:id/outbound returns 200 JSON destination_url when requested', async () => {
+      const mockJob = {
+        id: 'd0000000-0000-4000-8000-000000000004',
+        canonical_url: 'https://jobs.netflix.com/jobs/98765',
+        title: 'Senior Distributed Systems Engineer',
+        company: 'Netflix',
+        status: 'ACTIVE',
+      };
+
+      const mockCollection = {
+        findOne: async ({ id }) => (id === mockJob.id ? mockJob : null),
+        updateOne: async () => {},
+      };
+
+      const app = createIngestionApp(mockCollection);
+      const res = await request(app)
+        .get(`/api/v1/jobs/${mockJob.id}/outbound?format=json`)
+        .set('Accept', 'application/json');
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.destination_url, mockJob.canonical_url);
+    });
+
+    it('GET /api/v1/jobs/:id/outbound returns 404 if listing is EXPIRED', async () => {
+      const mockJob = {
+        id: 'e0000000-0000-4000-8000-000000000005',
+        canonical_url: 'https://example.com/expired',
+        title: 'Old Job',
+        company: 'Old Corp',
+        status: 'EXPIRED',
+      };
+
+      const mockCollection = {
+        findOne: async ({ id }) => (id === mockJob.id ? mockJob : null),
+      };
+
+      const app = createIngestionApp(mockCollection);
+      const res = await request(app).get(`/api/v1/jobs/${mockJob.id}/outbound`);
+      assert.strictEqual(res.status, 404);
+      assert.match(res.body.detail, /expired/i);
     });
   });
 
@@ -90,11 +278,12 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(result, null);
     });
 
-    it('should parse message and dual-write to Mongo and Elasticsearch', async () => {
+    it('should parse message, canonicalize, and dual-write to Mongo and Elasticsearch with stable UUID', async () => {
       let mongoUpdateArgs = null;
       let esIndexArgs = null;
 
       const mockCollection = {
+        findOne: async () => null,
         updateOne: async (filter, update, options) => {
           mongoUpdateArgs = { filter, update, options };
         },
@@ -120,17 +309,15 @@ describe('service-ingestion unit tests', () => {
       });
 
       assert.strictEqual(processed.title, 'Backend Engineer');
-      assert.strictEqual(mongoUpdateArgs.filter.url, payload.url);
+      assert.strictEqual(mongoUpdateArgs.filter.canonical_url, 'https://example.com/job/123');
       assert.strictEqual(mongoUpdateArgs.options.upsert, true);
       assert.strictEqual(esIndexArgs.index, 'jobs_index');
-      assert.strictEqual(
-        esIndexArgs.id,
-        Buffer.from(payload.url).toString('base64')
-      );
+      assert.strictEqual(esIndexArgs.id, processed.id);
     });
 
     it('should tolerate Elasticsearch indexing failure gracefully', async () => {
       const mockCollection = {
+        findOne: async () => null,
         updateOne: async () => {},
       };
 
@@ -148,7 +335,6 @@ describe('service-ingestion unit tests', () => {
       };
 
       const messageValue = Buffer.from(JSON.stringify(payload));
-      // Should not throw
       const processed = await processMessage(messageValue, {
         jobsCollection: mockCollection,
         esClient: mockEsClient,

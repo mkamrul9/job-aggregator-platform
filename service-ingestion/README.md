@@ -1,19 +1,27 @@
-# Node.js Job Ingestion & Search API (`service-ingestion`)
+# Node.js Canonical Job Catalog & Unified Search API (`service-ingestion`)
 
-A stream-processing worker and REST search service that consumes newly scraped job events from Kafka, persists canonical records in MongoDB, and projects indexed documents into Elasticsearch.
+A high-performance streaming ingestion worker and REST discovery service that consumes scraped job postings from Kafka, canonicalizes records into MongoDB (the authoritative persistent catalog), and projects indexed search documents into Elasticsearch (with transparent fallback to MongoDB).
 
-> **Role in Seekers Platform:** Serves as the central data ingestion pipeline between raw collection (`service-scraper`) and candidate search queries. It dual-writes listings to MongoDB (authoritative document store) and Elasticsearch (search projection).
+> **Role in Seekers Platform:** Powers candidate job discovery, multi-dimensional search filtering, keyset pagination, shareable job details, and verified outbound application redirects across the platform.
 
 ---
 
-## 1. Primary Technology Stack
+## 1. Technology Stack & Storage Layer
 
-- **Runtime:** Node.js 20.x
+- **Runtime:** Node.js 22.x
 - **Web Framework:** Express 5.x
 - **Event Streaming:** KafkaJS 2.x (Consumer Group: `mongo-ingestion-group`)
-- **Document Store:** MongoDB Node Driver 7.x (Database: `job_platform`, Collection: `jobs`)
-- **Search Engine:** `@elastic/elasticsearch` (Index: `jobs_index`)
-- **Security:** ReDoS input escaping, CORS origin protection
+- **Authoritative Catalog:** MongoDB Node Driver 7.x (Collection: `jobs`)
+  - Unique indexes on `id` (public UUID v4) and `canonical_url`.
+  - Compound indexes on `[status, published_at, id]` and `[status, salary.min, id]` for deterministic keyset pagination.
+  - Text search index on `title`, `company`, `description`, `skills`, `location`.
+- **Search Projection:** `@elastic/elasticsearch` 8.x (Index: `jobs_index`)
+  - Multi-match full text search across `title^3`, `skills^2`, `company^2`, `description`.
+  - Strict filters on `status: "ACTIVE"`, `location`, `remote_eligibility`, `job_type`, `seniority`, and salary ranges.
+  - Transparent fallback to MongoDB text/regex search if Elasticsearch is unreachable.
+- **Security & Safety:**
+  - RFC 7807 Problem Details for all validation and HTTP error responses.
+  - SSRF protection: outbound redirect destinations strictly validate against private IPs (RFC 1918), loopback ranges (`127.0.0.0/8`), link-local metadata addresses (`169.254.169.254`), credentials, and non-http(s) schemes.
 
 ---
 
@@ -39,65 +47,60 @@ A stream-processing worker and REST search service that consumes newly scraped j
                  +---------------+  +------------------+
 ```
 
-### Endpoints
+---
 
-| Method | Route | Description | Query Parameters |
-|---|---|---|---|
-| `GET` | `/api/jobs` | Paginated search across listings | `q` (keyword), `page` (int), `limit` (max 100) |
-| `GET` | `/health` | Health check endpoint | None |
+## 3. Endpoints & API Contract
+
+The service implements the OpenAPI 3.1 contract under `/api/v1/jobs` and provides full backwards-compatible support for `/api/jobs` (with and without trailing slashes).
+
+| Method | Path | Description | Key Query / Path Parameters | Response |
+|---|---|---|---|---|
+| `GET` | `/api/v1/jobs` | Search & filter active job catalog | `q`, `location`, `remote_eligibility`, `job_type`, `seniority`, `min_salary`, `currency`, `sort`, `limit`, `cursor` | `JobListResponse` (items, total_count, next_cursor, prev_cursor) |
+| `GET` | `/api/jobs` | Legacy alias to search endpoint | Same as `/api/v1/jobs` | `JobListResponse` |
+| `GET` | `/api/v1/jobs/:id` | Retrieve full canonical job detail | `id` (UUID v4) | `JobDetail` (404 RFC 7807 if not found) |
+| `GET` | `/api/v1/jobs/:id/outbound` | Safe outbound application redirect | `id` (UUID v4), `Accept: text/html` or `Accept: application/json` | `302 Redirect` to source or `200` with `{ destination_url }` |
+| `GET` | `/health` | Health check endpoint | None | `200` with `{ status: "healthy", ... }` |
+
+### Deterministic Keyset Cursor Pagination
+
+Pagination uses opaque, URL-safe base64-encoded keyset cursors encoding the active sort field value and the listing UUID tie-breaker:
+- `sort=date_desc` (default): `[published_at, id]`
+- `sort=salary_desc`: `[salary.min, id]`
+- `sort=relevance`: Elasticsearch score-based pagination
 
 ---
 
-## 3. Current Capabilities & Baseline Status
+## 4. Standalone Quickstart (Zero Kafka Dependency)
 
-- **Syntax & Parse Check (`node --check index.js`):** `[Verified]` — valid JavaScript syntax.
-- **Express Jobs Search API:** Implements pagination, limit clamps, and ReDoS regex sanitization.
-- **Dual-Write Pipeline:** Upserts documents into MongoDB by URL and mirrors structured documents to Elasticsearch.
-- **Known Limitations:**
-  - Elasticsearch indexing failures are caught and logged, but lack durable dead-letter queues or automatic retry reconciliation.
-  - Test runner (`npm test`) is currently a placeholder script scheduled for full test implementation in P02.
-  - Elasticsearch JS client (9.x) and Elasticsearch container (8.10.2) have a major-version disparity to be aligned in P02.
+Developers and frontend consumers can run `service-ingestion` locally without Kafka:
 
----
-
-## 4. Setup & Local Execution
-
-### Prerequisites
-
-- Node.js 20.x
-- MongoDB 6+
-- Apache Kafka
-- Elasticsearch 8+
-
-### Installation
-
+### 1. Install Dependencies
 ```bash
 cd service-ingestion
-npm install
+npm ci
 ```
 
-### Configuration
-
-The application reads variables from its process environment. It does not load `.env` automatically; the example documents supported settings for explicit environment injection:
+### 2. Seed Initial Catalog Data
+Seeds 12 curated South Asian & Bangladesh tech job postings into MongoDB and builds the Elasticsearch index:
 ```bash
-cp .env.example .env
+# Defaults to mongodb://localhost:27017/job_aggregator and http://localhost:9200
+npm run seed
 ```
-Key configuration settings (see `.env.example`):
-- `PORT`: HTTP port for Express (default: `5000`)
-- `KAFKA_BROKER`: Kafka broker address (default: `localhost:9092`)
-- `MONGO_URI`: MongoDB connection string (default: `mongodb://localhost:27017`)
-- `ES_NODE`: Elasticsearch node address (default: `http://localhost:9200`)
 
-### Running the Worker & API
-
+### 3. Start Search API in Standalone Mode
 ```bash
-node index.js
+# Disables Kafka consumer and exposes /api/v1/jobs on port 5000
+npm run start:standalone
 ```
 
 ---
 
-## 5. Planned Standalone Demonstration (Phase P07)
+## 5. Verification & Testing
 
-In Phase P07, this ingestion and search service will feature an independent demonstration mode:
-- **Local Fixture Replay:** An offline event replay script reading local NDJSON listing files directly into MongoDB and Elasticsearch without requiring an active Kafka broker.
-- **Search Verification Suite:** Validates keyword queries, facet counts, and pagination directly against the seeded search index.
+```bash
+# Run unit tests (models, URL security, query validators, endpoint mocks)
+npm test
+
+# Run strict integration tests (live MongoDB and Elasticsearch)
+npm run test:integration
+```

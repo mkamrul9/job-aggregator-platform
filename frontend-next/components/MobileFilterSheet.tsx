@@ -9,7 +9,7 @@ export interface FilterState {
   seniority: string;
   jobType: string;
   minSalary: number;
-  sort: 'recent' | 'relevance';
+  sort: 'recent' | 'relevance' | 'salary';
 }
 
 interface MobileFilterSheetProps {
@@ -176,9 +176,10 @@ export default function MobileFilterSheet({
               id="m-filter-sort"
               className="select-input"
               value={filters.sort}
-              onChange={(e) => onFilterChange({ ...filters, sort: e.target.value as 'recent' | 'relevance' })}
+              onChange={(e) => onFilterChange({ ...filters, sort: e.target.value as 'recent' | 'relevance' | 'salary' })}
             >
               <option value="recent">Most Recent First</option>
+              <option value="salary">Highest Compensation</option>
               <option value="relevance">Highest Relevance</option>
             </select>
           </div>
