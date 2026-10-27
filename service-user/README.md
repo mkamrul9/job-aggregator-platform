@@ -88,7 +88,7 @@ Nginx exposes these routes under `/api/users/` (or directly via `/users/` when a
 - **Prisma Client (`npx prisma generate`):** `[Verified]` — Prisma Client v5.22.0.
 - **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`).
 - **Truthful Scope Limitations & Deferrals:**
-  - Resume upload currently relies on a shared filesystem volume (`/uploads`); cloud object storage (S3/GCS) is planned for P07/P08.
+  - Resume upload currently relies on a shared filesystem volume (`./uploads` or configured via `UPLOAD_DIR`); cloud object storage (S3/GCS) is planned for P07/P08.
   - Account deletion and export requests register persistent lifecycle states (`PENDING` with 30-day scheduled grace period); background asynchronous queue processing for physical archive bundling and cross-system erasure is deferred to P13.
   - The API records requests truthfully and does not falsely claim immediate physical deletion or zero retention prior to P13 fulfillment.
 

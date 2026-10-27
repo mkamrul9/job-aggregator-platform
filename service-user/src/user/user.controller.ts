@@ -23,13 +23,7 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserService } from './user.service';
 import { validateUpdateProfileInput } from './dto/update-profile.dto';
 import { validateDeleteAccountInput } from './dto/delete-account.dto';
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || '/uploads';
-try {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-} catch {
-  // Directory already exists or read-only volume
-}
+const getUploadDir = () => process.env.UPLOAD_DIR || './uploads';
 
 @Controller('users')
 export class UserController {
@@ -195,7 +189,15 @@ export class UserController {
   @UseInterceptors(
     FileInterceptor('resume', {
       storage: diskStorage({
-        destination: UPLOAD_DIR,
+        destination: (_req, _file, cb) => {
+          const dir = getUploadDir();
+          try {
+            fs.mkdirSync(dir, { recursive: true });
+          } catch {
+            // Directory already exists or read-only volume
+          }
+          cb(null, dir);
+        },
         filename: (req, file, cb) => {
           const uniqueSuffix =
             Date.now() + '-' + Math.round(Math.random() * 1e9);
