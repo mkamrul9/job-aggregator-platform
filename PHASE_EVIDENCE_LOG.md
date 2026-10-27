@@ -44,3 +44,14 @@ This log records the verified execution, evidence, security checks, and gate res
 
 - **GitHub Remote Secret Scanning:** Active via GitHub platform tools for public repositories. Note: Enabling branch protection rules (e.g., requiring pull request reviews, passing status checks, and linear history on `main`) requires repository administration permissions on GitHub (`mkamrul9/job-aggregator-platform`). Contributor instructions have been documented in `CONTRIBUTING.md`.
 - **Compromised Credentials:** No live secrets or tokens were committed to the Git commit history. The local `GITHUB_TOKEN` stored in `.secrets` was verified to be strictly local and is untracked by Git.
+
+### 4. Remote Commit & CI Verification Evidence
+
+- **Commit SHA:** `e9eb12db7659e2b13cc1bd94c992d03c1051ffed`
+- **Remote Branch:** `codex/production-p01-service-baseline` (verified via `git ls-remote origin`)
+- **CI Run ID:** `40458342063` ([View GitHub Actions Run](https://github.com/mkamrul9/job-aggregator-platform/actions/runs/40458342063))
+  - `test-scraper`: **SUCCESS** (Go 1.23 tests passed in CI)
+  - `test-ai-parser`: **SUCCESS** (Python 3.11 tests passed in CI)
+  - `test-user-service`: **FAILED** (inherited blocker: `npm ci` reported `Missing: @emnapi/core@1.11.3 from lock file` on Linux runner; scheduled for P02 dependency baselining)
+  - `build-docker-images`: **SKIPPED** (dependent job)
+
