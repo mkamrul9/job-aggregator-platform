@@ -101,6 +101,7 @@ The candidate web application supports both real Firebase authentication and iso
 
 - **Live Firebase Authentication:** Real user registration, login, email verification status, password reset, session refresh, and logout via Firebase Auth (emulator or production).
 - **Relational Profile Persistence:** Authenticated candidates automatically synchronize with `service-user` PostgreSQL backend (`POST /api/v1/users/sync`), enabling persistent profile editing (`PUT /api/v1/users/profile`), skills cloud customization, and privacy controls (`POST /api/v1/users/account/export`, `POST /api/v1/users/account/delete`).
+- **Gateway & Direct Development Routing:** Browser client requests target authoritative `/api/v1/users/*` routes. When routed through Nginx on port 80, the gateway reverse-proxies directly to `service-user`. When accessed via direct Next.js development server (`http://localhost:3000`), Next.js rewrites (`next.config.ts`) proxy `/api/v1/users/*` to the configured `USER_SERVICE_URL` without requiring fixture fallbacks.
 - **Portfolio Demonstration Mode:** When users click "Explore Portfolio Demo", the app enters isolated demo mode (`DEMO_MODE`), granting immediate read-only access to synthetic candidate personas without contaminating or syncing to live PostgreSQL databases.
 - **Responsive Viewport Verification:**
   - `320px` (min compact phone): Verified zero horizontal overflow (`scrollWidth <= innerWidth`)

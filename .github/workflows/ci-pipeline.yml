@@ -75,10 +75,24 @@ jobs:
         run: pytest test_main.py
 
   # -------------------------------------------------------------
-  # JOB 3: Test the NestJS User Service
+  # JOB 3: Test the NestJS User Service (Unit & Strict Integration)
   # -------------------------------------------------------------
   test-user-service:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: password123
+          POSTGRES_DB: job_aggregator_users_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -101,6 +115,51 @@ jobs:
       - name: Run Jest Unit Tests
         working-directory: ./service-user
         run: npm run test
+
+      - name: Run Smoke Error-Handling Negative Verification
+        working-directory: ./service-user
+        run: npm run test:smoke:negative
+
+      - name: Deploy Prisma Migrations to PostgreSQL
+        working-directory: ./service-user
+        env:
+          DATABASE_URL: postgresql://admin:password123@localhost:5432/job_aggregator_users_test?schema=public
+        run: npx prisma migrate deploy
+
+      - name: Start Firebase Auth Emulator
+        working-directory: ./service-user
+        run: |
+          npx -p firebase-tools firebase emulators:start --only auth --project seekers-dev &
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:9099 > /dev/null 2>&1; then
+              echo "Firebase Auth Emulator is ready!"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Start service-user Application
+        working-directory: ./service-user
+        env:
+          PORT: 3002
+          DATABASE_URL: postgresql://admin:password123@localhost:5432/job_aggregator_users_test?schema=public
+          FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9099
+        run: |
+          npm run start &
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:3002/users/health | grep -q "healthy"; then
+              echo "service-user is healthy and responding!"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run Strict Standalone Smoke Suite
+        working-directory: ./service-user
+        env:
+          API_BASE: http://127.0.0.1:3002
+          FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9099
+        run: npm run test:smoke
 
   # -------------------------------------------------------------
   # JOB 4: Test the Ingestion Service

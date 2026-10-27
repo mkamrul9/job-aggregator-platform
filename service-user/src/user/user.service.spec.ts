@@ -181,7 +181,9 @@ describe('UserService', () => {
   describe('requestAccountDeletion', () => {
     it('should record an account deletion request with a 30-day grace period', async () => {
       mockUserRepository.findById.mockResolvedValue(mockUserWithProfile);
-      const scheduledFor = new Date(mockDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const scheduledFor = new Date(
+        mockDate.getTime() + 30 * 24 * 60 * 60 * 1000,
+      );
       mockUserRepository.createDeletionRequest.mockResolvedValue({
         id: 'del-req-uuid-1',
         userId: 'firebase-uid-123',

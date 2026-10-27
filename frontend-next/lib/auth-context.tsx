@@ -72,13 +72,30 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// Determine API Gateway prefix (/api/v1/users if via gateway, fallback to direct port in dev)
-function getApiBaseUrl(): string {
-  if (typeof window !== 'undefined') {
-    // In browser, relative URL works through Nginx proxy
-    return '';
+// Helper to fetch user-service routes through API Gateway (/api/v1/users) or Next.js rewrites
+async function fetchUserEndpoint(
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const baseUrl =
+    typeof window !== 'undefined'
+      ? ''
+      : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+  const gatewayUrl = `${baseUrl}/api/v1/users${path}`;
+
+  try {
+    const res = await fetch(gatewayUrl, init);
+    if (res.status !== 404) {
+      return res;
+    }
+  } catch {
+    // Network error on relative URL, proceed to direct fallback
   }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+
+  // Direct service fallback if gateway and rewrites are bypassed in custom local dev
+  const directBase =
+    process.env.NEXT_PUBLIC_USER_SERVICE_URL || 'http://localhost:3000';
+  return fetch(`${directBase}/users${path}`, init);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -98,27 +115,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const idToken = await currentUser.getIdToken(false);
       setToken(idToken);
 
-      const baseUrl = getApiBaseUrl();
-      // Try /api/v1/users/sync first (Nginx gateway route), fallback to direct NestJS endpoint if proxy not active
-      let syncRes: Response;
-      try {
-        syncRes = await fetch(`${baseUrl}/api/v1/users/sync`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-      } catch {
-        // Fallback for direct development access to user-service
-        syncRes = await fetch(`http://localhost:3005/users/sync`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-      }
+      const syncRes = await fetchUserEndpoint('/sync', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
       if (!syncRes.ok) {
         const errJson = await syncRes.json().catch(() => ({}));
@@ -128,20 +131,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Fetch authentic persisted profile
-      let profileRes: Response;
-      try {
-        profileRes = await fetch(`${baseUrl}/api/v1/users/profile`, {
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-          },
-        });
-      } catch {
-        profileRes = await fetch(`http://localhost:3005/users/profile`, {
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-          },
-        });
-      }
+      const profileRes = await fetchUserEndpoint('/profile', {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
 
       if (!profileRes.ok) {
         throw new Error(`Profile retrieval failed with HTTP ${profileRes.status}`);
@@ -266,27 +260,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Candidate must be authenticated to persist profile modifications.');
     }
 
-    const baseUrl = getApiBaseUrl();
-    let res: Response;
-    try {
-      res = await fetch(`${baseUrl}/api/v1/users/profile`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(updatedFields),
-      });
-    } catch {
-      res = await fetch(`http://localhost:3005/users/profile`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(updatedFields),
-      });
-    }
+    const res = await fetchUserEndpoint('/profile', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updatedFields),
+    });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -302,23 +283,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Authentication required for account data export.');
     }
 
-    const baseUrl = getApiBaseUrl();
-    let res: Response;
-    try {
-      res = await fetch(`${baseUrl}/api/v1/users/account/export`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-    } catch {
-      res = await fetch(`http://localhost:3005/users/account/export`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-    }
+    const res = await fetchUserEndpoint('/account/export', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -333,36 +303,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Authentication required for account deletion.');
     }
 
-    const baseUrl = getApiBaseUrl();
     const idempotencyKey = `del_${user.uid}_${Date.now()}`;
-    let res: Response;
-    try {
-      res = await fetch(`${baseUrl}/api/v1/users/account/delete`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({
-          confirmation: 'DELETE_MY_ACCOUNT',
-          reason,
-        }),
-      });
-    } catch {
-      res = await fetch(`http://localhost:3005/users/account/delete`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({
-          confirmation: 'DELETE_MY_ACCOUNT',
-          reason,
-        }),
-      });
-    }
+    const res = await fetchUserEndpoint('/account/delete', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        confirmation: 'DELETE_MY_ACCOUNT',
+        reason,
+      }),
+    });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));

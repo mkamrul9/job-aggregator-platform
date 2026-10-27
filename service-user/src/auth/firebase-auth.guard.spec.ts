@@ -1,6 +1,11 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 
-const mockVerifyIdToken = jest.fn();
+import type { DecodedIdToken } from 'firebase-admin/auth';
+
+const mockVerifyIdToken = jest.fn<
+  Promise<DecodedIdToken>,
+  [string, boolean?]
+>();
 
 jest.mock('firebase-admin/app', () => ({
   getApps: jest.fn().mockReturnValue([{ name: '[DEFAULT]' }]),
@@ -10,7 +15,10 @@ jest.mock('firebase-admin/app', () => ({
 
 jest.mock('firebase-admin/auth', () => ({
   getAuth: jest.fn().mockReturnValue({
-    verifyIdToken: (...args: unknown[]) => mockVerifyIdToken(...args),
+    verifyIdToken: (
+      token: string,
+      checkRevoked?: boolean,
+    ): Promise<DecodedIdToken> => mockVerifyIdToken(token, checkRevoked),
   }),
 }));
 

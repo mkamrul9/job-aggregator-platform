@@ -1,6 +1,6 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { RolesGuard, ROLES_KEY } from './roles.guard';
+import { RolesGuard } from './roles.guard';
 import { PrismaService } from '../prisma.service';
 
 describe('RolesGuard', () => {
@@ -18,7 +18,9 @@ describe('RolesGuard', () => {
     guard = new RolesGuard(reflector, prisma as unknown as PrismaService);
   });
 
-  const createMockContext = (user?: Record<string, unknown>): ExecutionContext => {
+  const createMockContext = (
+    user?: Record<string, unknown>,
+  ): ExecutionContext => {
     return {
       getHandler: () => ({}),
       getClass: () => ({}),
@@ -63,11 +65,16 @@ describe('RolesGuard', () => {
 
   it('should throw ForbiddenException if candidate attempts to access ADMIN endpoint', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['ADMIN']);
-    prisma.user.findUnique.mockResolvedValue({ id: 'candidate-1', role: 'CANDIDATE' });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'candidate-1',
+      role: 'CANDIDATE',
+    });
 
     const context = createMockContext({ uid: 'candidate-1' });
 
-    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it('should throw ForbiddenException if user object is missing on protected route', async () => {
@@ -75,6 +82,8 @@ describe('RolesGuard', () => {
 
     const context = createMockContext(undefined);
 
-    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 });

@@ -64,22 +64,33 @@ Nginx exposes these routes under `/api/users/` (or directly via `/users/` when a
 
 ## 3. Current Capabilities & Baseline Status
 
-- **Unit Testing (`npm test`):** `[Verified locally]` — 25 unit tests pass (Guards, Controllers, Repositories, Services).
-- **Standalone Smoke Testing (`npm run test:smoke`):** `[Verified locally]` — Full integration suite against real PostgreSQL and Firebase Auth Emulator:
-  - Unauthenticated access rejection (401 Unauthorized)
-  - Real emulator JWT generation & verification
-  - Idempotent candidate user synchronization (`POST /users/sync`)
-  - Profile read and persistent update (`GET/PUT /users/profile`)
-  - Cross-user data isolation (User B cannot read/write User A's profile)
-  - Server-enforced role boundary rejection (403 Forbidden for candidate on admin route)
-  - Data export request registration (`POST /users/account/export`)
-  - Scheduled account deletion with 30-day grace period (`POST /users/account/delete`)
+- **Unit Testing (`npm test`):** `[Verified locally & CI]` — 25 unit tests pass (Guards, Controllers, Repositories, Services).
+- **Non-mutating Linting (`npm run lint`):** `[Verified locally & CI]` — ESLint passes with 0 errors and 0 warnings without mutating source. Use `npm run lint:fix` for auto-formatting.
+- **Negative Error-Handling Verification (`npm run test:smoke:negative`):** `[Verified locally & CI]` — Verifies that missing API dependencies or unavailable Firebase Auth emulator produce immediate non-zero exit status and never report false-positive success.
+- **Strict Standalone Smoke Testing (`npm run test:smoke`):** `[Verified locally & CI]` — Full 16-step integration suite against live PostgreSQL and Firebase Auth Emulator:
+  - 1. Service health check (`/users/health`)
+  - 2. Unauthenticated access rejection (401 Unauthorized)
+  - 3. Forged Bearer token rejection (401 Unauthorized)
+  - 4. Authentic emulator JWT issuance for Candidate A and Candidate B
+  - 5. Idempotent candidate user synchronization (`POST /users/sync`)
+  - 6. Repeated synchronization idempotency check
+  - 7. Initial profile read with default UNSPECIFIED preferences (`GET /users/profile`)
+  - 8. Profile mutation with strict DTO validation (`PUT /users/profile`)
+  - 9. Database persistence verification on profile reload
+  - 10. Candidate B user synchronization
+  - 11. Cross-tenant isolation & ownership boundary enforcement (Candidate B cannot view Candidate A's profile data)
+  - 12. Server-enforced role boundary rejection (403 Forbidden on privileged admin route)
+  - 13. Personal data export request recording (`POST /users/account/export`)
+  - 14. Scheduled account deletion request with 30-day grace period (`POST /users/account/delete`)
+  - 15. Deletion request idempotency via `Idempotency-Key`
+  - 16. Account lifecycle status query (`GET /users/account/status`)
 - **Type Checking (`npx tsc --noEmit`):** `[Verified]` — zero TypeScript compilation errors.
 - **Prisma Client (`npx prisma generate`):** `[Verified]` — Prisma Client v5.22.0.
 - **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`).
-- **Known Limitations:**
-  - Resume upload relies on a shared host filesystem volume (`/uploads`) rather than cloud object storage (S3/GCS planned for P07).
-  - Background asynchronous worker for export archive bundling and hard deletion execution runs asynchronously on scheduled intervals (P06+).
+- **Truthful Scope Limitations & Deferrals:**
+  - Resume upload currently relies on a shared filesystem volume (`/uploads`); cloud object storage (S3/GCS) is planned for P07/P08.
+  - Account deletion and export requests register persistent lifecycle states (`PENDING` with 30-day scheduled grace period); background asynchronous queue processing for physical archive bundling and cross-system erasure is deferred to P13.
+  - The API records requests truthfully and does not falsely claim immediate physical deletion or zero retention prior to P13 fulfillment.
 
 ---
 
@@ -87,10 +98,10 @@ Nginx exposes these routes under `/api/users/` (or directly via `/users/` when a
 
 ### Prerequisites
 
-- Node.js 20.x
+- Node.js 20.x or 22.x
 - npm 10.x+
-- PostgreSQL 15 (standalone or via Docker port 5433)
-- Firebase CLI (`firebase-tools` for running the local Auth emulator)
+- PostgreSQL 15 (port 5433 locally or via Docker)
+- Firebase CLI (`firebase-tools` for local Auth emulator)
 
 ### Installation
 
@@ -132,10 +143,16 @@ npm run start:prod
 ### Running Tests
 
 ```bash
+# Run ESLint (non-mutating):
+npm run lint
+
 # Run unit test suite:
 npm test
 
-# Run standalone integration smoke test (requires PostgreSQL & Firebase Emulator):
+# Run smoke error-handling negative verification:
+npm run test:smoke:negative
+
+# Run strict standalone integration smoke test (requires PostgreSQL & Firebase Emulator):
 npm run test:smoke
 ```
 
@@ -151,7 +168,7 @@ Run `service-user` completely independently without needing other microservices:
    ```
 2. **Start Firebase Auth Emulator:**
    ```bash
-   npx firebase emulators:start --only auth
+   npx -p firebase-tools firebase emulators:start --only auth --project seekers-dev
    ```
 3. **Start NestJS Service:**
    ```bash

@@ -50,10 +50,12 @@ describe('UserController', () => {
     controller = module.get<UserController>(UserController);
   });
 
-  const createMockRequest = (userPayload?: Record<string, unknown>): AuthenticatedRequest => {
+  const createMockRequest = (
+    userPayload?: Record<string, unknown>,
+  ): AuthenticatedRequest => {
     return {
       headers: {},
-      user: userPayload as any,
+      user: userPayload as unknown as AuthenticatedRequest['user'],
     } as unknown as AuthenticatedRequest;
   };
 
@@ -127,10 +129,13 @@ describe('UserController', () => {
       });
 
       expect(res.name).toBe('Ayesha Rahman');
-      expect(mockUserService.updateProfile).toHaveBeenCalledWith('candidate-99', {
-        name: 'Ayesha Rahman',
-        skills: ['NestJS', 'PostgreSQL'],
-      });
+      expect(mockUserService.updateProfile).toHaveBeenCalledWith(
+        'candidate-99',
+        {
+          name: 'Ayesha Rahman',
+          skills: ['NestJS', 'PostgreSQL'],
+        },
+      );
     });
   });
 
@@ -145,7 +150,9 @@ describe('UserController', () => {
       const res = await controller.exportData(req);
 
       expect(res.user_id).toBe('candidate-99');
-      expect(mockUserService.exportUserData).toHaveBeenCalledWith('candidate-99');
+      expect(mockUserService.exportUserData).toHaveBeenCalledWith(
+        'candidate-99',
+      );
     });
   });
 

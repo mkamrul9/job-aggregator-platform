@@ -212,7 +212,7 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint, TypeScript compilation, 25 Jest unit tests, and standalone smoke integration test (`npm run test:smoke`) pass cleanly. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 25 Jest unit tests, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
 - **Completed in Phase P05:**
   - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
   - Persistent candidate profile read & update (`GET/PUT /users/profile`).
@@ -220,6 +220,8 @@ All platform services interact through versioned machine-readable contracts loca
   - Personal data export request tracking (`POST /users/account/export`).
   - Role-based server-side authorization enforcement (`RolesGuard` with `@Roles('ADMIN')`).
   - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099 and PostgreSQL.
+  - Negative error handling regression suite (`npm run test:smoke:negative`) ensuring no false-positive test reporting.
+  - Automated CI integration job running database migrations and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
 - **Intended Deployment Boundary:**
   - Container: `service-user/Dockerfile`
   - Ports: `3000` (internal) / `3002` (host)

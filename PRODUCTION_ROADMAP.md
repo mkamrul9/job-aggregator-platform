@@ -276,11 +276,14 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
   - Forward-migrated `AccountExportRequest` recording personal data archive generation requests.
   - Status endpoint `GET /users/account/status` returning active lifecycle state.
   - Connected `DataControlModal.tsx` providing real user triggers and displaying durable scheduled dates.
-- **Standalone NestJS API Quickstart & Smoke Verification:**
+- **Standalone NestJS API Quickstart & Strict Integration Verification:**
   - Dedicated standalone recipe: `service-user` runs independently with local PostgreSQL (`docker compose up -d user-postgres`) and Firebase Auth emulator (`firebase.json`).
-  - Standalone smoke integration test suite (`service-user/test/standalone-smoke.js` / `npm run test:smoke`): 100% pass across unauthenticated rejection (401), emulator JWT verification, candidate sync, profile persistence, cross-tenant isolation, role boundaries (403), data export, and 30-day scheduled erasure.
-  - 25 Jest unit tests pass in `service-user` (`npm test`).
+  - Strict standalone smoke integration test suite (`service-user/test/standalone-smoke.js` / `npm run test:smoke`): 100% pass (47 assertions across 16 checks) verifying unauthenticated rejection (401), invalid token rejection (401), emulator JWT verification, candidate sync, profile persistence, cross-tenant isolation, role boundaries (403), data export, and 30-day scheduled erasure without swallowing errors.
+  - Negative error-handling verification (`npm run test:smoke:negative`): proves that unavailable API or emulator dependencies cause non-zero exit codes (exit 1) and never report false-positive success.
+  - CI pipeline (`ci-pipeline.yml`): automated integration job running migrations and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
+  - 25 Jest unit tests pass in `service-user` (`npm test`) and non-mutating ESLint passes with 0 errors.
   - Real browser visual and responsive verification across 320px, 360px, 390px, 768px, and 1280px widths (zero horizontal overflow confirmed).
+  - Physical asynchronous queue purging and zip archive bundling are documented and deferred to P13.
 
 **Completion gate:** complete auth/profile browser journeys pass; reload and token expiry behave correctly; user A cannot access user B's data; synchronization failure cannot show account readiness; profile changes persist; mobile forms work with keyboard/autofill; the documented standalone NestJS API demonstration and real integration checks pass.
 
