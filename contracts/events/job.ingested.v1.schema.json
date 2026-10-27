@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.seekers.internal/contracts/events/job.ingested.v1.schema.json",
+  "title": "JobIngestedV1Payload",
+  "description": "Payload emitted by service-ingestion after a listing is canonicalized, deduplicated, persisted to MongoDB, and projected to Elasticsearch.",
+  "type": "object",
+  "required": [
+    "job_id",
+    "canonical_url",
+    "source",
+    "title",
+    "company",
+    "location",
+    "remote_eligibility",
+    "job_type",
+    "seniority",
+    "skills",
+    "status",
+    "published_at",
+    "ingested_at"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Platform-wide unique stable identifier for the canonical job listing."
+    },
+    "canonical_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Normalized canonical destination URL for outbound candidate applications."
+    },
+    "source": {
+      "type": "string",
+      "description": "Originating source platform."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 200,
+      "description": "Canonical job title."
+    },
+    "company": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 150,
+      "description": "Hiring organization name."
+    },
+    "location": {
+      "type": "string",
+      "description": "Standardized location string."
+    },
+    "remote_eligibility": {
+      "type": "string",
+      "enum": ["FULLY_REMOTE", "HYBRID", "ON_SITE", "UNSPECIFIED"],
+      "description": "Workplace arrangement classification."
+    },
+    "job_type": {
+      "type": "string",
+      "enum": ["FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP", "UNSPECIFIED"],
+      "description": "Employment type classification."
+    },
+    "seniority": {
+      "type": "string",
+      "enum": ["ENTRY", "MID", "SENIOR", "LEAD", "EXECUTIVE", "UNSPECIFIED"],
+      "description": "Experience level classification."
+    },
+    "salary": {
+      "type": "object",
+      "required": ["currency", "period"],
+      "properties": {
+        "currency": {
+          "type": "string",
+          "enum": ["BDT", "USD"],
+          "description": "ISO currency code."
+        },
+        "min": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum reported compensation amount."
+        },
+        "max": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum reported compensation amount."
+        },
+        "period": {
+          "type": "string",
+          "enum": ["MONTHLY", "YEARLY"],
+          "description": "Pay frequency interval."
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Indexed technical and domain skills associated with this job."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ACTIVE", "EXPIRED", "FLAGGED"],
+      "description": "Current lifecycle status of the listing."
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Original publication timestamp reported by source or first seen date."
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the canonical record was written."
+    }
+  },
+  "additionalProperties": false
+}

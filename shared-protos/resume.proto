@@ -2,19 +2,42 @@ syntax = "proto3";
 
 package resume;
 
-// The service definition
+// The resume parser service definition
 service ResumeParser {
-  // A standard remote procedure call
+  // Parses a candidate resume and extracts structured skills
   rpc ParseResume (ParseRequest) returns (ParseResponse);
 }
 
-// The request payload
+// The request payload supporting backward-compatible evolution from local file paths
+// to secure object-store document identifiers.
 message ParseRequest {
-  string file_path = 1; // In a real app, this might be an AWS S3 URL
+  // Deprecated: legacy filesystem path (retained for backward compatibility with v0.1 callers)
+  string file_path = 1 [deprecated = true];
+
+  // Authorized object storage key / document identifier (e.g., "resumes/user-123/doc-abc.pdf")
+  string document_id = 2;
+
+  // Optional small inline payload (<2MB) for direct in-memory parsing without shared storage
+  bytes content_bytes = 3;
+
+  // Authenticated candidate ID for authorization and ownership verification
+  string candidate_id = 4;
 }
 
-// The response payload
+// The response payload containing extraction outcomes and error details
 message ParseResponse {
+  // Indicates whether text extraction and skill matching succeeded
   bool success = 1;
-  repeated string skills = 2; // 'repeated' means it's an array
+
+  // Extracted technical skills identified by the NLP phrase matcher
+  repeated string skills = 2;
+
+  // Machine-readable error code if extraction failed
+  string error_code = 3;
+
+  // Human-readable diagnostic message (sanitized, no internal stack traces)
+  string error_message = 4;
+
+  // Total extraction and matching time in milliseconds
+  int32 processing_time_ms = 5;
 }

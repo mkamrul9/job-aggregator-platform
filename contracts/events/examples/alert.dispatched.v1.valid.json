@@ -1,0 +1,22 @@
+{
+  "event_id": "d0e5b4c7-7654-5a4e-dc45-ba09b7f8e005",
+  "event_type": "alert.dispatched.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-notification",
+  "timestamp": "2026-10-27T12:05:00Z",
+  "correlation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "causation_id": "a5e8c1b2-2937-4b5a-939e-e3146d9b4001",
+  "trace_context": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "payload": {
+    "alert_id": "e1f6c5d8-8765-6b5f-ed56-cb10c8a9f006",
+    "candidate_id": "usr_bd_0192e1b4",
+    "recipient_email": "kamrul.hasan@example.com",
+    "job_count": 1,
+    "matching_job_ids": ["0192e1b4-2e90-78a0-80c1-3f124d9c5000"],
+    "delivery_channel": "EMAIL",
+    "provider_status": "ACCEPTED",
+    "dispatched_at": "2026-10-27T12:05:00Z"
+  }
+}

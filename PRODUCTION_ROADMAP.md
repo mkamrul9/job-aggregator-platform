@@ -4,7 +4,7 @@ Prepared: 27 October 2026 (Asia/Dhaka). Source baseline: `ca67811` on `main`.
 
 Updated: 27 October 2026. Portfolio requirement: preserve the polyglot microservices architecture and make every service/app independently presentable for technology-specific job applications. The Angular dashboard remains Angular.
 
-**Status:** P02 reproducible platform changes implemented on `codex/production-p02-reproducible-platform` branched from `f414257`. Linux lockfile resolution established across all Node services; Elasticsearch 8.x client/server alignment verified; Next.js 16.3 and Angular 18 builds pass; service-user ESLint errors (59 errors, 3 warnings) and frontend-next ESLint errors (6 errors) resolved; initial Prisma baseline migration `20261027000000_init` established; `.dockerignore` files added across all services; unit tests implemented for ingestion and notification services; CI expanded to all seven services on Node 22. P03 is planned and has not started.
+**Status:** P03 contracts, scope, data ownership, standalone demonstrations, and capacity targets defined on `codex/production-p03-contracts-and-scope` branched from P02 reviewed commit `583602d`. Authoritative OpenAPI 3.1 specification (`contracts/openapi/seekers-api-v1.yaml`), versioned JSON event envelope and domain event schemas (`contracts/events/*.schema.json`), synthetic valid/invalid fixtures, backward-compatible protobuf evolution (`contracts/protobuf/resume/v1/resume.proto`), and cross-platform automated contract validation suite (`contracts/validate-contracts.js`) established and enforced in CI. Confirmed launch scope for South Asia / Bangladesh regional market, Android-first native mobile (Kotlin/Compose for P18), and $0 Free Tier operating model. P04 is planned and has not started.
 
 Repository publication policy: keep maintained service READMEs, this active roadmap, the service catalog, architecture reference, source, tests, and working configuration/deployment files. Keep personal research, historical daily/phase notes, agent prompts, and execution logs local and ignored. Only configuration examples consumed by an existing application belong in the published baseline. Do not blanket-ignore future maintained documentation or rewrite already-pushed history to remove ordinary documentation.
 
@@ -178,15 +178,37 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 **Outcome:** every following phase implements one coherent product and architecture.
 
-- Confirm launch geography, supported languages, source coverage, audience, currencies/time zones, business model, data retention, cloud region, budget, team ownership, and success metrics. Record defaults and unresolved decisions explicitly.
-- Define candidate and operator journeys, route map, entities, role permissions, and a complete capability checklist. Distinguish launch requirements from later expansion.
-- Record architecture decisions for preserved service/app boundaries, the Angular dashboard's demo/live adapters, the Python extractor's standalone presentation, catalog storage, search owner, Kafka, object storage, mail, and deployment model. Preserve each service's independent configuration, data ownership, and artifact; keep the monorepo unless a separate repository is explicitly requested.
-- Specify the standalone/demo and integrated contract for every project, including external-boundary adapters, fixture schemas, auth/permission isolation, sample data lifecycle, release compatibility, public versus local-only entry points, and minimum infrastructure. Record a concrete portfolio audience and demonstration journey for each service.
-- Define OpenAPI/protobuf/event schemas, stable IDs, error envelope, field validation, pagination, idempotency, timestamps, backwards compatibility, and schema/version evolution. Define canonical jobs and rebuildable projections.
-- Specify consent, ownership, service authentication, least privilege, retention/deletion propagation, quotas, and basic observability before new data paths are built.
-- Approve the workload model and initial SLOs in section 7, including catalog size, request mix, hot queries, ingestion peaks, parse workload, and cost ceilings.
+- **Confirmed Launch Scope & User Decisions:**
+  - *Target Market & Geography:* Regional focus on South Asia / Bangladesh and localized technology market (Dhaka/Chattogram tech hubs, regional remote, BDT/USD compensation, Asia/Dhaka time zone).
+  - *Core Business Model:* Job aggregator with outbound applications (tracking outbound candidate clicks and candidate-managed application status; not an in-platform recruiting marketplace or ATS).
+  - *Mobile Intent (P18):* Android-first native application with Kotlin and Jetpack Compose consuming the versioned platform API.
+  - *Infrastructure & Hosting Budget (P14):* $0 / Free Tier commitment. Full-stack execution via local Docker Compose; free cloud services (Supabase/Neon PostgreSQL, MongoDB Atlas M0, Firebase Auth free tier, GitHub Actions free minutes) for staging. No paid SaaS commitments.
+  - *Resume Parser Capability (P08):* Text-layer digital PDFs only (`pypdf`); explicitly reject scanned image PDFs and encrypted documents (`SCANNED_PDF_NO_TEXT`, `ENCRYPTED_PDF`) without OCR (Tesseract) overhead.
+- **Service & Data Ownership Frozen:**
+  - `service-user`: Owns candidate identity, profile, saved jobs, application tracking history, alerts, and consent/deletion requests (PostgreSQL via Prisma).
+  - `service-ingestion`: Authoritative owner of the canonical job catalog, sources, deduplication, and lifecycle state (MongoDB), plus rebuildable search projections (Elasticsearch 8.x). Owns the unified search route `/api/v1/jobs` and legacy gateway `/api/jobs`.
+  - `service-scraper`: Owns ephemeral crawling, source-specific HTML extraction, rate limits, and event publishing (`job.collected.v1`). Owns no persistent database.
+  - `service-resume`: Owns stateless NLP extraction (spaCy PhraseMatcher) and gRPC/REST parser execution. Persisted skills are saved by `service-user`.
+  - `service-notification`: Owns notification templates, preference matching, rate caps, unsubscribe state, and dispatch delivery receipts (`alert.dispatched.v1`).
+  - `frontend-next`: React/Next.js candidate portal. Consumes `/api/v1/*` via gateway. Direct Elasticsearch connection is deprecated.
+  - `frontend-admin`: Angular 18 operations console. Consumes `/api/v1/admin/*` and WebSocket telemetry. Retained as Angular.
+- **Machine-Readable Contracts Established:**
+  - *OpenAPI 3.1:* [`contracts/openapi/seekers-api-v1.yaml`](contracts/openapi/seekers-api-v1.yaml) defining all candidate, public, and admin endpoints with RFC 7807 error envelopes, cursor pagination, rate limits, and correlation tracking.
+  - *Event Schemas:* [`contracts/events/`](contracts/events/) containing `envelope.schema.json`, `job.collected.v1.schema.json`, `job.ingested.v1.schema.json`, `resume.parsed.v1.schema.json`, `candidate.registered.v1.schema.json`, and `alert.dispatched.v1.schema.json` with synthetic valid/invalid fixtures.
+  - *Protobuf Evolution:* [`contracts/protobuf/resume/v1/resume.proto`](contracts/protobuf/resume/v1/resume.proto) established as authoritative contract. Synchronized with `shared-protos/resume.proto` and `service-user/proto/resume.proto`. Backward-compatible evolution from `file_path` to `document_id` / `content_bytes`.
+  - *Contract Validation:* Automated test runner [`contracts/validate-contracts.js`](contracts/validate-contracts.js) verified and integrated into GitHub Actions CI pipeline (`validate-contracts` job).
+- **Search Transition Established:**
+  - Gateway routes `/api/v1/jobs` and legacy `/api/jobs` to `service-ingestion`.
+  - `frontend-next` transitions to consuming the unified gateway endpoint; direct internal Elasticsearch connection in Next.js is eliminated.
+- **Carried-Forward Unverified Runtime Gaps from P02:**
+  - Full-stack live container startup and inter-service HTTP/gRPC/Kafka throughput under sustained load.
+  - Live execution of Prisma migration `20261027000000_init` against running PostgreSQL container in CI.
+  - Dynamic runtime spaCy model download (`en_core_web_sm`) rather than pinned wheel checksum asset.
+  - Angular Karma tests (`test:ci`) require headless Chrome environment in CI.
+  - Live Elasticsearch 8.10.2 indexing and search query execution in CI.
+  - Operational checklist for upstream provider token rotation.
 
-**Completion gate:** approved scope and architecture decisions; traceable entity/API/event definitions; feature-to-phase mapping; a concrete standalone/demo/integration specification for every project; Angular retained; agreed capacity test profile and operating budget. High-impact unresolved decisions block the dependent phase.
+**Completion gate:** approved scope and architecture decisions; traceable entity/API/event definitions in `contracts/`; feature-to-phase mapping; concrete standalone/demo/integration specifications for all 7 projects; Angular retained; confirmed $0 free tier capacity profile. Automated contract validation passes in CI.
 
 **Checkpoint:** `docs(architecture): define production contracts scope and capacity targets` → verified push.
 
@@ -436,15 +458,31 @@ These are **planning targets to confirm in P03**, not current capabilities or be
 
 “Millions of users” must distinguish registered accounts, monthly/daily activity, open browser sessions, requests per second, and concurrent compute jobs. One million accounts does not imply one million simultaneous users. A same-sized user population can generate very different load.
 
-Provisional scale qualification profile:
+P03 freezes the tiered capacity profile across three distinct checkpoints:
 
-- **1 million registered candidates**, **100,000 daily active candidates**, and a **10 million-document catalog** with representative distributions and indexed fields.
-- **10,000 concurrent browsing sessions** and a **2,000 read requests/second peak**, with a stated think-time/request model and realistic hot-query skew. These are independent test inputs, not a conversion from account count.
-- **100 candidate writes/second**, a **500 job events/second ingestion burst**, and **20 resume submissions/second** for an explicitly specified burst duration and subsequent drain target. Sustained parse arrival must be set against worker cost; a burst requirement does not assume unlimited sustained NLP capacity.
-- Agreed notification fan-out, socket connection count if retained, dataset storage sizes, retention, source update cadence, and regional traffic split must be added before the scale test is approved.
-- Design for an agreed margin, initially **2× expected launch peak**, and demonstrate safe overload beyond the supported tier. Reject/defer excess work with bounded queues and clear user feedback.
+#### Tier 0 — Initial Regional Launch ($0 Free Tier Budget Ceiling)
+- **Target Audience & Market:** South Asia / Bangladesh technology ecosystem (Dhaka/Chattogram tech hubs, regional remote).
+- **Hosting & Infrastructure Spend:** **$0.00 / month ceiling** (local developer Docker Compose evaluation, GitHub Actions free runner minutes, free-tier managed services: Neon/Supabase PostgreSQL free tier, MongoDB Atlas M0 free tier, Firebase Auth free tier).
+- **Candidate Population:** 10,000 registered accounts; 1,000 Daily Active Candidates (DAU).
+- **Concurrent User Load:** 50–100 simultaneous active browser sessions.
+- **Catalog Scale:** 50,000–100,000 active job postings.
+- **Throughput Targets:**
+  - Public Search Reads: Peak 20–50 requests/sec.
+  - Ingestion Bursts: 10–25 jobs/sec.
+  - Resume Parse Submissions: 1–3 submissions/sec max arrival (asynchronous queue with p95 ≤ 30s).
+- **Storage Budgets:** PostgreSQL database < 500 MB; MongoDB catalog < 512 MB; Elasticsearch projection < 1 GB.
 
-Suggested growth checkpoints are a bounded beta, initial public launch, 100,000 accounts, and 1 million+ accounts. Define and test each checkpoint's active-user/request model before opening the next tier. If the requirement is millions simultaneously active, P03 must replace this profile and recalculate architecture, provider limits, cost, and qualification scope.
+#### Tier 1 — Regional Expansion (100k Accounts)
+- **Candidate Population:** 100,000 registered accounts; 10,000 DAU; 1,000 concurrent sessions.
+- **Catalog Scale:** 500,000 active job postings.
+- **Throughput Targets:** 200–500 read RPS; 50 job events/sec ingestion; 5 resume parses/sec.
+- **Hosting Budget:** Budgeted cost tier ($50–$100/mo VPS or managed cluster).
+
+#### Tier 2 — Scaled Production Milestone (1M Accounts)
+- **Candidate Population:** 1,000,000 registered candidates; 100,000 DAU; 10,000 concurrent browsing sessions.
+- **Catalog Scale:** 10,000,000 documents.
+- **Throughput Targets:** 2,000 read requests/second peak; 100 candidate writes/sec; 500 job events/sec ingestion burst; 20 resume submissions/sec.
+- **Hosting Budget:** Scaled cloud infrastructure tier ($500+/mo). Requires P15 qualification before public scale claims.
 
 ## 8. Tests that must exist before release
 

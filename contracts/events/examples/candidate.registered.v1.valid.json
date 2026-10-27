@@ -1,0 +1,15 @@
+{
+  "event_id": "c9d4a3b6-6543-4f3d-cb34-af98a6e7d004",
+  "event_type": "candidate.registered.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-user",
+  "timestamp": "2026-10-27T12:03:00Z",
+  "correlation_id": "9e1f889b-9647-42fe-b66d-029ae3a12ca9",
+  "causation_id": null,
+  "payload": {
+    "candidate_id": "usr_bd_0192e1b4",
+    "email": "kamrul.hasan@example.com",
+    "name": "Kamrul Hasan",
+    "registered_at": "2026-10-27T12:03:00Z"
+  }
+}

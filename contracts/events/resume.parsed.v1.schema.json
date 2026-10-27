@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.seekers.internal/contracts/events/resume.parsed.v1.schema.json",
+  "title": "ResumeParsedV1Payload",
+  "description": "Payload emitted when service-resume completes extraction of skills from a candidate resume.",
+  "type": "object",
+  "required": [
+    "parse_id",
+    "candidate_id",
+    "document_id",
+    "success",
+    "extracted_skills",
+    "skill_match_count",
+    "extracted_text_char_count",
+    "processing_time_ms",
+    "parsed_at"
+  ],
+  "properties": {
+    "parse_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this parsing job."
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the candidate account owning this resume."
+    },
+    "document_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier or storage key of the parsed document."
+    },
+    "success": {
+      "type": "boolean",
+      "description": "True if text extraction and skill matching completed without fatal error."
+    },
+    "extracted_skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of normalized skill keywords identified in the document."
+    },
+    "skill_match_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of skill matches found."
+    },
+    "extracted_text_char_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total character length of clean text extracted from the PDF."
+    },
+    "processing_time_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Duration of PDF extraction and NLP matching in milliseconds."
+    },
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "MALFORMED_PDF",
+        "ENCRYPTED_PDF",
+        "SCANNED_PDF_NO_TEXT",
+        "SIZE_EXCEEDED",
+        "TIMEOUT"
+      ],
+      "description": "Failure code if success is false."
+    },
+    "parsed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when parsing finished."
+    }
+  },
+  "additionalProperties": false
+}

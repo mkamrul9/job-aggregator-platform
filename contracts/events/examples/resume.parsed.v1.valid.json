@@ -1,0 +1,23 @@
+{
+  "event_id": "b7c2a194-4321-4f1b-a912-8d76e4c5b002",
+  "event_type": "resume.parsed.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-resume",
+  "timestamp": "2026-10-27T12:02:15Z",
+  "correlation_id": "8d0f778a-8536-41ef-a55c-f18ad2f01bf8",
+  "causation_id": "9e1f889b-9647-42fe-b66d-029ae3a12ca9",
+  "trace_context": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "payload": {
+    "parse_id": "c8d3b2a5-5432-4e2c-ba23-9e87f5d6c003",
+    "candidate_id": "usr_bd_0192e1b4",
+    "document_id": "resumes/usr_bd_0192e1b4/20261027-cv.pdf",
+    "success": true,
+    "extracted_skills": ["Python", "FastAPI", "Docker", "PostgreSQL", "React"],
+    "skill_match_count": 5,
+    "extracted_text_char_count": 4210,
+    "processing_time_ms": 182,
+    "parsed_at": "2026-10-27T12:02:15Z"
+  }
+}

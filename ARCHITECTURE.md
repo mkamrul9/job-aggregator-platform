@@ -1,6 +1,7 @@
 # Architecture Deep-Dive: Job Aggregator Platform
 
-> **Status:** This is a historical architecture explanation, not a production-readiness certificate or current version inventory. Use the source code, service READMEs, [service catalog](SERVICE_CATALOG.md), and [active roadmap](PRODUCTION_ROADMAP.md) for current interfaces, verified checks, and planned capabilities.
+> **Status:** Production Architecture Blueprint — Phase 3 (P03) Scope, Contracts, Data Ownership, and Capacity Targets Defined.  
+> Machine-readable specifications in [`contracts/`](contracts/) define authoritative API endpoints ([`contracts/openapi/seekers-api-v1.yaml`](contracts/openapi/seekers-api-v1.yaml)), domain events ([`contracts/events/`](contracts/events/)), and protobuf interfaces ([`contracts/protobuf/resume/v1/resume.proto`](contracts/protobuf/resume/v1/resume.proto)). Use the source code, service READMEs, [service catalog](SERVICE_CATALOG.md), and [active roadmap](PRODUCTION_ROADMAP.md) for verified baseline checks and capability status.
 
 > **Who this document is for:** Anyone who wants to understand how this platform works — developers contributing code, technical leads reviewing the design, or curious learners exploring a real-world microservices system. No prior knowledge of the codebase is assumed.
 
@@ -2300,86 +2301,52 @@ docker compose exec user-service npx prisma migrate deploy
 
 ---
 
-## 25. Planned Features and Extension Points
+## 25. Production Architecture Blueprint & Phase 3 Decisions
 
-This section documents planned features and how they would integrate with the existing architecture.
+This section establishes the authoritative architecture decisions and contract standards frozen in **Phase 3 (P03)** of the production roadmap.
 
-### Elasticsearch Indexer Worker (Phase 21)
+### 25.1 Machine-Readable Contracts Authority
 
-A new Node.js consumer that subscribes to `jobs.new` and indexes each job into Elasticsearch.
+All service boundaries in the platform interact strictly through versioned contracts maintained in [`contracts/`](contracts/):
 
-```
-Future service: service-es-indexer/
+1. **REST API Gateway Specification:** [`contracts/openapi/seekers-api-v1.yaml`](contracts/openapi/seekers-api-v1.yaml)
+   - Standard path prefix `/api/v1/*`.
+   - Single RFC 7807 error envelope format (`ErrorResponse`).
+   - Standardized correlation ID propagation (`X-Correlation-ID`) across all microservices.
+   - Keyset/cursor-based pagination for high-volume catalogs.
+2. **Kafka Asynchronous Event Schemas:** [`contracts/events/`](contracts/events/)
+   - Standard envelope: [`envelope.schema.json`](contracts/events/envelope.schema.json) wrapping every message.
+   - Domain event schemas: `job.collected.v1`, `job.ingested.v1`, `resume.parsed.v1`, `candidate.registered.v1`, and `alert.dispatched.v1`.
+   - Synthetic valid and invalid fixtures tested automatically in CI.
+3. **Protobuf Interface & Drift Control:** [`contracts/protobuf/resume/v1/resume.proto`](contracts/protobuf/resume/v1/resume.proto)
+   - Authoritative source for ResumeParser gRPC.
+   - Backward-compatible evolution: keeps fields 1 and 2 immutable, adds `document_id = 2` and `content_bytes = 3` for object storage migration.
+   - Automated drift detection script [`contracts/validate-contracts.js`](contracts/validate-contracts.js) runs in GitHub Actions CI.
 
-Kafka consumer group: elasticsearch-indexer-group
-Subscribes to: jobs.new
+### 25.2 Unified Search Architecture & Gateway Transition
 
-For each message:
-  1. Parse job JSON
-  2. POST to Elasticsearch index "jobs"
-     PUT /jobs/_doc/<url-hash>
-     { title, company, description, scraped_at }
-  3. Commit Kafka offset
-```
+- **Problem:** Previously, `frontend-next` queried Elasticsearch directly via an internal route `/api/jobs`, while Nginx routed `/api/jobs/` to `service-ingestion` (MongoDB).
+- **Architecture Resolution:**
+  - `service-ingestion` is the sole authoritative owner of search and catalog projection logic.
+  - The API Gateway routes both `/api/v1/jobs` and legacy `/api/jobs` exclusively to `service-ingestion:5000`.
+  - `frontend-next` transitions from direct Elasticsearch connections to consuming the gateway `/api/v1/jobs` endpoint.
+  - Elasticsearch remains a read-only projection rebuilt from the canonical MongoDB database upon schema reindex.
 
-The `GET /api/jobs?q=` endpoint would then query Elasticsearch instead of MongoDB, enabling:
-- Fuzzy matching (typo-tolerant search)
-- Relevance scoring
-- Highlight matching terms in results
-- Field boosting (title matches score higher than description matches)
+### 25.3 Resume Extraction Scope & Storage Evolution
 
-### Job-to-Profile Matching Algorithm
+- **Document Capability Scope:** Text-layer digital PDFs only (`pypdf>=5.1.0`). Scanned image PDFs and encrypted documents are rejected with structured error codes (`SCANNED_PDF_NO_TEXT`, `ENCRYPTED_PDF`); OCR overhead (e.g. Tesseract) is explicitly excluded from launch.
+- **Storage Evolution:** Decouples the legacy local filesystem `/uploads` path by migrating to authenticated document identifiers (`document_id`) backed by private object storage (S3 / MinIO).
 
-A background worker that runs when a user's profile is updated (new skills extracted from resume). It queries MongoDB for jobs whose description contains any of the user's skills, and returns a ranked list.
+### 25.4 Target Market, Mobile Direction, and Free Tier Capacity Model
 
-```
-Trigger: User uploads resume → skills extracted → profile updated
-         │
-         ▼
-MatchingWorker runs:
-  1. Fetch user's extractedSkills[] from PostgreSQL
-  2. Query MongoDB: { raw_description: { $regex: skill, $options: 'i' } }
-     for each skill in extractedSkills
-  3. Score each job: count how many user skills appear in the description
-  4. Sort by score (highest first)
-  5. Store top 20 matches in user's profile
-  6. Publish "match.found" event to Kafka → triggers Notification Service
-```
-
-### Angular Admin Dashboard (Phase 22)
-
-A separate frontend for internal admins. Would be served at `http://localhost/admin` via a new Nginx location block.
-
-**Features planned:**
-- Total jobs scraped (chart over time)
-- Total users registered
-- Resume parsing success rate
-- Kafka consumer group lag monitoring
-- Manual trigger to re-run the scraper
-
-### Production Deployment (Phase 23)
-
-The Docker Compose setup maps 1:1 to cloud deployment options:
-
-```
-Option A: AWS ECS (Elastic Container Service)
-  Each docker-compose service → one ECS Task Definition
-  Shared network → ECS Service Discovery
-  Volumes → EFS (Elastic File System) or RDS/MongoDB Atlas
-  Port 80 → Application Load Balancer
-
-Option B: Railway
-  Each service → one Railway service
-  docker-compose.yml → railway.toml
-  Managed PostgreSQL and MongoDB add-ons available
-
-Option C: Render
-  Each service → one Render web service or background worker
-  Managed PostgreSQL, Redis available
-  Free tier available for testing
-```
+- **Target Market & Launch Geography:** Regional focus on South Asia / Bangladesh technology ecosystem (Dhaka/Chattogram tech hubs, regional remote, BDT/USD compensation, Asia/Dhaka time zone).
+- **Native Mobile Platform (P18):** Android-first native application built with Kotlin and Jetpack Compose, consuming the versioned platform API.
+- **Operating Tier 0 ($0 Free Tier Budget Ceiling):**
+  - **Hosting spend ceiling:** $0.00 / month. Supported entirely via local Docker Compose for portfolio evaluations, plus free-tier managed services (Neon/Supabase PostgreSQL, MongoDB Atlas M0, Firebase Auth free tier, GitHub Actions free minutes).
+  - **Target capacity:** 10,000 registered accounts; 1,000 DAU; 50–100 concurrent active sessions; 20–50 read requests/sec; 50,000–100,000 catalog documents.
+  - **Scaling checkpoints:** Tier 1 (100k accounts) and Tier 2 (1M accounts) defined in the [roadmap](PRODUCTION_ROADMAP.md#capacity-model) for future qualification.
 
 ---
 
-*This document is the definitive guide to how the Job Aggregator Platform works. For contributing guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md). For a high-level project overview, see [README.md](./README.md).*
+*This document is the architecture reference for the Seekers Platform. For contributing rules, see [CONTRIBUTING.md](./CONTRIBUTING.md). For current capability status and verified commands, see [SERVICE_CATALOG.md](./SERVICE_CATALOG.md) and [PRODUCTION_ROADMAP.md](./PRODUCTION_ROADMAP.md).*
 

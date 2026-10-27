@@ -10,6 +10,23 @@ on:
 
 jobs:
   # -------------------------------------------------------------
+  # JOB 0: Validate API, Event, and Protobuf Contracts
+  # -------------------------------------------------------------
+  validate-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Contract Validation Suite
+        run: node contracts/validate-contracts.js
+
+  # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------
   test-scraper:
@@ -182,6 +199,7 @@ jobs:
   # -------------------------------------------------------------
   build-docker-images:
     needs:
+      - validate-contracts
       - test-scraper
       - test-ai-parser
       - test-user-service

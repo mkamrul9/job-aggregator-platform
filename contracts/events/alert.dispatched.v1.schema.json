@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.seekers.internal/contracts/events/alert.dispatched.v1.schema.json",
+  "title": "AlertDispatchedV1Payload",
+  "description": "Payload emitted by service-notification when an alert evaluation results in an attempted notification dispatch.",
+  "type": "object",
+  "required": [
+    "alert_id",
+    "candidate_id",
+    "recipient_email",
+    "job_count",
+    "matching_job_ids",
+    "delivery_channel",
+    "provider_status",
+    "dispatched_at"
+  ],
+  "properties": {
+    "alert_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this notification dispatch event."
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target candidate recipient identifier."
+    },
+    "recipient_email": {
+      "type": "string",
+      "format": "email",
+      "description": "Destination email address for email delivery."
+    },
+    "job_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of new matching job listings included in this notification alert."
+    },
+    "matching_job_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Array of job IDs matching candidate criteria."
+    },
+    "delivery_channel": {
+      "type": "string",
+      "enum": ["EMAIL", "IN_APP"],
+      "description": "Notification transmission mechanism."
+    },
+    "provider_status": {
+      "type": "string",
+      "enum": ["ACCEPTED", "REJECTED", "SKIPPED_UNSUBSCRIBED"],
+      "description": "Result of provider dispatch attempt."
+    },
+    "dispatched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of dispatch."
+    }
+  },
+  "additionalProperties": false
+}

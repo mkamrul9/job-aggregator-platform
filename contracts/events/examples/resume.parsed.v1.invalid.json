@@ -1,0 +1,20 @@
+{
+  "event_id": "b7c2a194-4321-4f1b-a912-8d76e4c5b002",
+  "event_type": "resume.parsed.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-resume",
+  "timestamp": "2026-10-27T12:02:15Z",
+  "correlation_id": "8d0f778a-8536-41ef-a55c-f18gd2f01bf8",
+  "payload": {
+    "parse_id": "not-a-uuid",
+    "candidate_id": "",
+    "document_id": "",
+    "success": "not-a-boolean",
+    "extracted_skills": "Python",
+    "skill_match_count": -1,
+    "extracted_text_char_count": -50,
+    "processing_time_ms": -10,
+    "error_code": "UNRECOGNIZED_CODE",
+    "parsed_at": "invalid-timestamp"
+  }
+}

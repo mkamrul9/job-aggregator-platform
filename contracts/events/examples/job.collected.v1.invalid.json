@@ -1,0 +1,19 @@
+{
+  "event_id": "not-a-valid-uuid",
+  "event_type": "job.collected.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-scraper",
+  "timestamp": "invalid-timestamp",
+  "correlation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "payload": {
+    "source": "x",
+    "source_job_id": "",
+    "url": "not-a-uri",
+    "source_url_hash": "bad-hash",
+    "title": "A",
+    "company": "",
+    "location": "",
+    "description": "short",
+    "collected_at": "not-a-date"
+  }
+}

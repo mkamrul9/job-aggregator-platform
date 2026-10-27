@@ -1,0 +1,23 @@
+{
+  "event_id": "0192e1b4-2e90-78a0-80c1-3f124d9c5000",
+  "event_type": "job.ingested.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-ingestion",
+  "timestamp": "2026-10-27T12:01:00Z",
+  "correlation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "payload": {
+    "job_id": "not-a-uuid",
+    "canonical_url": "bad-url",
+    "source": "bdjobs",
+    "title": "J",
+    "company": "",
+    "location": "",
+    "remote_eligibility": "INVALID_REMOTE",
+    "job_type": "INVALID_TYPE",
+    "seniority": "INVALID_LEVEL",
+    "skills": "not-an-array",
+    "status": "UNKNOWN_STATUS",
+    "published_at": "invalid-date",
+    "ingested_at": "invalid-date"
+  }
+}

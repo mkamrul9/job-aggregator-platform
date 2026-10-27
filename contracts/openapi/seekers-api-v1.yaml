@@ -1,0 +1,1156 @@
+openapi: 3.1.0
+info:
+  title: Seekers Platform Public & Internal API
+  version: 1.0.0
+  description: |
+    Authoritative OpenAPI specification for the Seekers Job Aggregator Platform.
+    Enforces standardized versioned routes (/api/v1/*), cursor-based pagination,
+    RFC 7807 error envelopes, correlation tracking, and role-based authorization.
+servers:
+  - url: http://localhost/api/v1
+    description: Local Docker Gateway / Nginx Proxy
+  - url: https://api.seekers.internal/api/v1
+    description: Production Internal Gateway
+
+paths:
+  /health:
+    get:
+      summary: Platform Health Check
+      description: Returns service health across API gateway and core dependencies.
+      operationId: getHealth
+      responses:
+        '200':
+          description: All system components healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Degraded dependency or partial outage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /jobs:
+    get:
+      summary: Search and List Canonical Jobs
+      description: |
+        Primary job discovery endpoint. Searches across canonical indexed listings
+        with filtering, facet support, and cursor-based pagination.
+      operationId: searchJobs
+      parameters:
+        - name: q
+          in: query
+          description: Free-text search across job title, company, and description.
+          schema:
+            type: string
+            maxLength: 100
+        - name: location
+          in: query
+          description: Location filter (e.g. 'Dhaka', 'Chattogram', 'Remote').
+          schema:
+            type: string
+            maxLength: 100
+        - name: remote_eligibility
+          in: query
+          schema:
+            $ref: '#/components/schemas/RemoteEligibility'
+        - name: job_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobType'
+        - name: seniority
+          in: query
+          schema:
+            $ref: '#/components/schemas/Seniority'
+        - name: min_salary
+          in: query
+          schema:
+            type: number
+            minimum: 0
+        - name: currency
+          in: query
+          schema:
+            type: string
+            enum: [BDT, USD]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [relevance, date_desc, salary_desc]
+            default: date_desc
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor for keyset traversal.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of matching job listings.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /jobs/{id}:
+    get:
+      summary: Get Job Listing Details
+      description: Retrieves complete structured metadata for a single canonical job.
+      operationId: getJobById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Full canonical job details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /jobs/{id}/outbound:
+    get:
+      summary: Track Outbound Application Click
+      description: Records an outbound application intent event and returns the source URL redirect.
+      operationId: trackOutboundClick
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '302':
+          description: Redirect to authentic external job source URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '200':
+          description: JSON response containing destination URL if not directly redirected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [destination_url]
+                properties:
+                  destination_url:
+                    type: string
+                    format: uri
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/profile:
+    get:
+      summary: Get Current Candidate Profile
+      operationId: getProfile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      summary: Update Candidate Profile
+      operationId: updateProfile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/resume/upload:
+    post:
+      summary: Upload Digital PDF Resume
+      description: |
+        Uploads a text-layer digital PDF resume (max 10MB). Initiates asynchronous
+        NLP skill extraction and attaches skills to the authenticated profile upon review.
+      operationId: uploadResume
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Text-layer PDF document. Max size 10MB.
+      responses:
+        '202':
+          description: Resume accepted for asynchronous processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: Payload Too Large - resume exceeds 10MB limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/resume/status/{parseId}:
+    get:
+      summary: Get Resume Extraction Status
+      operationId: getResumeParseStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: parseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current parse state and extracted skills if completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeParseStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/saved-jobs:
+    get:
+      summary: List Saved Jobs
+      operationId: listSavedJobs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedJobListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/saved-jobs/{jobId}:
+    post:
+      summary: Save a Job Listing
+      operationId: saveJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: Job saved.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Remove a Saved Job Listing
+      operationId: unsaveJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Job unsaved.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/applications:
+    get:
+      summary: List Candidate-Managed Tracked Applications
+      operationId: listApplications
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrackedApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create Tracked Application Record
+      operationId: createApplication
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApplicationRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackedApplication'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/applications/{id}:
+    patch:
+      summary: Update Application Status or Notes
+      operationId: updateApplication
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateApplicationRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackedApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete Tracked Application
+      operationId: deleteApplication
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Application removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/alerts:
+    get:
+      summary: List Candidate Job Alert Subscriptions
+      operationId: listAlerts
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlertSubscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create Saved Search Alert
+      operationId: createAlert
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAlertRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/alerts/{id}:
+    delete:
+      summary: Delete Alert Subscription
+      operationId: deleteAlert
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Alert subscription deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/alerts/unsubscribe:
+    post:
+      summary: One-Click Unsubscribe via Signed Token
+      description: Allows public one-click unsubscribe from emails without signing in.
+      operationId: unsubscribeAlert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Cryptographically signed unsubscribe token from alert email.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /users/account/export:
+    post:
+      summary: Request Candidate Data Export (Privacy / GDPR)
+      operationId: exportUserData
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Complete archive of personal data.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, exported_at, profile, applications, saved_jobs, alerts]
+                properties:
+                  user_id:
+                    type: string
+                  exported_at:
+                    type: string
+                    format: date-time
+                  profile:
+                    $ref: '#/components/schemas/UserProfile'
+                  applications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrackedApplication'
+                  saved_jobs:
+                    type: array
+                    items:
+                      type: string
+                  alerts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AlertSubscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/account/delete:
+    post:
+      summary: Request Candidate Account Erasure and Deletion
+      operationId: deleteUserAccount
+      security:
+        - BearerAuth: []
+      headers:
+        Idempotency-Key:
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: string
+                  enum: ["DELETE_MY_ACCOUNT"]
+      responses:
+        '200':
+          description: Account erasure initiated across all services.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /reports:
+    post:
+      summary: Submit Feedback or Broken Listing Report
+      operationId: submitReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /admin/sources:
+    get:
+      summary: List Scraper Connectors Status
+      operationId: listSources
+      security:
+        - AdminBearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SourceStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/sources/{id}:
+    patch:
+      summary: Enable or Pause a Scraper Connector
+      operationId: updateSourceStatus
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/queues:
+    get:
+      summary: Inspect Queue Lag and Pipeline Health
+      operationId: getQueueTelemetry
+      security:
+        - AdminBearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueueTelemetry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/audit-logs:
+    get:
+      summary: Query Operator Privileged Action Audit Trail
+      operationId: listAuditLogs
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLogEntry'
+                  next_cursor:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Firebase ID Token for authenticated candidate endpoints.
+    AdminBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Firebase ID Token containing verified operator/admin custom claims.
+
+  headers:
+    CorrelationId:
+      schema:
+        type: string
+        format: uuid
+      description: End-to-end request tracing identifier.
+
+  responses:
+    BadRequest:
+      description: Bad Request - Validation error or malformed payload.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized - Missing or expired authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden - Insufficient role permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not Found - Requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Too Many Requests - Exceeded client rate limit.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status, timestamp, version, services]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+        services:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [up, down, degraded]
+              latency_ms:
+                type: integer
+
+    RemoteEligibility:
+      type: string
+      enum: [FULLY_REMOTE, HYBRID, ON_SITE, UNSPECIFIED]
+
+    JobType:
+      type: string
+      enum: [FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP, UNSPECIFIED]
+
+    Seniority:
+      type: string
+      enum: [ENTRY, MID, SENIOR, LEAD, EXECUTIVE, UNSPECIFIED]
+
+    Salary:
+      type: object
+      required: [currency, period]
+      properties:
+        currency:
+          type: string
+          enum: [BDT, USD]
+        min:
+          type: number
+        max:
+          type: number
+        period:
+          type: string
+          enum: [MONTHLY, YEARLY]
+
+    JobSummary:
+      type: object
+      required: [id, title, company, location, remote_eligibility, job_type, skills, published_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        company:
+          type: string
+        location:
+          type: string
+        remote_eligibility:
+          $ref: '#/components/schemas/RemoteEligibility'
+        job_type:
+          $ref: '#/components/schemas/JobType'
+        seniority:
+          $ref: '#/components/schemas/Seniority'
+        salary:
+          $ref: '#/components/schemas/Salary'
+        skills:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+
+    JobDetail:
+      allOf:
+        - $ref: '#/components/schemas/JobSummary'
+        - type: object
+          required: [description, canonical_url, status]
+          properties:
+            description:
+              type: string
+            canonical_url:
+              type: string
+              format: uri
+            status:
+              type: string
+              enum: [ACTIVE, EXPIRED, FLAGGED]
+            ingested_at:
+              type: string
+              format: date-time
+
+    JobListResponse:
+      type: object
+      required: [items, limit, total_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobSummary'
+        limit:
+          type: integer
+        next_cursor:
+          type: string
+        prev_cursor:
+          type: string
+        total_count:
+          type: integer
+
+    UserProfile:
+      type: object
+      required: [id, email, name, skills, preferences]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        title:
+          type: string
+        skills:
+          type: array
+          items:
+            type: string
+        preferences:
+          type: object
+          properties:
+            locations:
+              type: array
+              items:
+                type: string
+            remote_preference:
+              $ref: '#/components/schemas/RemoteEligibility'
+            min_salary:
+              type: number
+            currency:
+              type: string
+              enum: [BDT, USD]
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        skills:
+          type: array
+          items:
+            type: string
+        preferences:
+          type: object
+
+    ResumeUploadResponse:
+      type: object
+      required: [parse_id, status, message]
+      properties:
+        parse_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED, PROCESSING]
+        message:
+          type: string
+
+    ResumeParseStatus:
+      type: object
+      required: [parse_id, status]
+      properties:
+        parse_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED, PROCESSING, COMPLETED, FAILED]
+        extracted_skills:
+          type: array
+          items:
+            type: string
+        error_code:
+          type: string
+        processing_time_ms:
+          type: integer
+
+    SavedJobListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobSummary'
+        next_cursor:
+          type: string
+
+    TrackedApplication:
+      type: object
+      required: [id, job_id, status, applied_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        job_summary:
+          $ref: '#/components/schemas/JobSummary'
+        status:
+          type: string
+          enum: [APPLIED, INTERVIEWING, OFFERED, REJECTED, WITHDRAWN]
+        notes:
+          type: string
+        applied_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateApplicationRequest:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [APPLIED, INTERVIEWING, OFFERED, REJECTED, WITHDRAWN]
+        notes:
+          type: string
+
+    UpdateApplicationRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [APPLIED, INTERVIEWING, OFFERED, REJECTED, WITHDRAWN]
+        notes:
+          type: string
+
+    AlertSubscription:
+      type: object
+      required: [id, query, frequency, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        query:
+          type: string
+        location:
+          type: string
+        frequency:
+          type: string
+          enum: [IMMEDIATE, DAILY, WEEKLY]
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    CreateAlertRequest:
+      type: object
+      required: [query, frequency]
+      properties:
+        query:
+          type: string
+        location:
+          type: string
+        frequency:
+          type: string
+          enum: [IMMEDIATE, DAILY, WEEKLY]
+
+    CreateReportRequest:
+      type: object
+      required: [report_type, description]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        report_type:
+          type: string
+          enum: [EXPIRED_LISTING, BROKEN_LINK, INCORRECT_DATA, SPAM, OTHER]
+        description:
+          type: string
+        contact_email:
+          type: string
+          format: email
+
+    ReportResponse:
+      type: object
+      required: [report_id, status, message]
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [RECEIVED, IN_REVIEW]
+        message:
+          type: string
+
+    SourceStatus:
+      type: object
+      required: [id, name, enabled, health_status, last_crawled_at, total_jobs_collected]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        health_status:
+          type: string
+          enum: [HEALTHY, DEGRADED, FAILING]
+        last_crawled_at:
+          type: string
+          format: date-time
+        total_jobs_collected:
+          type: integer
+
+    QueueTelemetry:
+      type: object
+      required: [topic, partition, current_offset, high_watermark, lag]
+      properties:
+        topic:
+          type: string
+        partition:
+          type: integer
+        current_offset:
+          type: integer
+        high_watermark:
+          type: integer
+        lag:
+          type: integer
+
+    AuditLogEntry:
+      type: object
+      required: [id, actor_id, action, target_resource, timestamp, outcome]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+        action:
+          type: string
+        target_resource:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum: [SUCCESS, FAILURE]
+        details:
+          type: object
+
+    ErrorResponse:
+      type: object
+      required: [code, message, correlation_id]
+      properties:
+        code:
+          type: string
+          description: Machine-readable uppercase error identifier.
+        message:
+          type: string
+          description: Human-readable error explanation.
+        detail:
+          type: string
+        correlation_id:
+          type: string
+          format: uuid
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, issue]
+            properties:
+              field:
+                type: string
+              issue:
+                type: string

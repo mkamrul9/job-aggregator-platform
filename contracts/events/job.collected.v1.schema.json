@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.seekers.internal/contracts/events/job.collected.v1.schema.json",
+  "title": "JobCollectedV1Payload",
+  "description": "Payload emitted by service-scraper when a raw job listing is collected from an approved source.",
+  "type": "object",
+  "required": [
+    "source",
+    "source_job_id",
+    "url",
+    "source_url_hash",
+    "title",
+    "company",
+    "location",
+    "description",
+    "collected_at"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "Identifier of the source connector (e.g., bdjobs, linkedin-bd, prothomalo-jobs)."
+    },
+    "source_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Unique listing identifier assigned by the originating source platform."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Normalized canonical source URL to the original job posting."
+    },
+    "source_url_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the normalized canonical URL for deterministic deduplication."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 200,
+      "description": "Job title as published by the employer."
+    },
+    "company": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 150,
+      "description": "Hiring organization name."
+    },
+    "location": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 150,
+      "description": "Reported job location (e.g., 'Dhaka, Bangladesh', 'Chattogram', 'Remote')."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Clean extracted plain-text description of job responsibilities and qualifications."
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp recording when the crawler scraped the listing."
+    },
+    "raw_html": {
+      "type": "string",
+      "description": "Optional raw HTML snippet retained for debugging parser selector drift."
+    }
+  },
+  "additionalProperties": false
+}

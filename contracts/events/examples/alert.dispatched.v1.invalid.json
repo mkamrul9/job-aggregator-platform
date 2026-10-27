@@ -1,0 +1,18 @@
+{
+  "event_id": "d0e5b4c7-7654-5a4e-dc45-ba09b7f8e005",
+  "event_type": "alert.dispatched.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-notification",
+  "timestamp": "2026-10-27T12:05:00Z",
+  "correlation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "payload": {
+    "alert_id": "not-a-uuid",
+    "candidate_id": "",
+    "recipient_email": "invalid-email",
+    "job_count": 0,
+    "matching_job_ids": [],
+    "delivery_channel": "CARRIER_PIGEON",
+    "provider_status": "MAYBE",
+    "dispatched_at": "invalid-date"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.seekers.internal/contracts/events/envelope.schema.json",
+  "title": "SeekersEventEnvelope",
+  "description": "Standard event envelope for all asynchronous domain events published to the event bus.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "producer",
+    "timestamp",
+    "correlation_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this specific event occurrence (UUIDv4 or UUIDv7)."
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9]+)+\\.v[1-9][0-9]*$",
+      "description": "Domain-qualified event type identifier with explicit version suffix (e.g., job.collected.v1, job.ingested.v1)."
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the event schema."
+    },
+    "producer": {
+      "type": "string",
+      "enum": [
+        "service-scraper",
+        "service-ingestion",
+        "service-user",
+        "service-resume",
+        "service-notification"
+      ],
+      "description": "Identifier of the service emitting the event."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp recording when the event was produced."
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "End-to-end request correlation identifier originating at API gateway or scheduler."
+    },
+    "causation_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Identifier of the preceding event or command that caused this event to occur."
+    },
+    "trace_context": {
+      "type": "object",
+      "properties": {
+        "traceparent": {
+          "type": "string",
+          "description": "W3C Trace Context traceparent header value."
+        },
+        "tracestate": {
+          "type": "string",
+          "description": "W3C Trace Context tracestate header value."
+        }
+      },
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific domain payload conforming to the event_type schema."
+    }
+  },
+  "additionalProperties": false
+}

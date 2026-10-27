@@ -1,0 +1,25 @@
+{
+  "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "event_type": "job.collected.v1",
+  "schema_version": "1.0.0",
+  "producer": "service-scraper",
+  "timestamp": "2026-10-27T12:00:00Z",
+  "correlation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "causation_id": null,
+  "trace_context": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "tracestate": "congo=t61rcWkgMzE"
+  },
+  "payload": {
+    "source": "bdjobs",
+    "source_job_id": "1198324",
+    "url": "https://jobs.bdjobs.com/jobdetails.asp?id=1198324",
+    "source_url_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "title": "Senior Backend Engineer (Go / Node)",
+    "company": "Kona Software Lab",
+    "location": "Dhaka, Bangladesh",
+    "description": "Looking for a seasoned backend engineer with 4+ years of Go and distributed systems experience. Knowledge of Kafka and MongoDB is preferred.",
+    "collected_at": "2026-10-27T12:00:00Z",
+    "raw_html": "<div class=\"job-title\">Senior Backend Engineer</div>"
+  }
+}
