@@ -1,1 +1,86 @@
-<p>header works!</p>
+<header class="w-full flex items-center justify-between px-4 lg:px-6 py-3 border-b border-[var(--seekers-border-medium)] bg-[var(--seekers-bg-elevated)]">
+  
+  <!-- Left Brand & Context -->
+  <div class="flex items-center space-x-3">
+    <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--seekers-amber-500)] text-[#090d16] font-bold text-base font-['Sora']">
+      S
+    </div>
+    <div>
+      <div class="flex items-center space-x-2">
+        <span class="font-['Sora'] font-bold text-base tracking-tight text-[var(--seekers-text-primary)]">
+          seekers <span class="text-[var(--seekers-amber-500)]">console</span>
+        </span>
+        <span class="px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]">
+          Standalone Demo Mode
+        </span>
+      </div>
+      <div class="text-[11px] text-[var(--seekers-text-muted)] font-mono">
+        Angular 18 Operations Shell • Kafka/Ingestion Simulator
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Simulator Controls & Status -->
+  <div class="flex items-center space-x-2 lg:space-x-3 flex-wrap">
+    
+    <!-- Connection State Pill -->
+    <div [ngSwitch]="connectionState$ | async" class="flex items-center space-x-1.5 px-2.5 py-1 rounded text-xs font-mono border"
+         [ngClass]="{
+           'bg-[rgba(16,185,129,0.1)] border-[rgba(16,185,129,0.3)] text-[var(--seekers-success)]': (connectionState$ | async) === 'connected',
+           'bg-[rgba(245,158,11,0.1)] border-[rgba(245,158,11,0.3)] text-[var(--seekers-amber-400)]': (connectionState$ | async) === 'paused' || (connectionState$ | async) === 'reconnecting',
+           'bg-[rgba(239,68,68,0.1)] border-[rgba(239,68,68,0.3)] text-[var(--seekers-danger)]': (connectionState$ | async) === 'disconnected'
+         }">
+      <span class="inline-block w-2 h-2 rounded-full"
+            [ngClass]="{
+              'bg-[var(--seekers-success)] animate-pulse': (connectionState$ | async) === 'connected',
+              'bg-[var(--seekers-amber-400)]': (connectionState$ | async) === 'paused',
+              'bg-[var(--seekers-amber-500)] animate-ping': (connectionState$ | async) === 'reconnecting',
+              'bg-[var(--seekers-danger)]': (connectionState$ | async) === 'disconnected'
+            }"></span>
+      <span class="font-semibold uppercase tracking-wider text-[11px]">
+        {{ (connectionState$ | async) === 'connected' ? 'STREAM ACTIVE' : (connectionState$ | async) }}
+      </span>
+    </div>
+
+    <!-- Burst Trigger Button -->
+    <button (click)="onTriggerBurst()"
+            type="button"
+            class="px-2.5 py-1 text-xs font-semibold rounded bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors"
+            title="Inject 5 simulated newly crawled jobs into the pipeline">
+      ⚡ Crawl Burst (+5)
+    </button>
+
+    <!-- Pause / Resume Toggle -->
+    <button (click)="onTogglePause()"
+            type="button"
+            class="px-2.5 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-secondary)] border border-[var(--seekers-border-medium)] hover:text-white transition-colors">
+      {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
+    </button>
+
+    <!-- Simulate Disconnect -->
+    <button (click)="onSimulateDisconnect()"
+            type="button"
+            class="hidden md:inline-flex px-2 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)] hover:text-[var(--seekers-danger)] transition-colors"
+            title="Simulate network disconnect to test reconnection banner">
+      Test Offline
+    </button>
+
+    <!-- Reset Demo -->
+    <button (click)="onResetDemo()"
+            type="button"
+            class="px-2 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)] hover:text-white transition-colors"
+            title="Reset telemetry and metrics to initial baseline">
+      🔄
+    </button>
+
+    <!-- Operator Avatar -->
+    <div class="hidden sm:flex items-center space-x-1.5 pl-2 border-l border-[var(--seekers-border-subtle)]">
+      <div class="w-6 h-6 rounded-full bg-[var(--seekers-bg-hover)] text-xs flex items-center justify-center font-bold text-[var(--seekers-amber-400)]">
+        FA
+      </div>
+      <span class="text-xs font-medium text-[var(--seekers-text-secondary)]">Farhan A.</span>
+    </div>
+
+  </div>
+
+</header>

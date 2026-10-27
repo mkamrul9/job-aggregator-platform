@@ -1,1 +1,78 @@
-<p>sidebar works!</p>
+<aside class="w-full md:w-60 flex-shrink-0 bg-[var(--seekers-bg-elevated)] border-r border-[var(--seekers-border-medium)] p-4 flex flex-col justify-between">
+  
+  <div>
+    <!-- Section Navigation -->
+    <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider mb-3 px-2">
+      Operations Views
+    </div>
+
+    <nav class="space-y-1">
+      <button (click)="selectSection('overview')"
+              type="button"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
+              [ngClass]="{
+                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'overview',
+                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'overview'
+              }">
+        <span class="flex items-center space-x-2">
+          <span>📊</span>
+          <span>Pipeline Health</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">LIVE</span>
+      </button>
+
+      <button (click)="selectSection('sources')"
+              type="button"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
+              [ngClass]="{
+                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'sources',
+                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'sources'
+              }">
+        <span class="flex items-center space-x-2">
+          <span>🌐</span>
+          <span>Crawler Sources</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">5</span>
+      </button>
+
+      <button (click)="selectSection('feed')"
+              type="button"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
+              [ngClass]="{
+                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'feed',
+                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'feed'
+              }">
+        <span class="flex items-center space-x-2">
+          <span>📜</span>
+          <span>Ingestion Audit Log</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">50</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- System Provenance Card -->
+  <div class="mt-8 p-3 rounded-md bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-[11px] text-[var(--seekers-text-muted)] space-y-1.5">
+    <div class="font-semibold text-[var(--seekers-text-secondary)] text-xs flex items-center justify-between">
+      <span>System Envelope</span>
+      <span class="text-[var(--seekers-success)]">OK</span>
+    </div>
+    <div class="flex justify-between">
+      <span>Framework:</span>
+      <span class="font-mono text-[var(--seekers-text-secondary)]">Angular 18 (SCSS)</span>
+    </div>
+    <div class="flex justify-between">
+      <span>Market Scope:</span>
+      <span class="font-mono text-[var(--seekers-text-secondary)]">BD / South Asia</span>
+    </div>
+    <div class="flex justify-between">
+      <span>Host Profile:</span>
+      <span class="font-mono text-[var(--seekers-amber-400)]">$0 Free Tier</span>
+    </div>
+    <div class="flex justify-between">
+      <span>Telemetry:</span>
+      <span class="font-mono text-[var(--seekers-text-secondary)]">Simulated Stream</span>
+    </div>
+  </div>
+
+</aside>

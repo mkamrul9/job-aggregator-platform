@@ -214,14 +214,36 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 ### P04 — Design the complete responsive product and its component system
 
-**Outcome:** a distinct, usable Seekers interface exists as a reviewed design specification and prototype.
+**Outcome:** a distinct, usable Seekers interface exists as a reviewed design specification and working interactive prototypes across Next.js, Angular, and Python.
 
-- Build on Seekers' established identity. Use restrained amber emphasis, readable charcoal/neutral surfaces, the existing typography direction, consistent icons, and clear job information. Validate contrast; an attractive dark palette alone is insufficient.
-- Design public discovery and job detail pages separately from the signed-in workspace. Search and useful jobs take priority over oversized marketing. Use compact scan-friendly job rows/cards with company, location, pay where known, freshness, and provenance.
-- Specify navigation for Discover, Saved, Applications, Alerts, and Profile. Design mobile search/filter sheets, full-screen details, sensible touch targets, back behavior, and a real compact navigation pattern. Do not stack desktop panels blindly.
-- Specify forms, dialogs, tables, uploads, pagination, skeletons, success/error/retry/empty states, offline/slow-network states, focus behavior, reduced motion, and screen-reader announcements.
-- Use representative long titles, missing salaries, large type, empty accounts, expired listings, and real small-screen dimensions. Produce visual reference screens for every critical journey and admin workflows.
-- Design the Python Resume Extractor's own upload/results/error/sample-file screens and the Angular dashboard's complete demo/live navigation. Each is a coherent focused app with its own entry point and appropriate primary-technology explanation; neither requires visiting the full candidate portal. Specify discreet demo labels and data provenance. Reuse visual tokens/specifications across frameworks without forcing Angular or Python to depend on React runtime components.
+- **Design System Established:** [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) documents complete visual tokens (deep charcoal `#090d16` base, elevated slate `#0f172a`, brand amber `#f59e0b` accents, Sora headings, Plus Jakarta Sans body, JetBrains Mono code). WCAG 2.1 AA contrast verified (15.4:1 primary text, 7.1:1 secondary text).
+- **Candidate App Prototype (`frontend-next`):**
+  - Search-first header with keyword search, location selector (`Dhaka`, `Chattogram`, `Remote`), and URL-addressable query state.
+  - Desktop filter bar (Remote eligibility, Seniority, Job Type, Sort order) and Mobile Filter Bottom Sheet (`MobileFilterSheet.tsx`) with focus containment, touch targets $\ge 44$px, and live counter.
+  - Interactive Job Cards (`JobCard.tsx`) with salary display (BDT/USD), remote/seniority badges, freshness, and bookmark save toggle.
+  - Accessible Job Detail Drawer (`JobDetailDrawer.tsx`) with Escape key handling, focus trap, outbound application link disclaimer ("Apply on Source ↗"), and "+ Track Application" action.
+  - Candidate Workspace: `Discover`, `Saved Jobs`, `Applications` (candidate-managed status tracker with editable notes), `Job Alerts` (subscription frequency & active switch), and `Profile & Skills` (interactive tag cloud and digital resume summary).
+  - Truthful synthetic fixtures: 12 curated South Asia / Bangladesh technology roles conforming strictly to OpenAPI 3.1 `seekers-api-v1.yaml` schema; fabricated counters ("2.4M+ jobs") eliminated.
+  - Truthful demo banner and provenance modal explaining $0 free-tier constraints and local data boundaries.
+- **Standalone Angular Operations Console (`frontend-admin`):**
+  - Coherent Angular 18 operations shell with dark theme styling matching Seekers design system.
+  - Real-time pipeline health metrics: Active Connectors, Hourly Throughput, Processing Latency, Dead Letter Queue counter.
+  - Crawler Source Connectors Table: Live status for 5 regional sources (`bdjobs`, `linkedin-bd`, `chaldal-careers`, `pathao-careers`, `glassdoor-bd`) with pause/resume controls.
+  - Ingestion Audit Feed: Filterable table of incoming job events with search, source filter, and "Inspect JSON ↗" modal showing raw `job.ingested.v1.schema.json` event payloads.
+  - Interactive Simulation Toolbar: Crawl Burst (+5 events), Pause/Resume stream, Test Offline reconnect banner, and deterministic Reset.
+- **Independent Python Resume Extractor UI (`service-resume`):**
+  - Served directly from FastAPI (`GET /` and `GET /demo`) as an independent HTML/CSS/JS interface without Node/React dependencies.
+  - Drag-and-drop PDF upload zone with client-side file format & 10MB size validation.
+  - Quick 1-click "⚡ Load Sample Fullstack CV" button for instant local review.
+  - In-memory spaCy PhraseMatcher execution with animated progress indicator.
+  - Categorized Extracted Skills cloud and structured JSON download.
+  - Edge case simulations: Scanned PDF without text layer (`SCANNED_PDF_NO_TEXT`), encrypted PDF (`ENCRYPTED_PDF`), and oversized file (`FILE_TOO_LARGE`).
+  - Clear candidate privacy and zero-retention notice.
+- **Responsive & Accessibility Evidence:**
+  - Validated via real browser rendering and screenshot capture across 320px, 360px, 390px, 768px, and 1280px widths.
+  - Zero horizontal overflow confirmed (`scrollWidth <= innerWidth`).
+  - Modal focus trap, backdrop dismissal, and keyboard Escape key restoration confirmed.
+  - All 5 pytest unit tests pass; Next.js builds cleanly with Turbopack and passes ESLint (0 errors); Angular 18 builds cleanly with 0 errors.
 
 **Completion gate:** reviewed prototypes for the candidate app, standalone Python extractor, and Angular dashboard across 320, 360/390, 768, and desktop widths; no blocked core task; keyboard/focus and contrast checks; consistent tokens and reusable component specifications; explicit demo/live distinctions; no invented public counts.
 

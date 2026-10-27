@@ -1,17 +1,17 @@
 # Python Resume Extractor (`service-resume`)
 
-A Python service that extracts text from PDF resumes and matches a fixed dictionary of technical skills. General profile extraction is not implemented.
+A Python service that extracts digital text from PDF resumes and matches canonical technical skills using spaCy PhraseMatcher.
 
-> **Role in Seekers Platform:** Part of the Seekers polyglot microservices platform. This service operates as an independent extraction engine consumed via gRPC by `service-user` during candidate profile onboarding, and can be evaluated independently via its HTTP OpenAPI interface without running the full platform fleet.
+> **Role in Seekers Platform:** Part of the Seekers polyglot microservices platform. Operates as an independent extraction engine consumed via gRPC/REST and provides a self-contained, responsive HTML/CSS demonstration interface directly from FastAPI on port 8000, requiring no Node.js or React runtime.
 
 ---
 
 ## 1. Primary Technology Stack
 
-- **Language:** Python 3.11+ (tested on Python 3.11 container / local Python 3.14)
-- **Web Framework:** FastAPI (REST API & interactive Swagger UI)
-- **NLP / Information Extraction:** spaCy (`en_core_web_sm` pipeline with `PhraseMatcher`)
-- **Document Ingestion:** PyPDF2
+- **Language:** Python 3.11+
+- **Web Framework:** FastAPI (REST API, Swagger UI, and native HTML/CSS presentation)
+- **NLP / Information Extraction:** spaCy 3.8 (`en_core_web_sm` pipeline with `PhraseMatcher`)
+- **Document Ingestion:** `pypdf` (digital text-layer extraction; rejects scanned/encrypted documents)
 - **RPC Framework:** gRPC (`grpcio`, `protobuf`) implementing `shared-protos/resume.proto`
 - **Testing:** pytest, httpx
 
@@ -19,11 +19,12 @@ A Python service that extracts text from PDF resumes and matches a fixed diction
 
 ## 2. Architecture & Interfaces
 
-The service provides dual interfaces into the exact same underlying extraction engine (`extract_skills_from_text`):
+The service provides dual interfaces into the underlying extraction engine (`extract_skills_from_text`):
 
-1. **HTTP REST (`POST /parse`):** Multipart/form-data endpoint accepting PDF files directly for developer testing and standalone evaluation.
-2. **gRPC Server (`ResumeParser.ParseResume`):** High-performance RPC method on port `50051` receiving document paths and returning extracted skill collections.
-3. **Interactive Documentation:** `http://localhost:8000/docs` (OpenAPI Swagger UI).
+1. **Standalone HTML Prototype (`GET /` or `GET /demo`):** Self-contained, responsive Seekers dark-themed console with drag-and-drop file upload, quick sample CV walkthrough, skill cloud tags, JSON download, and edge case simulations.
+2. **HTTP REST (`POST /parse`):** Multipart/form-data endpoint accepting PDF files directly.
+3. **gRPC Server (`ResumeParser.ParseResume`):** High-performance RPC method on port `50051`.
+4. **Interactive Documentation:** `http://localhost:8000/docs` (OpenAPI Swagger UI).
 
 ```
                      +----------------------------+
@@ -31,18 +32,19 @@ The service provides dual interfaces into the exact same underlying extraction e
                      +--------------+-------------+
                                     |
           +-------------------------+-------------------------+
-          | (HTTP multipart)                                  | (gRPC path)
+          | (Native HTML Prototype)                           | (gRPC / REST)
           v                                                   v
    +--------------+                                   +---------------+
-   | POST /parse  |                                   | ResumeParser  |
-   | (FastAPI)    |                                   | (gRPC :50051) |
+   | GET /demo    |                                   | POST /parse   |
+   | (FastAPI UI) |                                   | (pypdf/spaCy) |
    +-------+------+                                   +-------+-------+
            |                                                  |
            +------------------------+-------------------------+
                                     |
                                     v
                      +----------------------------+
-                     |  PyPDF2 Text Extraction    |
+                     | pypdf Text-Layer Extraction|
+                     | (Rejects Scanned/Encrypted)|
                      +--------------+-------------+
                                     |
                                     v
@@ -59,15 +61,18 @@ The service provides dual interfaces into the exact same underlying extraction e
 
 ---
 
-## 3. Current Capabilities & Baseline Status
+## 3. Standalone Prototype Features
 
-- **Unit Tests (`pytest test_main.py`):** `[Verified]` — 2 unit tests passing (validates PDF text extraction mock and invalid MIME type rejection).
-- **FastAPI HTTP App (`main:app`):** Implements `/parse` and Swagger docs; fresh startup verification belongs to P02.
-- **gRPC Server (`grpc_server.py`):** Implements parsing on port `50051`; the existing two tests do not exercise gRPC startup or delivery.
-- **Known Limitations:**
-  - Skill extraction currently matches against 16 dictionary entries rather than an adaptive ML model.
-  - Relies on shared local disk paths passed over gRPC rather than an object storage abstraction.
-  - PyPDF2 reports deprecation notices; migration to pypdf is scheduled for P02.
+- **Drag-and-Drop File Selector:** Client-side validation enforcing PDF MIME type and $\le 10$MB size limit.
+- **⚡ Quick Load Sample CV:** Instantly loads metadata for `Farhan_Ahmed_Senior_FullStack_CV.pdf` for 1-click evaluation without searching local files.
+- **Simulated Extraction Pipeline:** Animated progress indicator depicting text layer extraction, spaCy pattern matching, and canonical token normalization.
+- **Categorized Skills Display:** Formatted skill pill tags matching the Seekers Design System.
+- **Structured JSON Download:** Exports complete payload conforming to `resume.parsed.v1.schema.json`.
+- **Edge Case Simulation Actions:**
+  - `Simulate Scanned PDF (No text layer)`: Triggers `SCANNED_PDF_NO_TEXT` notice explaining why OCR is disabled under the $0 budget profile.
+  - `Simulate Encrypted PDF`: Triggers `ENCRYPTED_PDF` notice.
+  - `Simulate Oversized File (>10MB)`: Triggers `FILE_TOO_LARGE` notice.
+- **Candidate Privacy Notice:** Clear banner confirming in-memory processing with immediate discard and zero disk retention.
 
 ---
 
@@ -78,46 +83,25 @@ The service provides dual interfaces into the exact same underlying extraction e
 - Python 3.11+
 - Virtual environment tool (`venv` or `uv`)
 
-### Installation
+### Installation & Test Execution
 
 ```bash
-# 1. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+cd service-resume
 
-# 2. Install dependencies
+# Install dependencies:
 pip install -r requirements.txt
-pip install pytest httpx
+pip install -r requirements-dev.txt
 
-# 3. Download the spaCy language model
-python -m spacy download en_core_web_sm
-```
-
-### Configuration
-
-The Python application does not currently load `.env` or read configurable upload limits, model names, or gRPC ports. Set the HTTP host/port with the Uvicorn arguments below; gRPC uses the hardcoded port `50051` and the model is `en_core_web_sm`. Upload limits and configurable settings require implementation before they can be relied on.
-
-### Running the Service
-
-```bash
-# Start the HTTP FastAPI server (with interactive docs):
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-
-# Start the gRPC server:
-python grpc_server.py
-```
-
-### Running Tests
-
-```bash
+# Run all 5 unit tests:
 pytest test_main.py -v
 ```
 
----
+### Running the Prototype
 
-## 5. Planned Standalone Demonstration (Phase P08)
+```bash
+# Start FastAPI server on port 8000:
+uvicorn main:app --host 0.0.0.0 --port 8000
 
-In Phase P08, this service will include a lightweight standalone presentation layer served directly by Python:
-- Browser-based drag-and-drop resume upload UI without requiring Node.js or React.
-- Pre-bundled synthetic PDF resumes demonstrating skill detection, missing skills, and parsing diagnostics.
-- Downloadable structured JSON output and side-by-side extracted skill tags.
+# Open in browser:
+# http://127.0.0.1:8000
+```

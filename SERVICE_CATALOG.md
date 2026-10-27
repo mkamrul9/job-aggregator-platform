@@ -1,6 +1,6 @@
 # Seekers Platform Service Catalog
 
-*Status: Authoritative Service Catalog — Contracts, Scope & Targets Frozen for Phase 3 (P03)*  
+*Status: Authoritative Service Catalog — Responsive Design & Prototypes Complete for Phase 4 (P04)*  
 *Last Updated: 27 October 2026*  
 *Architecture Pattern: Polyglot Microservices Monorepo with Independently Presentable Services*
 
@@ -15,9 +15,9 @@ A primary architectural invariant is that **each project is independently demons
 ### Global Command Status Taxonomy
 
 To maintain engineering honesty, all commands in this catalog are classified using three explicit tiers:
-- **`[Verified]`**: A reported local check or CI test passed in the reviewed baseline (P02 commit `583602d` / CI run `40465050379`); not proof of full-stack runtime integration.
+- **`[Verified]`**: A reported local check or CI test passed in the reviewed baseline (P03 commit `269e508` / P04 prototypes); not proof of full-stack runtime integration.
 - **`[Observed-but-unverified]`**: Present in package scripts or configuration, executed but exhibiting known blockers/partial output or carried-forward runtime gaps.
-- **`[Planned]`**: Designed for implementation in the owning feature phase (P04–P18); not yet working or implemented.
+- **`[Planned]`**: Designed for implementation in the owning feature phase (P05–P18); not yet working or implemented.
 
 ---
 
@@ -25,13 +25,13 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
-| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest unit tests pass (3/3); pypdf migration complete; GET /health added; text-only PDF scope |
-| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, RxJS, Socket.io | P12 | Production build passes; test:ci script added; enabled in Compose & gateway |
+| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (5/5); standalone HTML prototype (`GET /`, `GET /demo`) verified; pypdf digital text scope |
+| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Production build passes; standalone operations console with live simulation adapter verified |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Playwright-Go, Kafka-Go | P07 | `go test` and `go vet` pass cleanly; module mode verified |
 | `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | ESLint passes (0 errors); tsc & Jest pass; Prisma migration 20261027000000_init established |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | Aligned with Elasticsearch 8.x; 8 unit tests pass; owns unified `/api/v1/jobs` |
 | `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | Safe jsonTransport default; 5 unit tests pass; Socket.io & metric counter verified |
-| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack production build passes; ES 8.x client aligned |
+| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype verified |
 
 ---
 

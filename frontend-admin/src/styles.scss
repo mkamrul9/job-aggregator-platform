@@ -1,8 +1,108 @@
-/* You can add global styles to this file, and also import other style files */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-100 text-gray-900;
+/* ==========================================================================
+   SEEKERS OPERATIONS CONSOLE (ANGULAR 18) — DESIGN SYSTEM SCSS
+   ========================================================================== */
+
+:root {
+  --seekers-bg-base:        #090d16;
+  --seekers-bg-elevated:    #0f172a;
+  --seekers-bg-surface:     #1e293b;
+  --seekers-bg-hover:       #28334e;
+  --seekers-bg-input:       #131a29;
+
+  --seekers-amber-400:      #fbbf24;
+  --seekers-amber-500:      #f59e0b;
+  --seekers-amber-600:      #d97706;
+  --seekers-amber-dim:      rgba(245, 158, 11, 0.12);
+  --seekers-amber-border:   rgba(245, 158, 11, 0.38);
+
+  --seekers-text-primary:   #f8fafc;
+  --seekers-text-secondary: #94a3b8;
+  --seekers-text-muted:     #64748b;
+
+  --seekers-border-subtle:  rgba(255, 255, 255, 0.08);
+  --seekers-border-medium:  rgba(255, 255, 255, 0.14);
+  --seekers-border-strong:  rgba(255, 255, 255, 0.22);
+
+  --seekers-success:        #10b981;
+  --seekers-success-dim:    rgba(16, 185, 129, 0.12);
+  --seekers-danger:         #ef4444;
+  --seekers-danger-dim:     rgba(239, 68, 68, 0.12);
+  --seekers-info:           #38bdf8;
+  --seekers-info-dim:       rgba(56, 189, 248, 0.12);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+
+  --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md:    0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg:    0 12px 36px rgba(0, 0, 0, 0.7);
+  --shadow-focus: 0 0 0 3px rgba(245, 158, 11, 0.45);
+
+  --font-heading: 'Sora', sans-serif;
+  --font-body:    'Plus Jakarta Sans', sans-serif;
+  --font-mono:    'JetBrains Mono', Consolas, monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--seekers-bg-base);
+  color: var(--seekers-text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Base custom styling for admin controls */
+.badge-status-healthy {
+  background-color: var(--seekers-success-dim);
+  color: var(--seekers-success);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.badge-status-degraded {
+  background-color: var(--seekers-amber-dim);
+  color: var(--seekers-amber-400);
+  border: 1px solid var(--seekers-amber-border);
+}
+
+.badge-status-paused {
+  background-color: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.admin-card {
+  background-color: var(--seekers-bg-elevated);
+  border: 1px solid var(--seekers-border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-table-row {
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-bottom: 1px solid var(--seekers-border-subtle);
+}
+.admin-table-row:hover {
+  background-color: var(--seekers-bg-hover);
 }
