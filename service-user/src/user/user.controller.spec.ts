@@ -199,7 +199,9 @@ describe('UserController', () => {
 
       const res = await controller.getAccountStatus(req);
       expect(res.has_pending_deletion).toBe(true);
-      expect(mockUserService.getAccountStatus).toHaveBeenCalledWith('candidate-99');
+      expect(mockUserService.getAccountStatus).toHaveBeenCalledWith(
+        'candidate-99',
+      );
     });
   });
 
