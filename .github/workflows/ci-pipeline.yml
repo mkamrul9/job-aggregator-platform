@@ -130,13 +130,19 @@ jobs:
         working-directory: ./service-user
         run: |
           npx -p firebase-tools firebase emulators:start --only auth --project seekers-dev &
-          for i in {1..30}; do
+          ready=false
+          for i in {1..60}; do
             if curl -s http://127.0.0.1:9099 > /dev/null 2>&1; then
               echo "Firebase Auth Emulator is ready!"
+              ready=true
               break
             fi
             sleep 1
           done
+          if [ "$ready" != "true" ]; then
+            echo "❌ Firebase Auth Emulator failed to start within 60s"
+            exit 1
+          fi
 
       - name: Start service-user Application
         working-directory: ./service-user
@@ -146,13 +152,19 @@ jobs:
           FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9099
         run: |
           npm run start &
-          for i in {1..30}; do
+          ready=false
+          for i in {1..45}; do
             if curl -s http://127.0.0.1:3002/users/health | grep -q "healthy"; then
               echo "service-user is healthy and responding!"
+              ready=true
               break
             fi
             sleep 1
           done
+          if [ "$ready" != "true" ]; then
+            echo "❌ service-user failed to start within 45s"
+            exit 1
+          fi
 
       - name: Run Strict Standalone Smoke Suite
         working-directory: ./service-user
