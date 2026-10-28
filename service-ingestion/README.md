@@ -1,6 +1,6 @@
 # Node.js Canonical Job Catalog & Unified Search API (`service-ingestion`)
 
-A high-performance streaming ingestion worker and REST discovery service that consumes scraped job postings from Kafka, canonicalizes records into MongoDB (the authoritative persistent catalog), and projects indexed search documents into Elasticsearch (with transparent fallback to MongoDB).
+A high-performance streaming ingestion worker and REST discovery service that consumes scraped job postings from Kafka (or standalone file streams), canonicalizes records into MongoDB (the authoritative persistent catalog), and projects indexed search documents into Elasticsearch (with transparent fallback to MongoDB).
 
 > **Role in Seekers Platform:** Powers candidate job discovery, multi-dimensional search filtering, keyset pagination, shareable job details, and verified outbound application redirects across the platform.
 
@@ -8,44 +8,60 @@ A high-performance streaming ingestion worker and REST discovery service that co
 
 ## 1. Technology Stack & Storage Layer
 
-- **Runtime:** Node.js 22.x
+- **Runtime:** Node.js 22.x LTS
 - **Web Framework:** Express 5.x
-- **Event Streaming:** KafkaJS 2.x (Consumer Group: `mongo-ingestion-group`)
-- **Authoritative Catalog:** MongoDB Node Driver 7.x (Collection: `jobs`)
-  - Unique indexes on `id` (public UUID v4) and `canonical_url`.
+- **Event Streaming:** KafkaJS 2.x (Consumer Group: `mongo-ingestion-group`, Topics: `job.collected.v1`, `jobs.new`)
+- **Authoritative Catalog:** MongoDB Node Driver 7.x (Collection: `jobs`, `dead_letters`)
+  - Unique indexes on `id` (public UUID v4), `canonical_url`, and `source_url_hash`.
+  - Projection status index on `projection_status` (`PENDING`, `INDEXED`, `FAILED`).
   - Compound indexes on `[status, published_at, id]` and `[status, salary.min, id]` for deterministic keyset pagination.
   - Text search index on `title`, `company`, `description`, `skills`, `location`.
-- **Search Projection:** `@elastic/elasticsearch` 8.x (Index: `jobs_index`)
+- **Search Projection:** `@elastic/elasticsearch` 8.x (Index Alias: `jobs_index`)
   - Multi-match full text search across `title^3`, `skills^2`, `company^2`, `description`.
   - Strict filters on `status: "ACTIVE"`, `location`, `remote_eligibility`, `job_type`, `seniority`, and salary ranges.
-  - Transparent fallback to MongoDB text/regex search if Elasticsearch is unreachable.
-- **Security & Safety:**
-  - RFC 7807 Problem Details (`application/problem+json`) for all validation and HTTP error responses.
-  - SSRF protection: outbound redirect destinations strictly validate against IPv4/IPv6 private ranges (RFC 1918, ULA `fc00::/7`), loopback (`127.0.0.0/8`, `::1`), link-local metadata addresses (`169.254.169.254`, `fe80::/10`), single-label intranet hosts, credentials, and non-http(s) schemes.
-  - Lifecycle enforcement: outbound redirection requires active listings; expired or flagged listings return 404 RFC 7807 problem details.
+  - Transparent fallback to MongoDB text search if Elasticsearch is unreachable.
+- **Recoverable Delivery Semantics:**
+  - Manual Kafka offset commits: offsets advance **only** after canonical MongoDB persistence or durable dead-letter quarantine.
+  - Poison message isolation: malformed events are persisted to `dead_letters` with validation error diagnostics before committing offsets, preventing partition head-of-line blocking.
+  - Idempotent upserts: duplicate events preserve `first_seen_at` and do not bump revision numbers or dirty the search projection.
 
 ---
 
-## 2. Architecture & Data Flow
+## 2. Architecture & Recoverable Data Flow
 
 ```
                +--------------------------------------+
                |  service-scraper (Go Engine)         |
                +-------------------+------------------+
-                                   | (Kafka topic: jobs.new)
+                                   | (Kafka: job.collected.v1)
                                    v
                +--------------------------------------+
-               |  service-ingestion (Node.js)         |
-               |  - Kafka Consumer Worker             |
-               |  - Express Search API (:5000)        |
+               |  service-ingestion Consumer Worker   |
+               |  - SeekersEventEnvelope Validator    |
+               |  - Poison Message Gate               |
                +---------+------------------+---------+
                          |                  |
+           (Valid Event) |                  | (Poison / Malformed)
                          v                  v
                  +---------------+  +------------------+
-                 | MongoDB       |  | Elasticsearch    |
-                 | (Authoritative|  | (Rebuildable     |
-                 |  Store)       |  |  Index)          |
-                 +---------------+  +------------------+
+                 | MongoDB: jobs |  | MongoDB:         |
+                 | Authoritative |  | dead_letters     |
+                 | (Rev, Outbox) |  | (Quarantined)    |
+                 +-------+-------+  +------------------+
+                         |
+                         | (Commit Kafka Offset)
+                         v
+                 +---------------+
+                 | Projection    |
+                 | Outbox Worker |
+                 +-------+-------+
+                         | (Optimistic Revision Check)
+                         v
+                 +---------------+
+                 | Elasticsearch |
+                 | jobs_index    |
+                 | (Projection)  |
+                 +---------------+
 ```
 
 ---
@@ -62,18 +78,44 @@ The service implements the OpenAPI 3.1 contract under `/api/v1/jobs` and provide
 | `GET` | `/api/v1/jobs/:id/outbound` | Safe outbound application redirect | `id` (UUID v4), `Accept: text/html` or `Accept: application/json` | `302 Redirect` to source or `200` with `{ destination_url }` |
 | `GET` | `/health` | Health check endpoint | None | `200` with `{ status: "healthy", ... }` |
 
-### Deterministic Keyset Cursor Pagination
+---
 
-Pagination uses opaque, URL-safe base64-encoded keyset cursors encoding the active sort field value and the listing UUID tie-breaker:
-- `sort=date_desc` (default): `[published_at, id]`
-- `sort=salary_desc`: `[salary.min, id]`
-- `sort=relevance`: Elasticsearch score-based pagination
+## 4. Standalone Event Runner & Operator CLI
+
+### Deterministic Event Replay (Zero Kafka Dependency)
+Process raw event streams from NDJSON files or standard input using the identical validation and persistence core:
+
+```bash
+# Process NDJSON event stream into MongoDB and Elasticsearch
+npm run event-runner -- --file=test/fixtures/collected_events.ndjson
+
+# Dry-run validation mode (validates schema without persisting)
+npm run event-runner -- --file=test/fixtures/collected_events.ndjson --dry-run
+```
+
+### Operator Command-Line Interface (`bin/operator.js`)
+
+```bash
+# Inspect catalog health, projection lag, and dead letter counts
+npm run operator -- status
+
+# List quarantined poison events
+npm run operator -- dead-letters list
+
+# Inspect payload and validation failure reasons for a specific dead letter
+npm run operator -- dead-letters inspect <id>
+
+# Reconcile MongoDB canonical catalog against Elasticsearch projection
+npm run operator -- reconcile --dry-run
+npm run operator -- reconcile
+
+# Rebuild search index with zero downtime via atomic alias swap
+npm run operator -- reindex
+```
 
 ---
 
-## 4. Standalone Quickstart (Zero Kafka Dependency)
-
-Developers and frontend consumers can run `service-ingestion` locally without Kafka:
+## 5. Standalone Quickstart (Zero Kafka Dependency)
 
 ### 1. Install Dependencies
 ```bash
@@ -84,22 +126,20 @@ npm ci
 ### 2. Seed Initial Catalog Data
 Seeds 12 curated South Asian & Bangladesh tech job postings into MongoDB and builds the Elasticsearch index:
 ```bash
-# Defaults to mongodb://localhost:27017/job_aggregator and http://localhost:9200
 npm run seed
 ```
 
 ### 3. Start Search API in Standalone Mode
 ```bash
-# Disables Kafka consumer and exposes /api/v1/jobs on port 5000
 npm run start:standalone
 ```
 
 ---
 
-## 5. Verification & Testing
+## 6. Verification & Testing
 
 ```bash
-# Run unit tests (models, URL security, query validators, endpoint mocks)
+# Run unit tests (models, schema validation, URL security, query validators, endpoint mocks)
 npm test
 
 # Run strict integration tests (live MongoDB and Elasticsearch)

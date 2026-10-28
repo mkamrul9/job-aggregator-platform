@@ -403,5 +403,318 @@ describe('service-ingestion unit tests', () => {
 
       assert.strictEqual(processed.company, 'Resilient Co');
     });
+
+    it('should quarantine poison/malformed event and return quarantined: true', async () => {
+      let quarantinedDoc = null;
+      const mockDeadLetters = {
+        insertOne: async (doc) => {
+          quarantinedDoc = doc;
+        },
+      };
+
+      const poisonMessage = Buffer.from(JSON.stringify({ junk: 12345 }));
+      const result = await processMessage(poisonMessage, {
+        deadLettersCollection: mockDeadLetters,
+      });
+
+      assert.strictEqual(result.quarantined, true);
+      assert.ok(quarantinedDoc !== null);
+      assert.strictEqual(quarantinedDoc.status, 'QUARANTINED');
+      assert.ok(quarantinedDoc.errors.length > 0);
+    });
+  });
+
+  describe('event validation and dead letter handling', () => {
+    const {
+      validateEnvelope,
+      validateJobCollectedPayload,
+      validateIncomingEvent,
+    } = require('../src/events/validator');
+    const { quarantineDeadLetter } = require('../src/catalog/db');
+
+    it('validates a conformant SeekersEventEnvelope', () => {
+      const validEnvelope = {
+        event_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+        event_type: 'job.collected.v1',
+        schema_version: '1.0.0',
+        producer: 'service-scraper',
+        timestamp: '2026-10-27T12:00:00Z',
+        correlation_id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        causation_id: null,
+        payload: {
+          source: 'bdjobs',
+          source_job_id: '1198324',
+          url: 'https://jobs.bdjobs.com/jobdetails.asp?id=1198324',
+          source_url_hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          title: 'Senior Backend Engineer (Go / Node)',
+          company: 'Kona Software Lab',
+          location: 'Dhaka, Bangladesh',
+          description: 'Looking for a seasoned backend engineer with 4+ years of Go.',
+          collected_at: '2026-10-27T12:00:00Z',
+        },
+      };
+
+      const res = validateEnvelope(validEnvelope);
+      assert.strictEqual(res.valid, true);
+      assert.strictEqual(res.errors.length, 0);
+    });
+
+    it('rejects envelope with missing required fields or invalid UUID', () => {
+      const invalidEnvelope = {
+        event_id: 'not-a-uuid',
+        event_type: 'bad-format',
+        schema_version: 'abc',
+        producer: 'unauthorized-service',
+        timestamp: 'invalid-date',
+      };
+
+      const res = validateEnvelope(invalidEnvelope);
+      assert.strictEqual(res.valid, false);
+      assert.ok(res.errors.length >= 4);
+    });
+
+    it('validates a conformant JobCollectedV1Payload', () => {
+      const payload = {
+        source: 'greenhouse-feed',
+        source_job_id: '4829101',
+        url: 'https://boards.greenhouse.io/pathao/jobs/4829101',
+        source_url_hash: '60a678e6f28dca9bb73cdd7eba5e1f302c59c544468361c66a8b9e6855d24ceb',
+        title: 'Senior Backend Engineer',
+        company: 'Pathao',
+        location: 'Dhaka, Bangladesh',
+        description: 'Building distributed Go infrastructure.',
+        collected_at: '2026-10-28T12:00:00Z',
+      };
+
+      const res = validateJobCollectedPayload(payload);
+      assert.strictEqual(res.valid, true);
+      assert.strictEqual(res.errors.length, 0);
+    });
+
+    it('rejects payload with invalid SHA256 or short description', () => {
+      const invalid = {
+        source: 'g',
+        source_job_id: '',
+        url: 'ftp://bad-scheme.com',
+        source_url_hash: 'not-64-hex',
+        title: 'T',
+        company: '',
+        location: 'L',
+        description: 'Short',
+        collected_at: 'not-a-date',
+      };
+
+      const res = validateJobCollectedPayload(invalid);
+      assert.strictEqual(res.valid, false);
+      assert.ok(res.errors.length >= 5);
+    });
+
+    it('quarantines dead letters into collection with status QUARANTINED', async () => {
+      let inserted = null;
+      const mockCollection = {
+        insertOne: async (doc) => {
+          inserted = doc;
+        },
+      };
+
+      const dl = await quarantineDeadLetter(mockCollection, '{"malformed": true}', ['Missing required fields']);
+      assert.strictEqual(inserted.id, dl.id);
+      assert.strictEqual(inserted.status, 'QUARANTINED');
+      assert.strictEqual(inserted.retry_count, 0);
+      assert.strictEqual(inserted.errors[0], 'Missing required fields');
+    });
+  });
+
+  describe('canonical MongoDB persistence, idempotency, and revision tracking', () => {
+    const { upsertJobDocument } = require('../src/catalog/db');
+
+    it('preserves first_seen_at and bumps revision on content update', async () => {
+      const initialFirstSeen = new Date('2026-10-01T00:00:00Z');
+      const existingDoc = {
+        _id: 'mongo-id-1',
+        id: '2a44e5d7-1335-430c-8f1d-fa61a7a0b33c',
+        canonical_url: 'https://example.com/jobs/dev-1',
+        source_url_hash: 'abc123hash',
+        title: 'Junior Developer',
+        company: 'Startup Co',
+        location: 'Dhaka',
+        description: 'Initial job description.',
+        status: 'ACTIVE',
+        first_seen_at: initialFirstSeen,
+        revision: 1,
+        projection_status: 'INDEXED',
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      // Content has changed (Junior -> Senior Developer)
+      const updatedInput = {
+        source: 'greenhouse-feed',
+        source_job_id: '123',
+        url: 'https://example.com/jobs/dev-1',
+        title: 'Senior Developer',
+        company: 'Startup Co',
+        location: 'Dhaka',
+        description: 'Updated job description with more requirements.',
+      };
+
+      const result = await upsertJobDocument(mockCollection, updatedInput);
+
+      assert.strictEqual(result.id, existingDoc.id);
+      assert.strictEqual(result.first_seen_at, initialFirstSeen);
+      assert.strictEqual(result.revision, 2);
+      assert.strictEqual(result.is_updated, true);
+      assert.strictEqual(result.projection_status, 'PENDING');
+      assert.strictEqual(updatedDoc.$set.revision, 2);
+      assert.strictEqual(updatedDoc.$set.projection_status, 'PENDING');
+    });
+
+    it('does not bump revision or dirty projection status on unchanged duplicate replay', async () => {
+      const initialFirstSeen = new Date('2026-10-01T00:00:00Z');
+      const existingDoc = {
+        _id: 'mongo-id-2',
+        id: '99887766-5544-3322-1100-aabbccddeeff',
+        canonical_url: 'https://example.com/jobs/qa-1',
+        source_url_hash: 'def456hash',
+        title: 'QA Automation Engineer',
+        company: 'QualityCorp',
+        location: 'Dhaka',
+        description: 'Standard test automation description.',
+        status: 'ACTIVE',
+        first_seen_at: initialFirstSeen,
+        revision: 3,
+        projection_status: 'INDEXED',
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      const duplicateInput = {
+        source: 'greenhouse-feed',
+        source_job_id: 'qa-1',
+        url: 'https://example.com/jobs/qa-1',
+        title: 'QA Automation Engineer',
+        company: 'QualityCorp',
+        location: 'Dhaka',
+        description: 'Standard test automation description.',
+      };
+
+      const result = await upsertJobDocument(mockCollection, duplicateInput);
+
+      assert.strictEqual(result.revision, 3);
+      assert.strictEqual(result.is_updated, false);
+      assert.strictEqual(result.projection_status, 'INDEXED');
+      assert.strictEqual(updatedDoc.$set.revision, 3);
+      assert.strictEqual(updatedDoc.$set.projection_status, 'INDEXED');
+    });
+  });
+
+  describe('projection outbox and reconciliation', () => {
+    const { projectPendingJobs } = require('../src/search/projection-worker');
+    const { reconcileCatalog } = require('../src/search/reconcile');
+
+    it('projects pending jobs to Elasticsearch and advances projection status', async () => {
+      const pendingJob = {
+        _id: 'doc-1',
+        id: 'job-uuid-1',
+        canonical_url: 'https://example.com/job/1',
+        title: 'Frontend Lead',
+        company: 'WebTech',
+        revision: 2,
+        projection_status: 'PENDING',
+      };
+
+      let updateQuery = null;
+      let updateSet = null;
+
+      const mockCollection = {
+        find: () => ({
+          sort: () => ({
+            limit: () => ({
+              hasNext: async () => {
+                const has = !updateQuery;
+                return has;
+              },
+              next: async () => pendingJob,
+            }),
+          }),
+        }),
+        updateOne: async (query, update) => {
+          updateQuery = query;
+          updateSet = update.$set;
+          return { matchedCount: 1 };
+        },
+      };
+
+      let indexedDoc = null;
+      const mockEsClient = {
+        index: async (params) => {
+          indexedDoc = params;
+        },
+      };
+
+      const stats = await projectPendingJobs(mockCollection, mockEsClient, { batchSize: 10 });
+      assert.strictEqual(stats.attempted, 1);
+      assert.strictEqual(stats.projected, 1);
+      assert.strictEqual(updateQuery.revision, 2);
+      assert.strictEqual(updateSet.projection_status, 'INDEXED');
+      assert.strictEqual(updateSet.projection_version, 2);
+    });
+
+    it('reconciles catalog detecting missing, stale, and excess projection documents', async () => {
+      const mongoJobs = [
+        {
+          _id: 'm1',
+          id: 'job-1',
+          title: 'Title in Mongo',
+          description: 'Desc',
+          status: 'ACTIVE',
+          revision: 1,
+        },
+      ];
+
+      const mockCollection = {
+        find: () => ({
+          batchSize: () => ({
+            hasNext: async () => mongoJobs.length > 0,
+            next: async () => mongoJobs.pop(),
+          }),
+        }),
+        findOne: async ({ id }) => (id === 'job-1' ? { id: 'job-1' } : null),
+        updateOne: async () => {},
+      };
+
+      // ES returns 404 for job-1 (missing) and returns hit for excess-job-99
+      const mockEsClient = {
+        get: async () => {
+          const err = new Error('Not Found');
+          err.meta = { statusCode: 404 };
+          throw err;
+        },
+        search: async () => ({
+          hits: {
+            hits: [{ _id: 'excess-job-99' }],
+          },
+        }),
+        index: async () => {},
+        delete: async () => {},
+      };
+
+      const report = await reconcileCatalog(mockCollection, mockEsClient, { dryRun: false });
+      assert.strictEqual(report.missing_indexed, 1);
+      assert.strictEqual(report.excess_deleted, 1);
+      assert.strictEqual(report.dry_run, false);
+    });
   });
 });

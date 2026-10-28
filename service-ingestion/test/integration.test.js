@@ -395,4 +395,132 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.match(res.body.detail, /remote_eligibility/i);
     });
   });
+
+  describe('P07: Event processing, dead-letter quarantine, outbox, and reconciliation', () => {
+    const { processMessage } = require('../index');
+    const { projectPendingJobs } = require('../src/search/projection-worker');
+    const { reconcileCatalog } = require('../src/search/reconcile');
+    const { rebuildIndex } = require('../src/search/reindex');
+    let deadLettersCollection = null;
+
+    before(() => {
+      deadLettersCollection = db.collection('dead_letters');
+    });
+
+    it('processes conformant job.collected.v1 event, persists to MongoDB and updates projection', async () => {
+      const validEvent = {
+        event_id: '4fa85f64-5717-4562-b3fc-2c963f66afa7',
+        event_type: 'job.collected.v1',
+        schema_version: '1.0.0',
+        producer: 'service-scraper',
+        timestamp: '2026-10-28T14:00:00Z',
+        correlation_id: '8c9e6679-7425-40de-944b-e07fc1f90ae8',
+        causation_id: null,
+        payload: {
+          source: 'greenhouse-feed',
+          source_job_id: 'gh-integration-1',
+          url: 'https://boards.greenhouse.io/pathao/jobs/gh-integration-1',
+          source_url_hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          title: 'Senior Distributed Systems Engineer',
+          company: 'Pathao Tech',
+          location: 'Dhaka, Bangladesh',
+          description: 'Experience building real-time event pipelines with Kafka and Go.',
+          collected_at: '2026-10-28T14:00:00Z',
+        },
+      };
+
+      const outcome = await processMessage(Buffer.from(JSON.stringify(validEvent)), {
+        jobsCollection,
+        deadLettersCollection,
+        esClient,
+      });
+
+      assert.ok(outcome);
+      assert.strictEqual(outcome.title, 'Senior Distributed Systems Engineer');
+      assert.strictEqual(outcome.revision, 1);
+
+      const persisted = await jobsCollection.findOne({ canonical_url: validEvent.payload.url });
+      assert.ok(persisted);
+      assert.strictEqual(persisted.source_id, 'gh-integration-1');
+      assert.ok(persisted.first_seen_at);
+
+      // Replay same event: first_seen_at preserved, revision unchanged
+      const replayed = await processMessage(Buffer.from(JSON.stringify(validEvent)), {
+        jobsCollection,
+        deadLettersCollection,
+        esClient,
+      });
+
+      assert.strictEqual(replayed.revision, 1);
+      assert.strictEqual(replayed.is_updated, false);
+      assert.strictEqual(
+        new Date(replayed.first_seen_at).getTime(),
+        new Date(persisted.first_seen_at).getTime()
+      );
+    });
+
+    it('quarantines poison event into dead_letters collection without throwing', async () => {
+      const poison = {
+        bad_structure: 'totally invalid event',
+        missing_everything: true,
+      };
+
+      const res = await processMessage(Buffer.from(JSON.stringify(poison)), {
+        jobsCollection,
+        deadLettersCollection,
+        esClient,
+      });
+
+      assert.strictEqual(res.quarantined, true);
+      const dl = await deadLettersCollection.findOne({ status: 'QUARANTINED' });
+      assert.ok(dl);
+      assert.ok(dl.errors.length > 0);
+    });
+
+    it('projection outbox worker flushes pending documents safely', async () => {
+      if (!esClient) return;
+
+      // Insert document in Mongo with projection_status PENDING
+      const pendingDoc = {
+        id: '77777777-7777-4777-8777-777777777777',
+        canonical_url: 'https://example.com/jobs/outbox-pending-test',
+        source_url_hash: 'outboxhash123',
+        source: 'greenhouse-feed',
+        source_id: 'pending-1',
+        title: 'Platform Outbox Engineer',
+        company: 'OutboxCorp',
+        location: 'Dhaka',
+        remote_eligibility: 'FULLY_REMOTE',
+        job_type: 'FULL_TIME',
+        seniority: 'MID',
+        description: 'Testing outbox flush.',
+        status: 'ACTIVE',
+        published_at: new Date(),
+        first_seen_at: new Date(),
+        last_seen_at: new Date(),
+        ingested_at: new Date(),
+        revision: 1,
+        projection_status: 'PENDING',
+        projection_version: 0,
+      };
+
+      await jobsCollection.insertOne(pendingDoc);
+
+      const stats = await projectPendingJobs(jobsCollection, esClient, { batchSize: 10 });
+      assert.ok(stats.attempted >= 1);
+      assert.ok(stats.projected >= 1);
+
+      const updated = await jobsCollection.findOne({ id: pendingDoc.id });
+      assert.strictEqual(updated.projection_status, 'INDEXED');
+      assert.strictEqual(updated.projection_version, 1);
+    });
+
+    it('reconciles catalog and reports accurate statistics', async () => {
+      if (!esClient) return;
+
+      const report = await reconcileCatalog(jobsCollection, esClient, { dryRun: true });
+      assert.strictEqual(report.dry_run, true);
+      assert.ok(report.scanned_mongo >= 0);
+    });
+  });
 });

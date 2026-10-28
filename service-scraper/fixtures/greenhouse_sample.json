@@ -1,0 +1,24 @@
+{
+  "jobs": [
+    {
+      "id": 4829101,
+      "title": "Senior Backend Engineer (Go / Distributed Systems)",
+      "company_name": "Pathao Engineering",
+      "location": {
+        "name": "Dhaka, Bangladesh"
+      },
+      "absolute_url": "https://boards.greenhouse.io/pathao/jobs/4829101",
+      "content": "&lt;p&gt;We are looking for a Senior Backend Engineer with deep Go and Kafka expertise to build highly available payment and transit infrastructure.&lt;/p&gt;&lt;p&gt;Requirements: 4+ years of Go, experience with distributed locking, Postgres, and Docker.&lt;/p&gt;"
+    },
+    {
+      "id": 4829102,
+      "title": "Staff Platform Engineer (Kubernetes & SRE)",
+      "company_name": "Chaldal Tech",
+      "location": {
+        "name": "Dhaka, Bangladesh / Remote"
+      },
+      "absolute_url": "https://boards.greenhouse.io/chaldal/jobs/4829102",
+      "content": "&lt;div&gt;Join Chaldal as a Staff Platform Engineer managing high-scale multi-region clusters, observability pipelines, and CI/CD automation.&lt;/div&gt;"
+    }
+  ]
+}

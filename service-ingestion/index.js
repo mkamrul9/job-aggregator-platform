@@ -5,8 +5,15 @@ const { Client: EsClient } = require('@elastic/elasticsearch');
 const express = require('express');
 const cors = require('cors');
 
-const { upsertJobDocument, ensureMongoIndexes, backfillLegacyDocuments } = require('./src/catalog/db');
+const {
+  upsertJobDocument,
+  ensureMongoIndexes,
+  backfillLegacyDocuments,
+  quarantineDeadLetter,
+} = require('./src/catalog/db');
 const { ensureEsIndex, indexJobToEs } = require('./src/search/elasticsearch');
+const { startProjectionWorker } = require('./src/search/projection-worker');
+const { validateIncomingEvent } = require('./src/events/validator');
 const { createJobsRouter } = require('./src/api/jobs-router');
 
 // Environment variables
@@ -14,7 +21,7 @@ const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
 const ES_NODE = process.env.ES_NODE || 'http://localhost:9200';
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3003,http://localhost:4200').split(',');
-const TOPIC = process.env.KAFKA_TOPIC || 'jobs.new';
+const TOPIC = process.env.KAFKA_TOPIC || 'job.collected.v1';
 
 // Utility: escape special regex characters to prevent ReDoS
 function escapeRegex(str) {
@@ -43,23 +50,34 @@ function createIngestionApp(jobsCollection = null, esClient = null) {
 }
 
 /**
- * Processes incoming Kafka message, canonicalizes, deduplicates, and dual-writes to MongoDB and Elasticsearch.
+ * Processes incoming Kafka message or event buffer.
+ * Performs schema validation, dead-letter quarantine for poison events,
+ * atomic MongoDB persistence with revision tracking, and ES projection.
  */
-async function processMessage(messageValue, { jobsCollection, esClient } = {}) {
+async function processMessage(messageValue, { jobsCollection, deadLettersCollection = null, esClient } = {}) {
   if (!messageValue) return null;
-  const rawData = JSON.parse(messageValue.toString());
+
+  // 1. Validate envelope and payload
+  const validation = validateIncomingEvent(messageValue);
+  if (!validation.valid) {
+    console.warn(`⚠️ Poison/Malformed event detected: ${validation.errors.join('; ')}`);
+    if (deadLettersCollection) {
+      await quarantineDeadLetter(deadLettersCollection, messageValue, validation.errors, validation.parsed);
+    }
+    return { quarantined: true, errors: validation.errors };
+  }
 
   let canonicalJob = null;
 
-  // 1. Upsert into MongoDB canonical collection
+  // 2. Upsert into MongoDB canonical collection
   if (jobsCollection) {
-    canonicalJob = await upsertJobDocument(jobsCollection, rawData);
+    canonicalJob = await upsertJobDocument(jobsCollection, validation.payload);
   } else {
     const { toCanonicalJob } = require('./src/models/job');
-    canonicalJob = toCanonicalJob(rawData);
+    canonicalJob = toCanonicalJob(validation.payload);
   }
 
-  // 2. Project to Elasticsearch
+  // 3. Project to Elasticsearch if available
   if (esClient && canonicalJob) {
     try {
       await indexJobToEs(esClient, canonicalJob);
@@ -86,11 +104,12 @@ async function run() {
   try {
     // 1. Connect to MongoDB and initialize indexes
     await mongoClient.connect();
-    const db = mongoClient.db('job_platform');
+    const db = mongoClient.db(process.env.MONGO_DB || 'job_platform');
     const jobsCollection = db.collection('jobs');
+    const deadLettersCollection = db.collection('dead_letters');
     console.log('✅ Connected to MongoDB');
 
-    await ensureMongoIndexes(jobsCollection);
+    await ensureMongoIndexes(jobsCollection, deadLettersCollection);
     await backfillLegacyDocuments(jobsCollection);
 
     // 2. Ensure Elasticsearch index exists if available
@@ -98,14 +117,21 @@ async function run() {
       await ensureEsIndex(esClient);
     }
 
-    // 3. Start Express API for Job Fetching
+    // 3. Start background projection outbox worker to sync pending documents
+    let projectionWorker = null;
+    if (esClient) {
+      projectionWorker = startProjectionWorker(jobsCollection, esClient, { intervalMs: 15000, batchSize: 50 });
+      console.log('✅ Background projection outbox worker started');
+    }
+
+    // 4. Start Express API for Job Fetching
     const app = createIngestionApp(jobsCollection, esClient);
     const PORT = process.env.PORT || 5000;
     const server = app.listen(PORT, () => {
       console.log(`✅ Jobs API listening on port ${PORT}`);
     });
 
-    // 4. Connect to Kafka (optional in standalone mode)
+    // 5. Connect to Kafka (optional in standalone mode)
     const isStandalone = process.env.STANDALONE_MODE === 'true';
     let consumer = null;
 
@@ -133,18 +159,31 @@ async function run() {
       }
 
       if (retries > 0) {
-        await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
-        console.log(`✅ Subscribed to Kafka topic: ${TOPIC}`);
+        // Subscribe to both versioned topic and legacy topic for seamless transition
+        await consumer.subscribe({ topics: [TOPIC, 'jobs.new'], fromBeginning: true });
+        console.log(`✅ Subscribed to Kafka topics: ${TOPIC}, jobs.new`);
 
         await consumer.run({
-          eachMessage: async ({ message }) => {
+          autoCommit: false,
+          eachMessage: async ({ topic, partition, message }) => {
             try {
-              const jobData = await processMessage(message.value, { jobsCollection, esClient });
-              if (jobData) {
-                console.log(`💾 Saved canonical job to DB + ES: ${jobData.title} at ${jobData.company}`);
+              const outcome = await processMessage(message.value, {
+                jobsCollection,
+                deadLettersCollection,
+                esClient,
+              });
+
+              // Advance offset ONLY after canonical MongoDB persistence or durable dead-letter quarantine
+              const nextOffset = (BigInt(message.offset) + 1n).toString();
+              await consumer.commitOffsets([{ topic, partition, offset: nextOffset }]);
+
+              if (outcome && !outcome.quarantined) {
+                console.log(`💾 Saved canonical job to DB + ES: ${outcome.title} at ${outcome.company}`);
               }
             } catch (err) {
-              console.error('❌ Error processing message:', err);
+              // Critical: Do NOT commit offset on unrecoverable DB error so work is not lost
+              console.error('❌ Error processing message, offset not committed:', err.message);
+              throw err;
             }
           },
         });
@@ -156,6 +195,9 @@ async function run() {
     // Handle graceful shutdowns
     const shutdown = async () => {
       server.close();
+      if (projectionWorker) {
+        projectionWorker.stop();
+      }
       if (consumer) {
         try {
           await consumer.disconnect();

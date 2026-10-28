@@ -27,9 +27,9 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 |---|---|---|---|---|
 | `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (5/5); standalone HTML prototype (`GET /`, `GET /demo`) verified; pypdf digital text scope |
 | `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Production build passes; standalone operations console with live simulation adapter verified |
-| `service-scraper` | Go Job Collection Engine | Go 1.23, Playwright-Go, Kafka-Go | P07 | `go test` and `go vet` pass cleanly; module mode verified |
-| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | ESLint passes (0 errors); tsc & Jest pass; Prisma migration 20261027000000_init established |
-| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | Aligned with Elasticsearch 8.x; 8 unit tests pass; owns unified `/api/v1/jobs` |
+| `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
+| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 | ESLint passes (0 errors); tsc & Jest pass (30/30); Prisma migrations verified |
+| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
 | `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | Safe jsonTransport default; 5 unit tests pass; Socket.io & metric counter verified |
 | `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype verified |
 
@@ -157,34 +157,34 @@ All platform services interact through versioned machine-readable contracts loca
 
 ### 3.3 `service-scraper` — Go Job Collection Engine
 
-- **Purpose & Role:** Automated job collection engine that scrapes career pages and job listings, normalizes raw HTML data into structured job records, and publishes events to Kafka.
-- **Primary Technology:** Go 1.23, Playwright-Go v0.6100.0, Segmentio Kafka-Go v0.4.51.
-- **Data Ownership:** Stateless collector. Reads external web sources; emits structured JSON events to Kafka topic `jobs.new`.
+- **Purpose & Role:** Automated job collection engine that harvests job listings from approved sources, cleans and normalizes HTML/JSON data into versioned domain event envelopes (`job.collected.v1`), and publishes events to Kafka with durable lease scheduling and offline CLI support.
+- **Primary Technology:** Go 1.23, Segmentio Kafka-Go v0.4.51, Playwright-Go v0.6100.0, SafeHTTPClient with DNS SSRF guard.
+- **Data Ownership:** Stateless collector. Reads external approved web/feed sources; emits versioned `SeekersEventEnvelope` JSON events to Kafka topic `job.collected.v1` (with backward-compatible emission to `jobs.new`). Checkpoints and leases persisted durably in `./data/state`.
 - **Entry Points & Interfaces:**
-  - Kafka Producer: Publishes to topic `jobs.new`
-  - CLI: Standalone collection binary (`scraper-bin`)
+  - Kafka Producer: Publishes to topic `job.collected.v1` (partitioned on `source_url_hash`)
+  - CLI: Standalone collection executable supporting `-mode=cli`, `-fixture=<path>`, `-format=json|ndjson`, `-output=stdout|file|kafka`
 - **Dependency Manifests & Lockfiles:**
   - Manifest: `service-scraper/go.mod`
   - Lockfile: `service-scraper/go.sum`
-  - Dependency Policy: Module-based retrieval (`go.mod` / `go.sum`). Vendoring directory untracked from Git.
+  - Dependency Policy: Module-based retrieval (`go.mod` / `go.sum`).
 - **Commands & Verification:**
-  - Test: `go test -v ./...` — `[Verified]` (passes in 0.8s using mock publisher)
+  - Test: `go test -v ./...` — `[Verified]` (all 8 unit tests pass cleanly: SSRF, parsers, drift, scheduler leases, fixtures)
   - Vet: `go vet ./...` — `[Verified]` (passes with zero defects)
-  - Local Run: `go run .` — `[Observed-but-unverified]` (requires local Kafka broker on `localhost:9092` or mock adapter)
+  - Standalone CLI: `go run . -mode=cli -fixture=fixtures/greenhouse_sample.json -format=json` — `[Verified]` (zero network/Kafka dependency)
+  - Source Registry: `go run . -list-sources` — `[Verified]` (lists operational status and permissions for all registered sources)
 - **Required Infrastructure:**
-  - Standalone mode: None (with planned CLI/fixture output mode).
+  - Standalone mode: None (100% offline fixture execution).
   - Integrated mode: Apache Kafka broker (`KAFKA_BROKER`).
-- **Current Verification Status:** Core logic and concurrency channels compile cleanly. Unit tests exercise the mock publisher. Real scraper relies on hardcoded example targets and single selector set.
-- **Standalone-Readiness Gaps:**
-  - The executable always configures Kafka and has no implemented stdout/file adapter. Publish failures are logged without durable replay.
-  - Scrapes mock/hardcoded LinkedIn URLs with no source selector abstraction or rate limiting.
-- **Planned Standalone Demonstration (P07):**
-  - Standalone CLI mode (`--output=json` / `--fixture=sample.html`) allowing offline testing against local HTML snapshots.
-  - Output to stdout or JSON file with structured fields (title, company, description, salary, location).
-  - Demonstrates goroutine worker pool, retry backoff, and parser resilience without external network dependencies.
+- **Completed in Phase P07:**
+  - Evidence-backed source registry (`registry.go`) defining operational configurations for `greenhouse-feed`, `lever-feed`, `bdjobs-tech`, `chaldal-careers`, `pathao-careers`, and `fixture-local`.
+  - Server-Side Request Forgery (SSRF) Guard (`ssrf.go`) blocking IPv4/IPv6 private ranges, loopback, cloud metadata (`169.254.169.254`), carrier-grade NAT, and single-label intranet hosts, with redirect revalidation.
+  - Durable scheduler store (`scheduler.go`) with file-backed leases, lease conflict prevention, lease expiry, and checkpoints.
+  - Rate limiting with token bucket, exponential backoff, and jitter.
+  - Versioned `SeekersEventEnvelope` (`models.go`, `publisher.go`) conforming to `contracts/events/envelope.schema.json` and `job.collected.v1.schema.json`.
+  - Standalone CLI with exit codes 0 (success), 1 (fatal error), and 2 (schema drift warning).
 - **Intended Deployment Boundary:**
-  - Container: `service-scraper/Dockerfile` (Ubuntu 22.04 base with Chromium and Playwright dependencies)
-  - Owning Feature Phase: **P07**
+  - Container: `service-scraper/Dockerfile`
+  - Owning Feature Phase: **P07 (Completed)**
 
 ---
 
@@ -244,16 +244,25 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `service-ingestion/package.json`
   - Lockfile: `service-ingestion/package-lock.json`
 - **Commands & Verification:**
-  - Unit Tests: `npm test` — `[Verified]` (33 unit tests covering URL normalization, regex escaping, stable UUIDs, IPv6 ULA/loopback outbound safety, query validation with strict integers, and endpoint mocks)
-  - Integration Tests: `npm run test:integration` — `[Verified]` (21 strict integration tests against isolated test MongoDB database and isolated Elasticsearch index, including standalone MongoDB fallback mode)
+  - Unit Tests: `npm test` — `[Verified]` (43 unit tests covering URL normalization, regex escaping, stable UUIDs, IPv6 ULA/loopback outbound safety, query validation, event validation, dead-letter quarantine, atomic Mongo revisions, and projection outbox/reconciliation)
+  - Integration Tests: `npm run test:integration` — `[Verified]` (strict integration tests against isolated test MongoDB database and isolated Elasticsearch index, verifying event ingestion, dead-letter quarantine, outbox flushing, and catalog reconciliation)
   - Standalone Seed: `npm run seed` — `[Verified]` (seeds 12 curated Bangladesh tech jobs with explicit `is_synthetic` provenance into MongoDB and ES)
+  - Standalone Event Runner: `npm run event-runner -- --file=test/fixtures/collected_events.ndjson` — `[Verified]` (processes NDJSON event streams into Mongo and ES without Kafka)
+  - Operator CLI: `npm run operator -- status`, `dead-letters`, `reconcile`, `reindex` — `[Verified]`
   - Standalone Run: `npm run start:standalone` (`node bin/standalone.js`) — `[Verified]` (runs search API without Kafka)
 - **Required Infrastructure:**
-  - Standalone mode: MongoDB 6+ and Elasticsearch 8.x (zero Kafka dependency required to run search API).
+  - Standalone mode: MongoDB 6+ and Elasticsearch 8.x (zero Kafka dependency required to run search API or event runner).
   - Integrated mode: Kafka broker (`job.collected.v1`), MongoDB, Elasticsearch.
-- **Current Verification Status:** Node 22, Express 5, 33 unit tests, 21 integration tests passing; CI updated to run MongoDB/Elasticsearch services and integration tests; Docker packaging passes in CI.
-- **Completed in Phase P06 & P06 Repair:**
-  - Canonical job catalog persistence in MongoDB with unique indexes on `id` and `canonical_url`.
+- **Current Verification Status:** Node 22, Express 5, 43 unit tests passing; CI updated to run MongoDB/Elasticsearch services and integration tests; Docker packaging passes in CI.
+- **Completed in Phase P06 & P07:**
+  - Canonical job catalog persistence in MongoDB with unique indexes on `id`, `canonical_url`, and `source_url_hash`.
+  - Event schema validation (`src/events/validator.js`) conforming to `envelope.schema.json` and `job.collected.v1.schema.json`.
+  - Poison message isolation: malformed events quarantined to `dead_letters` collection before advancing Kafka offsets.
+  - Manual Kafka offset commits: offsets committed only after durable Mongo write or dead-letter quarantine (no swallowed errors).
+  - Idempotent upserts: duplicate events preserve `first_seen_at` without bumping revisions or dirtying search projections.
+  - Projection outbox worker (`src/search/projection-worker.js`) projecting `PENDING` MongoDB records to Elasticsearch with optimistic concurrency revision checks.
+  - Catalog reconciliation (`src/search/reconcile.js`) detecting and repairing missing, stale, excess, and status-misaligned documents.
+  - Zero-downtime reindexing (`src/search/reindex.js`) with versioned indexes and atomic alias swaps.
   - Deterministic keyset cursor pagination (`cursor`) for `date_desc`, `salary_desc`, and `relevance` with unified schema and query binding.
   - Full filter suite (`q`, `location`, `remote_eligibility`, `job_type`, `seniority`, `min_salary`, `currency`).
   - Safe outbound URL validation rejecting IPv4 and IPv6 private/loopback/ULA/link-local IPs and single-label hosts while permitting valid domains with "data" substrings.
@@ -262,7 +271,7 @@ All platform services interact through versioned machine-readable contracts loca
 - **Intended Deployment Boundary:**
   - Container: `service-ingestion/Dockerfile`
   - Ports: `5000` (internal) / mapped through Gateway
-  - Owning Feature Phase: **P06 (Completed)**
+  - Owning Feature Phase: **P07 (Completed)**
 
 ---
 

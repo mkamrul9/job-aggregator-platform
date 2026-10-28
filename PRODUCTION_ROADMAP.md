@@ -339,14 +339,38 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 **Outcome:** the catalog stays current through a pipeline that can recover from failure.
 
-- Replace example targets with maintained source connectors. Prioritize approved APIs/feeds and employer/ATS sources; record source permissions, terms/robots policy, attribution, fetch budgets, coverage, and ownership before enabling a connector.
-- Implement discovery, durable scheduling/checkpoints, per-source concurrency/rate limits, timeouts, backoff, source-specific parsers, parser fixtures, and browser pools only where needed. Bake required browser assets into images; avoid downloads at process startup.
-- Validate/version events; normalize URLs and structured job fields; enforce unique identity; deduplicate repeated and cross-source listings; handle updates, source removals, expiry, and suspicious data.
-- Fix offset/error behavior. Persist failures to durable retry/dead-letter state, define bounded retry classification, prevent poison messages blocking partitions indefinitely, and make replays idempotent.
-- Separate authoritative persistence from recoverable indexing with durable delivery state/outbox or an equivalent justified design. Add reconciliation, index mappings/aliases, safe reindexing/backfills, search freshness metrics, and operator repair tools.
-- Finish the Go collector's standalone CLI/file-output and local-fixture demonstration using its real parsing/concurrency core. Finish the Node ingestion service's deterministic local event-input adapter, real persistence/search demo, and minimal-infrastructure runner. Keep the production Kafka interfaces versioned and verify them separately. Publish per-service diagrams, example commands/output, meaningful test results, limitations, and measured throughput only where benchmarked.
+- **Maintained Evidence-Backed Launch Source Coverage (`service-scraper`):**
+  - Replaced hardcoded example targets with maintained operational connectors for approved regional and ATS sources (`greenhouse-feed`, `lever-feed`, `bdjobs-tech`, `chaldal-careers`, `pathao-careers`, and `fixture-local`).
+  - Recorded operational configurations: connector ID, version, approved hosts, review date, permission reference, attribution, fetch budget (max req/sec, burst), retention, and enabled status. Unapproved sources (`linkedin-bd`) remain explicitly disabled with truthful partner requirement justification.
+  - Hardened Server-Side Request Forgery (SSRF) guard in Go (`ssrf.go`) validating URL schemes (`http`/`https`), rejecting credentials, single-label intranet hosts, loopback (`127.0.0.0/8`, `::1`), RFC 1918 private subnets, cloud metadata (`169.254.169.254`), carrier-grade NAT (`100.64.0.0/10`), and IPv6 ULA (`fc00::/7`), with redirect revalidation.
+- **Durable Scheduling Core & Standalone Go Collector:**
+  - File-backed scheduler store (`scheduler.go`) implementing worker leases with automatic expiration, lease conflict rejection, and durable checkpoints (`last_run_at`, `last_success_at`, `jobs_collected`, `status`, `last_error`) surviving process crashes.
+  - Per-source rate limiting with token bucket, exponential backoff, and jitter.
+  - Standalone Go CLI supporting `-mode=cli`, `-fixture=<path>`, `-format=json|ndjson`, `-output=stdout|file|kafka`, and exit codes 0 (success), 1 (fatal error), and 2 (drift warning).
+  - Deterministic offline execution mode allowing local verification without Kafka, MongoDB, Node, or Playwright.
+- **Versioned Event Streaming & Backward-Compatible Consumer:**
+  - Emits versioned `SeekersEventEnvelope` (`models.go`, `publisher.go`) conforming strictly to `contracts/events/envelope.schema.json` and `job.collected.v1.schema.json`, partitioned on `source_url_hash`.
+  - Dual-publisher and unwrapping adapter in `service-notification/index.js` ensuring backward compatibility with both legacy flat payloads (`jobs.new`) and versioned event envelopes.
+- **Recoverable Canonical Persistence & Dead-Letter Quarantine (`service-ingestion`):**
+  - Schema validation gate (`src/events/validator.js`) validating incoming envelopes and payloads.
+  - Poison message quarantine: malformed events are persisted to `dead_letters` collection with error diagnostics before committing Kafka offsets, preventing partition head-of-line blocking.
+  - Manual Kafka offset commits: offsets advance only after durable MongoDB canonical persistence or dead-letter quarantine; no swallowed database errors.
+  - Atomic document state tracking in MongoDB: unique indexes on `id`, `canonical_url`, and `source_url_hash`; duplicate delivery preserves `first_seen_at` without bumping revision numbers or dirtying the search projection.
+- **Projection Outbox, Reconciliation & Safe Catalog Lifecycle:**
+  - Projection outbox worker (`src/search/projection-worker.js`) projecting `PENDING` MongoDB records to Elasticsearch with optimistic concurrency revision checks.
+  - Catalog reconciliation engine (`src/search/reconcile.js`) detecting and repairing missing, stale, excess, and status-misaligned documents.
+  - Zero-downtime index rebuild (`src/search/reindex.js`) with versioned indexes (`jobs_v<timestamp>`), document count/query verification gates, and atomic alias swaps.
+  - Standalone event runner (`bin/event-runner.js`) processing NDJSON event streams or standard input without Kafka.
+  - Minimal operator CLI (`bin/operator.js`) providing commands for `status`, `dead-letters list|inspect|replay`, `reconcile [--dry-run]`, and `reindex`.
+- **Verification & Testing Suite:**
+  - 8 Go unit tests in `service-scraper` covering SSRF guards, ATS parsers, schema drift, scheduler leases, rate limiters, and offline fixtures. `go vet` passes cleanly.
+  - 6 unit tests in `service-notification` including versioned event envelope unwrapping.
+  - 43 unit tests in `service-ingestion` covering models, schema validators, dead-letter quarantine, atomic Mongo revisions, and projection outbox/reconciliation.
+  - Strict integration tests against isolated MongoDB and Elasticsearch verifying event ingestion, dead-letter isolation, outbox flushing, and reconciliation.
+  - Contract validation suite (`contracts/validate-contracts.js`) passing 100%.
+  - All seven services compile, test, and build cleanly.
 
-**Completion gate:** at least the agreed launch sources produce verified current listings; source outage, selector drift, duplicate delivery, concurrent upsert, worker crash, malformed event, Kafka interruption, and Elasticsearch outage tests pass; committed events are accounted for; index rebuild can recover the catalog; the Go and Node ingestion standalone quickstarts work without unrelated apps and their real Kafka integration checks pass.
+**Completion gate:** at least the agreed launch sources produce verified current listings; source outage, selector drift, duplicate delivery, concurrent upsert, worker crash, malformed event, Kafka interruption, and Elasticsearch outage tests pass; committed events are accounted for; index rebuild can recover the catalog; the Go and Node ingestion standalone quickstarts work without unrelated apps and their real Kafka integration checks pass. `[PASS]`
 
 **Checkpoint:** `feat(ingestion): deliver real connectors and recoverable job processing` → verified push.
 

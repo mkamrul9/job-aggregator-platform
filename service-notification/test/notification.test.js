@@ -100,5 +100,44 @@ describe('service-notification unit tests', () => {
 
       assert.strictEqual(result.company, 'InfraCorp');
     });
+
+    it('should unwrap versioned SeekersEventEnvelope (job.collected.v1) seamlessly', async () => {
+      let broadcastData = null;
+      const mockIo = {
+        emit: (event, data) => {
+          broadcastData = data;
+        },
+      };
+
+      const envelope = {
+        event_id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+        event_type: 'job.collected.v1',
+        schema_version: '1.0.0',
+        producer: 'service-scraper',
+        timestamp: '2026-10-28T12:00:00Z',
+        correlation_id: '99887766-5544-3322-1100-aabbccddeeff',
+        causation_id: null,
+        payload: {
+          source: 'greenhouse-feed',
+          source_job_id: '4829101',
+          url: 'https://boards.greenhouse.io/pathao/jobs/4829101',
+          source_url_hash: '60a678e6f28dca9bb73cdd7eba5e1f302c59c544468361c66a8b9e6855d24ceb',
+          title: 'Senior Backend Engineer (Go / Distributed Systems)',
+          company: 'Pathao Engineering',
+          location: 'Dhaka, Bangladesh',
+          description: 'Deep Go and Kafka expertise to build highly available payment and transit infrastructure.',
+          collected_at: '2026-10-28T12:00:00Z',
+        },
+      };
+
+      const messageValue = Buffer.from(JSON.stringify(envelope));
+      const result = await processJobNotification(messageValue, {
+        io: mockIo,
+      });
+
+      assert.strictEqual(result.title, 'Senior Backend Engineer (Go / Distributed Systems)');
+      assert.strictEqual(result.company, 'Pathao Engineering');
+      assert.strictEqual(broadcastData.source_job_id, '4829101');
+    });
   });
 });

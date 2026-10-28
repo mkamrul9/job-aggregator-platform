@@ -7,7 +7,11 @@
     "test": "node --test test/ingestion.test.js",
     "test:integration": "node --test test/integration.test.js",
     "seed": "node scripts/seed.js",
-    "start:standalone": "node bin/standalone.js"
+    "start:standalone": "node bin/standalone.js",
+    "event-runner": "node bin/event-runner.js",
+    "operator": "node bin/operator.js",
+    "reconcile": "node bin/operator.js reconcile",
+    "reindex": "node bin/operator.js reindex"
   },
   "keywords": [],
   "author": "",

@@ -62,7 +62,9 @@ function createNotificationApp(customRegister = register) {
 async function processJobNotification(messageValue, { io, transporter, counter = emailsSentCounter, matchedUsers } = {}) {
   if (!messageValue) return null;
 
-  const jobData = JSON.parse(messageValue.toString());
+  const raw = JSON.parse(messageValue.toString());
+  // Support versioned SeekersEventEnvelope as well as legacy flat message
+  const jobData = (raw && raw.event_type && raw.payload) ? raw.payload : raw;
 
   // 1. Broadcast the new job to all connected clients instantly
   if (io) {
