@@ -80,3 +80,4 @@ export async function fetchJobDetail(id: string, baseUrl?: string): Promise<Fetc
     return { kind: 'service_unavailable', error: msg, status: 503 };
   }
 }
+

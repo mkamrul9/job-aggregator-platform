@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import {
   safeJsonLd,
   fetchJobDetail,
-} from '../../lib/job-detail-helper';
+} from '@/lib/job-detail-helper';
 
 export const dynamic = 'force-dynamic';
 

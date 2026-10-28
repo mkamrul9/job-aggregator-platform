@@ -34,7 +34,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
 
     try {
       let result = null;
-      let usedEngine = 'mongo';
+      let usedEngine = 'mongodb';
 
       if (esClient) {
         try {
@@ -58,7 +58,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
           );
         }
         result = await searchJobsMongo(jobsCollection, validation.params);
-        usedEngine = 'mongo';
+        usedEngine = 'mongodb';
       }
 
       res.setHeader('X-Search-Engine', usedEngine);

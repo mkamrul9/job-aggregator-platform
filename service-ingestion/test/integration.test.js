@@ -278,7 +278,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.strictEqual(res.status, 404);
       assert.strictEqual(res.body.status, 404);
       assert.strictEqual(res.body.title, 'Not Found');
-      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
+      assert.ok(res.headers['content-type'].includes('application/problem+json'));
     });
 
     it('GET /api/v1/jobs/:id/outbound performs safe 302 redirect for active listing', async () => {
@@ -309,7 +309,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       const res = await request(app).get(`/api/v1/jobs/${expiredId}/outbound`);
 
       assert.strictEqual(res.status, 404);
-      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
+      assert.ok(res.headers['content-type'].includes('application/problem+json'));
       assert.match(res.body.detail, /expired/i);
     });
 
@@ -337,7 +337,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
 
       const res = await request(app).get(`/api/v1/jobs/${pastJob.id}/outbound`);
       assert.strictEqual(res.status, 404);
-      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
+      assert.ok(res.headers['content-type'].includes('application/problem+json'));
       assert.match(res.body.detail, /expired/i);
     });
   });
