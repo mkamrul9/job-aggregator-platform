@@ -105,8 +105,8 @@ jobs:
       - name: Install Dependencies & Generate Prisma
         working-directory: ./service-user
         run: |
-          npm ci
-          npx prisma generate
+          npm ci --fetch-retries=3
+          npm run prisma:generate
 
       - name: Run ESLint
         working-directory: ./service-user
