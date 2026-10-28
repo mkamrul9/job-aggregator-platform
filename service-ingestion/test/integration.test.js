@@ -6,6 +6,7 @@ const { Client: EsClient } = require('@elastic/elasticsearch');
 const request = require('supertest');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const TEST_ES_INDEX = 'jobs_index_test';
 process.env.ES_INDEX = TEST_ES_INDEX;
@@ -427,7 +428,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
           source: 'greenhouse-feed',
           source_job_id: 'gh-integration-1',
           url: 'https://boards.greenhouse.io/pathao/jobs/gh-integration-1',
-          source_url_hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          source_url_hash: crypto.createHash('sha256').update('https://boards.greenhouse.io/pathao/jobs/gh-integration-1').digest('hex'),
           title: 'Senior Distributed Systems Engineer',
           company: 'Pathao Tech',
           location: 'Dhaka, Bangladesh',
