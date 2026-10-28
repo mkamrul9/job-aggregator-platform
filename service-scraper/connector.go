@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ErrDriftDetected   = errors.New("source schema drift: required fields missing or response structure changed")
-	ErrEmptyResponse   = errors.New("empty response returned from source")
-	ErrRateLimited     = errors.New("rate limited by source (HTTP 429)")
+	ErrDriftDetected = errors.New("source schema drift: required fields missing or response structure changed")
+	ErrEmptyResponse = errors.New("empty response returned from source")
+	ErrRateLimited   = errors.New("rate limited by source (HTTP 429)")
 )
 
 // HTML stripping regexes
@@ -101,7 +101,7 @@ func (c *GreenhouseConnector) FetchJobs(ctx context.Context, source SourceConfig
 	return ParseGreenhousePayload(body, source.ID, source.Name, limit)
 }
 
-// ParseGreenhousePayload parses raw Greenhouse JSON bytes
+// ParseGreenhousePayload parses raw Greenhouse JSON bytes without inventing missing data
 func ParseGreenhousePayload(body []byte, sourceID string, defaultCompany string, limit int) ([]JobCollectedV1Payload, error) {
 	var ghResp greenhouseResponse
 	if err := json.Unmarshal(body, &ghResp); err != nil {
@@ -122,19 +122,17 @@ func ParseGreenhousePayload(body []byte, sourceID string, defaultCompany string,
 			company = defaultCompany
 		}
 		rawLoc := strings.TrimSpace(j.Location.Name)
-		if rawLoc == "" {
-			rawLoc = "Remote"
-		}
 		url := strings.TrimSpace(j.AbsoluteURL)
 		jobID := fmt.Sprintf("%d", j.ID)
-
 		desc := StripHTML(j.Content)
-		if len(desc) < 10 {
-			desc = fmt.Sprintf("Role: %s at %s. Location: %s. Apply at source URL.", title, company, rawLoc)
+
+		// Validate required contract fields without inventing fake locations or descriptions
+		if title == "" || url == "" || j.ID <= 0 || company == "" || len(desc) < 10 {
+			continue // Skip incomplete or malformed record
 		}
 
-		if title == "" || url == "" || jobID == "0" {
-			continue // Skip malformed item
+		if rawLoc == "" {
+			rawLoc = "Unspecified"
 		}
 
 		results = append(results, JobCollectedV1Payload{
@@ -148,6 +146,10 @@ func ParseGreenhousePayload(body []byte, sourceID string, defaultCompany string,
 			Description:   desc,
 			CollectedAt:   now,
 		})
+	}
+
+	if len(ghResp.Jobs) > 0 && len(results) == 0 {
+		return nil, fmt.Errorf("%w: all %d records lacked required fields (title, company, description >= 10 chars, or url)", ErrDriftDetected, len(ghResp.Jobs))
 	}
 
 	return results, nil
@@ -206,7 +208,7 @@ func (c *LeverConnector) FetchJobs(ctx context.Context, source SourceConfig, lim
 	return ParseLeverPayload(body, source.ID, source.Name, limit)
 }
 
-// ParseLeverPayload parses raw Lever JSON bytes
+// ParseLeverPayload parses raw Lever JSON bytes without inventing missing data
 func ParseLeverPayload(body []byte, sourceID string, defaultCompany string, limit int) ([]JobCollectedV1Payload, error) {
 	var postings []leverPosting
 	if err := json.Unmarshal(body, &postings); err != nil {
@@ -225,20 +227,31 @@ func ParseLeverPayload(body []byte, sourceID string, defaultCompany string, limi
 		url := strings.TrimSpace(p.HostedURL)
 		jobID := strings.TrimSpace(p.ID)
 		loc := strings.TrimSpace(p.Categories.Location)
-		if loc == "" {
-			loc = "Remote / Dhaka, Bangladesh"
+
+		company := defaultCompany
+		if company == "" && strings.Contains(url, "jobs.lever.co/") {
+			parts := strings.Split(url, "jobs.lever.co/")
+			if len(parts) > 1 {
+				slug := strings.Split(parts[1], "/")[0]
+				company = strings.Title(slug)
+			}
+		}
+		if company == "" {
+			company = "Lever Hiring Partner"
 		}
 
 		desc := strings.TrimSpace(p.DescriptionPlain)
 		if desc == "" {
 			desc = StripHTML(p.Description)
 		}
-		if len(desc) < 10 {
-			desc = fmt.Sprintf("Role: %s at %s. Apply at %s.", title, defaultCompany, url)
+
+		// Reject incomplete records rather than inventing descriptions or locations
+		if title == "" || url == "" || jobID == "" || len(desc) < 10 {
+			continue
 		}
 
-		if title == "" || url == "" || jobID == "" {
-			continue
+		if loc == "" {
+			loc = "Unspecified"
 		}
 
 		results = append(results, JobCollectedV1Payload{
@@ -247,11 +260,15 @@ func ParseLeverPayload(body []byte, sourceID string, defaultCompany string, limi
 			URL:           url,
 			SourceURLHash: HashURL(url),
 			Title:         title,
-			Company:       defaultCompany,
+			Company:       company,
 			Location:      loc,
 			Description:   desc,
 			CollectedAt:   now,
 		})
+	}
+
+	if len(postings) > 0 && len(results) == 0 {
+		return nil, fmt.Errorf("%w: all %d Lever records lacked required fields (text, hostedUrl, id, or description >= 10 chars)", ErrDriftDetected, len(postings))
 	}
 
 	return results, nil
@@ -278,39 +295,74 @@ func (c *FixtureConnector) FetchJobs(ctx context.Context, source SourceConfig, l
 	return ParseFixtureData(data, source.ID, limit)
 }
 
-// ParseFixtureData parses a local fixture file (array of JobCollectedV1Payload or generic json)
+// ParseFixtureData parses a local fixture file with explicit format detection and contract validation
 func ParseFixtureData(data []byte, defaultSourceID string, limit int) ([]JobCollectedV1Payload, error) {
-	// 1. Try parsing directly as array of JobCollectedV1Payload
-	var payloads []JobCollectedV1Payload
-	if err := json.Unmarshal(data, &payloads); err == nil && len(payloads) > 0 {
-		now := time.Now().UTC().Format(time.RFC3339)
-		results := make([]JobCollectedV1Payload, 0, len(payloads))
-		for _, p := range payloads {
-			if limit > 0 && len(results) >= limit {
-				break
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil, fmt.Errorf("%w: fixture file is empty", ErrEmptyResponse)
+	}
+
+	// Case 1: Array of objects
+	if strings.HasPrefix(trimmed, "[") {
+		// Inspect keys of first object to distinguish Lever feed from canonical payload
+		var rawArray []map[string]interface{}
+		if err := json.Unmarshal(data, &rawArray); err == nil && len(rawArray) > 0 {
+			first := rawArray[0]
+			_, hasHostedURL := first["hostedUrl"]
+			_, hasText := first["text"]
+			_, hasCategories := first["categories"]
+
+			if hasHostedURL || hasText || hasCategories {
+				// Parse as Lever feed format
+				return ParseLeverPayload(data, defaultSourceID, "Tech Corp", limit)
 			}
-			if p.Source == "" {
-				p.Source = defaultSourceID
+
+			// Validate as Canonical JobCollectedV1Payload array
+			var payloads []JobCollectedV1Payload
+			if err := json.Unmarshal(data, &payloads); err == nil {
+				results := make([]JobCollectedV1Payload, 0, len(payloads))
+				now := time.Now().UTC().Format(time.RFC3339)
+				for _, p := range payloads {
+					if limit > 0 && len(results) >= limit {
+						break
+					}
+					// Strict validation: reject empty title, company, url, or source_job_id
+					if strings.TrimSpace(p.Title) == "" ||
+						strings.TrimSpace(p.Company) == "" ||
+						strings.TrimSpace(p.URL) == "" ||
+						strings.TrimSpace(p.SourceJobID) == "" ||
+						len(strings.TrimSpace(p.Description)) < 10 {
+						continue
+					}
+
+					if p.Source == "" {
+						p.Source = defaultSourceID
+					}
+					if p.SourceURLHash == "" {
+						p.SourceURLHash = HashURL(p.URL)
+					}
+					if p.CollectedAt == "" {
+						p.CollectedAt = now
+					}
+					results = append(results, p)
+				}
+
+				if len(results) > 0 {
+					return results, nil
+				}
+				return nil, fmt.Errorf("%w: array contained %d items but none had valid contract fields", ErrDriftDetected, len(payloads))
 			}
-			if p.SourceURLHash == "" {
-				p.SourceURLHash = HashURL(p.URL)
-			}
-			if p.CollectedAt == "" {
-				p.CollectedAt = now
-			}
-			results = append(results, p)
 		}
-		return results, nil
 	}
 
-	// 2. Try parsing as Greenhouse response structure
-	if ghJobs, err := ParseGreenhousePayload(data, defaultSourceID, "Tech Corp", limit); err == nil && len(ghJobs) > 0 {
-		return ghJobs, nil
-	}
-
-	// 3. Try parsing as Lever response structure
-	if leverJobs, err := ParseLeverPayload(data, defaultSourceID, "Tech Corp", limit); err == nil && len(leverJobs) > 0 {
-		return leverJobs, nil
+	// Case 2: Object with "jobs" field (Greenhouse feed format)
+	if strings.HasPrefix(trimmed, "{") {
+		var rawObj map[string]interface{}
+		if err := json.Unmarshal(data, &rawObj); err == nil {
+			if _, hasJobs := rawObj["jobs"]; hasJobs {
+				return ParseGreenhousePayload(data, defaultSourceID, "Tech Corp", limit)
+			}
+		}
 	}
 
 	return nil, fmt.Errorf("%w: fixture data could not be parsed as valid jobs payload or recognized feed", ErrDriftDetected)

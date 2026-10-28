@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -204,35 +205,43 @@ func TestSchedulerStoreLeaseCoordination(t *testing.T) {
 	workerB := "worker-beta"
 
 	// Worker A claims lease
-	claimed, err := store.ClaimLease(sourceID, workerA, 2*time.Second)
-	if err != nil || !claimed {
+	leaseA, claimed, err := store.ClaimLease(sourceID, workerA, 2*time.Second)
+	if err != nil || !claimed || leaseA == nil {
 		t.Fatalf("Expected workerA to claim lease, err: %v, claimed: %v", err, claimed)
+	}
+	if leaseA.FenceToken != 1 {
+		t.Errorf("Expected initial fence token 1, got %d", leaseA.FenceToken)
 	}
 
 	// Worker B attempts to claim same lease while active
-	claimedB, err := store.ClaimLease(sourceID, workerB, 2*time.Second)
+	leaseB, claimedB, err := store.ClaimLease(sourceID, workerB, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if claimedB {
+	if claimedB || leaseB != nil {
 		t.Fatalf("Worker B should have been rejected while Worker A holds active lease")
 	}
 
 	// Worker A releases lease
-	err = store.ReleaseLease(sourceID, workerA)
+	err = store.ReleaseLease(sourceID, workerA, leaseA.FenceToken)
 	if err != nil {
 		t.Fatalf("Failed to release lease: %v", err)
 	}
 
 	// Worker B can now claim lease
-	claimedB2, err := store.ClaimLease(sourceID, workerB, 2*time.Second)
-	if err != nil || !claimedB2 {
+	leaseB2, claimedB2, err := store.ClaimLease(sourceID, workerB, 2*time.Second)
+	if err != nil || !claimedB2 || leaseB2 == nil {
 		t.Fatalf("Expected workerB to claim released lease, err: %v, claimed: %v", err, claimedB2)
+	}
+	if leaseB2.FenceToken != 2 {
+		t.Errorf("Expected bumped fence token 2, got %d", leaseB2.FenceToken)
 	}
 
 	// Record outcome
 	err = store.RecordOutcome(RunOutcome{
 		SourceID:      sourceID,
+		WorkerID:      workerB,
+		FenceToken:    leaseB2.FenceToken,
 		JobsCollected: 5,
 		Duration:      100 * time.Millisecond,
 		Status:        "COMPLETED",
@@ -247,6 +256,59 @@ func TestSchedulerStoreLeaseCoordination(t *testing.T) {
 	}
 	if cp.JobsCollected != 5 || cp.Status != "COMPLETED" {
 		t.Errorf("Unexpected checkpoint data: %+v", cp)
+	}
+}
+
+// 6b. Fencing Token & Superseded Worker Rejection Test
+func TestSchedulerStoreFenceTokenSupersededReject(t *testing.T) {
+	memStore := NewMemorySchedulerStore()
+	sourceID := "fenced-source"
+	workerA := "worker-old"
+	workerB := "worker-new"
+
+	// Worker A claims lease with short duration (already expired)
+	leaseA, claimed, err := memStore.ClaimLease(sourceID, workerA, -1*time.Second)
+	if err != nil || !claimed {
+		t.Fatalf("Expected workerA to claim lease, err: %v", err)
+	}
+
+	// Worker B claims the expired lease, incrementing fence token to 2
+	leaseB, claimedB, err := memStore.ClaimLease(sourceID, workerB, 5*time.Minute)
+	if err != nil || !claimedB {
+		t.Fatalf("Expected workerB to claim expired lease, err: %v", err)
+	}
+	if leaseB.FenceToken <= leaseA.FenceToken {
+		t.Fatalf("Expected leaseB token > leaseA token, got A=%d, B=%d", leaseA.FenceToken, leaseB.FenceToken)
+	}
+
+	// Stale Worker A attempts to record outcome using old token
+	err = memStore.RecordOutcome(RunOutcome{
+		SourceID:      sourceID,
+		WorkerID:      workerA,
+		FenceToken:    leaseA.FenceToken,
+		JobsCollected: 99,
+		Status:        "COMPLETED",
+	})
+	if !errors.Is(err, ErrLeaseConflict) {
+		t.Fatalf("Expected ErrLeaseConflict when stale worker records outcome, got: %v", err)
+	}
+
+	// Verify Worker B's lease is STILL ACTIVE and was NOT cleared
+	cp, err := memStore.GetCheckpoint(sourceID)
+	if err != nil {
+		t.Fatalf("Failed to get checkpoint: %v", err)
+	}
+	if cp.WorkerID != workerB {
+		t.Fatalf("Stale worker A improperly cleared Worker B's lease! WorkerID is '%s'", cp.WorkerID)
+	}
+	if cp.Status != "RUNNING" {
+		t.Fatalf("Expected status RUNNING, got '%s'", cp.Status)
+	}
+
+	// Stale Worker A also cannot release Worker B's lease
+	err = memStore.ReleaseLease(sourceID, workerA, leaseA.FenceToken)
+	if !errors.Is(err, ErrLeaseConflict) {
+		t.Fatalf("Expected ErrLeaseConflict when stale worker attempts release, got: %v", err)
 	}
 }
 
@@ -308,5 +370,45 @@ func TestOfflineFixtureExecution(t *testing.T) {
 
 	if len(pub.Envelopes) != 2 {
 		t.Errorf("Expected 2 published envelopes, got %d", len(pub.Envelopes))
+	}
+}
+
+// 9. Lever Fixture CLI Parsing Integrity Test
+func TestLeverFixtureParsingIntegrity(t *testing.T) {
+	fixturePath := filepath.Join("fixtures", "lever_sample.json")
+	conn := &FixtureConnector{FixturePath: fixturePath}
+
+	sourceCfg, err := GetSource("fixture-local")
+	if err != nil {
+		t.Fatalf("Source fixture-local not found in registry: %v", err)
+	}
+
+	jobs, err := conn.FetchJobs(context.Background(), sourceCfg, 1)
+	if err != nil {
+		t.Fatalf("FetchJobs failed for lever fixture: %v", err)
+	}
+
+	if len(jobs) != 1 {
+		t.Fatalf("Expected 1 job parsed, got %d", len(jobs))
+	}
+
+	job := jobs[0]
+	if job.SourceJobID != "lever-9912a" {
+		t.Errorf("Expected non-empty SourceJobID 'lever-9912a', got '%s'", job.SourceJobID)
+	}
+	if job.Title != "Principal Software Architect" {
+		t.Errorf("Expected non-empty Title 'Principal Software Architect', got '%s'", job.Title)
+	}
+	if job.Company != "Tech Corp" {
+		t.Errorf("Expected Company 'Tech Corp', got '%s'", job.Company)
+	}
+	if job.Location != "Dhaka, Bangladesh" {
+		t.Errorf("Expected Location 'Dhaka, Bangladesh', got '%s'", job.Location)
+	}
+	if job.URL != "https://jobs.lever.co/techcorp/lever-9912a" {
+		t.Errorf("Expected URL 'https://jobs.lever.co/techcorp/lever-9912a', got '%s'", job.URL)
+	}
+	if len(job.SourceURLHash) != 64 {
+		t.Errorf("Expected 64-char hex hash, got '%s'", job.SourceURLHash)
 	}
 }

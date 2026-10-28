@@ -230,6 +230,7 @@ jobs:
         env:
           MONGO_URI: mongodb://localhost:27017/job_aggregator
           ES_NODE: http://localhost:9200
+          REQUIRE_ES: 'true'
         run: npm run test:integration
 
   # -------------------------------------------------------------

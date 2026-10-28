@@ -529,5 +529,16 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.strictEqual(report.dry_run, true);
       assert.ok(report.scanned_mongo >= 0);
     });
+
+    it('rebuilds index with zero downtime and verifies count and query gate', async () => {
+      if (!esClient) return;
+
+      const { rebuildIndex } = require('../src/search/reindex');
+      const rebuildRes = await rebuildIndex(jobsCollection, esClient, { alias: TEST_ES_INDEX });
+      assert.strictEqual(rebuildRes.success, true);
+      assert.ok(rebuildRes.activeJobsProjected > 0);
+      assert.strictEqual(rebuildRes.verified, true);
+      assert.strictEqual(rebuildRes.aliasSwitched, true);
+    });
   });
 });

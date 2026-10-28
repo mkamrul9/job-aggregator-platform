@@ -168,7 +168,7 @@ All platform services interact through versioned machine-readable contracts loca
   - Lockfile: `service-scraper/go.sum`
   - Dependency Policy: Module-based retrieval (`go.mod` / `go.sum`).
 - **Commands & Verification:**
-  - Test: `go test -v ./...` — `[Verified]` (all 8 unit tests pass cleanly: SSRF, parsers, drift, scheduler leases, fixtures)
+  - Test: `go test -v ./...` — `[Verified]` (all 9 unit tests pass cleanly: SSRF with initial request and connection pinning, parsers, drift, monotonic scheduler leases, fixtures)
   - Vet: `go vet ./...` — `[Verified]` (passes with zero defects)
   - Standalone CLI: `go run . -mode=cli -fixture=fixtures/greenhouse_sample.json -format=json` — `[Verified]` (zero network/Kafka dependency)
   - Source Registry: `go run . -list-sources` — `[Verified]` (lists operational status and permissions for all registered sources)
@@ -244,7 +244,7 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `service-ingestion/package.json`
   - Lockfile: `service-ingestion/package-lock.json`
 - **Commands & Verification:**
-  - Unit Tests: `npm test` — `[Verified]` (43 unit tests covering URL normalization, regex escaping, stable UUIDs, IPv6 ULA/loopback outbound safety, query validation, event validation, dead-letter quarantine, atomic Mongo revisions, and projection outbox/reconciliation)
+  - Unit Tests: `npm test` — `[Verified]` (56 unit tests covering URL normalization, regex escaping, stable UUIDs, IPv6 ULA/loopback outbound safety, query validation, authoritative schema validation, dead-letter quarantine, atomic Mongo revisions with salary/skills/moderation/stale protection, monotonic search projection guards, and zero-downtime reindex/reconciliation)
   - Integration Tests: `npm run test:integration` — `[Verified]` (strict integration tests against isolated test MongoDB database and isolated Elasticsearch index, verifying event ingestion, dead-letter quarantine, outbox flushing, and catalog reconciliation)
   - Standalone Seed: `npm run seed` — `[Verified]` (seeds 12 curated Bangladesh tech jobs with explicit `is_synthetic` provenance into MongoDB and ES)
   - Standalone Event Runner: `npm run event-runner -- --file=test/fixtures/collected_events.ndjson` — `[Verified]` (processes NDJSON event streams into Mongo and ES without Kafka)

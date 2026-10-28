@@ -61,17 +61,28 @@ async function processMessage(messageValue, { jobsCollection, deadLettersCollect
   const validation = validateIncomingEvent(messageValue);
   if (!validation.valid) {
     console.warn(`⚠️ Poison/Malformed event detected: ${validation.errors.join('; ')}`);
-    if (deadLettersCollection) {
-      await quarantineDeadLetter(deadLettersCollection, messageValue, validation.errors, validation.parsed);
+    if (!deadLettersCollection) {
+      throw new Error(
+        `Durable quarantine unavailable: deadLettersCollection is missing. Rejected event errors: ${validation.errors.join('; ')}`
+      );
     }
-    return { quarantined: true, errors: validation.errors };
+    const deadLetter = await quarantineDeadLetter(
+      deadLettersCollection,
+      messageValue,
+      validation.errors,
+      validation.envelope || validation.parsed
+    );
+    return { quarantined: true, errors: validation.errors, dead_letter_id: deadLetter?.id };
   }
 
   let canonicalJob = null;
 
   // 2. Upsert into MongoDB canonical collection
   if (jobsCollection) {
-    canonicalJob = await upsertJobDocument(jobsCollection, validation.payload);
+    canonicalJob = await upsertJobDocument(jobsCollection, validation.payload, {
+      eventTimestamp: validation.envelope?.timestamp,
+      isEnvelope: Boolean(validation.isEnvelope),
+    });
   } else {
     const { toCanonicalJob } = require('./src/models/job');
     canonicalJob = toCanonicalJob(validation.payload);

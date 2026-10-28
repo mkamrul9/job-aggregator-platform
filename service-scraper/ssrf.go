@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -140,6 +141,19 @@ func ValidateTargetURL(rawURL string, approvedHosts []string) (*url.URL, error) 
 	return parsed, nil
 }
 
+// ssrfEnforcingTransport wraps http.RoundTripper to enforce URL policy on every request
+type ssrfEnforcingTransport struct {
+	base          http.RoundTripper
+	approvedHosts []string
+}
+
+func (t *ssrfEnforcingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, err := ValidateTargetURL(req.URL.String(), t.approvedHosts); err != nil {
+		return nil, fmt.Errorf("SSRF policy rejected request to '%s': %w", req.URL.String(), err)
+	}
+	return t.base.RoundTrip(req)
+}
+
 // NewSafeHTTPClient returns an HTTP client hardened against SSRF, DNS rebinding,
 // and open redirects to prohibited destinations.
 func NewSafeHTTPClient(timeout time.Duration, approvedHosts []string) *http.Client {
@@ -160,19 +174,32 @@ func NewSafeHTTPClient(timeout time.Duration, approvedHosts []string) *http.Clie
 				return nil, err
 			}
 
-			// Validate IPs before dialing
+			// Validate and resolve IPs before dialing
 			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 			if err != nil {
 				return nil, err
 			}
 
+			var allowedIP net.IP
 			for _, ip := range ips {
 				if IsPrivateOrRestrictedIP(ip) {
 					return nil, fmt.Errorf("%w: dialing %s (%s)", ErrPrivateIPBlocked, host, ip.String())
 				}
+				if allowedIP == nil {
+					allowedIP = ip
+				}
 			}
 
-			return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+			if allowedIP == nil {
+				return nil, fmt.Errorf("no valid destination IP resolved for host %s", host)
+			}
+
+			// Pin connection directly to the validated IP to prevent DNS rebinding
+			pinnedAddr := net.JoinHostPort(allowedIP.String(), port)
+			return dialer.DialContext(ctx, network, pinnedAddr)
+		},
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
@@ -181,16 +208,20 @@ func NewSafeHTTPClient(timeout time.Duration, approvedHosts []string) *http.Clie
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
+	enforcingTransport := &ssrfEnforcingTransport{
+		base:          transport,
+		approvedHosts: approvedHosts,
+	}
+
 	return &http.Client{
-		Transport: transport,
+		Transport: enforcingTransport,
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return ErrTooManyRedirects
 			}
 			// Revalidate redirect destination against SSRF policy
-			_, err := ValidateTargetURL(req.URL.String(), approvedHosts)
-			if err != nil {
+			if _, err := ValidateTargetURL(req.URL.String(), approvedHosts); err != nil {
 				return fmt.Errorf("redirect blocked: %w", err)
 			}
 			return nil

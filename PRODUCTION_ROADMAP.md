@@ -363,10 +363,10 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
   - Standalone event runner (`bin/event-runner.js`) processing NDJSON event streams or standard input without Kafka.
   - Minimal operator CLI (`bin/operator.js`) providing commands for `status`, `dead-letters list|inspect|replay`, `reconcile [--dry-run]`, and `reindex`.
 - **Verification & Testing Suite:**
-  - 8 Go unit tests in `service-scraper` covering SSRF guards, ATS parsers, schema drift, scheduler leases, rate limiters, and offline fixtures. `go vet` passes cleanly.
+  - 9 Go unit tests in `service-scraper` covering SSRF guards, ATS parsers, schema drift, monotonic scheduler leases (`FenceToken`), rate limiters, and offline fixtures. `go vet` passes cleanly.
   - 6 unit tests in `service-notification` including versioned event envelope unwrapping.
-  - 43 unit tests in `service-ingestion` covering models, schema validators, dead-letter quarantine, atomic Mongo revisions, and projection outbox/reconciliation.
-  - Strict integration tests against isolated MongoDB and Elasticsearch verifying event ingestion, dead-letter isolation, outbox flushing, and reconciliation.
+  - 56 unit tests in `service-ingestion` covering models, schema validators, dead-letter quarantine, atomic Mongo revisions, monotonic search projection guards, reconciliation with `search_after`, and zero-downtime index rebuild.
+  - Strict integration tests against isolated MongoDB and Elasticsearch verifying event ingestion, dead-letter isolation, outbox flushing, reconciliation, and zero-downtime index rebuild.
   - Contract validation suite (`contracts/validate-contracts.js`) passing 100%.
   - All seven services compile, test, and build cleanly.
 

@@ -542,6 +542,73 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(inserted.retry_count, 0);
       assert.strictEqual(inserted.errors[0], 'Missing required fields');
     });
+
+    it('rejects event with non-string types (event_type=42, schema_version=999, payload.title=123)', () => {
+      const malformed = {
+        event_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+        event_type: 42,
+        schema_version: 999,
+        producer: 'service-scraper',
+        timestamp: '2026-10-27T12:00:00Z',
+        correlation_id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        payload: {
+          title: 123,
+        },
+      };
+      const res = validateIncomingEvent(malformed);
+      assert.strictEqual(res.valid, false);
+      assert.ok(res.errors.length > 0);
+    });
+
+    it('rejects unsupported event envelope like resume.parsed.v99', () => {
+      const unsupported = {
+        event_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+        event_type: 'resume.parsed.v99',
+        schema_version: '99.0.0',
+        producer: 'service-resume',
+        timestamp: '2026-10-27T12:00:00Z',
+        correlation_id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        payload: { arbitrary: 'data' },
+      };
+      const res = validateIncomingEvent(unsupported);
+      assert.strictEqual(res.valid, false);
+      assert.ok(res.errors.some((e) => e.includes('Unsupported event')));
+    });
+
+    it('rejects envelope when source_url_hash does not match hash of url', () => {
+      const hashMismatch = {
+        event_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+        event_type: 'job.collected.v1',
+        schema_version: '1.0.0',
+        producer: 'service-scraper',
+        timestamp: '2026-10-27T12:00:00Z',
+        correlation_id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        payload: {
+          source: 'greenhouse-feed',
+          source_job_id: '4829101',
+          url: 'https://boards.greenhouse.io/pathao/jobs/4829101',
+          source_url_hash: '0000000000000000000000000000000000000000000000000000000000000000',
+          title: 'Senior Backend Engineer',
+          company: 'Pathao',
+          location: 'Dhaka, Bangladesh',
+          description: 'Building distributed Go infrastructure.',
+          collected_at: '2026-10-28T12:00:00Z',
+        },
+      };
+      const res = validateIncomingEvent(hashMismatch);
+      assert.strictEqual(res.valid, false);
+      assert.ok(res.errors.some((e) => e.includes('source_url_hash')));
+    });
+
+    it('fails fast when deadLettersCollection is missing on quarantine attempt', async () => {
+      const poison = Buffer.from(JSON.stringify({ junk: 12345 }));
+      await assert.rejects(
+        async () => {
+          await processMessage(poison, { deadLettersCollection: null });
+        },
+        /Durable quarantine unavailable/
+      );
+    });
   });
 
   describe('canonical MongoDB persistence, idempotency, and revision tracking', () => {
@@ -636,6 +703,179 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(result.projection_status, 'INDEXED');
       assert.strictEqual(updatedDoc.$set.revision, 3);
       assert.strictEqual(updatedDoc.$set.projection_status, 'INDEXED');
+    });
+
+    it('bumps revision and sets projection_status PENDING when only salary changes', async () => {
+      const existingDoc = {
+        _id: 'mongo-id-sal',
+        id: '11223344-5566-7788-9900-aabbccddeeff',
+        canonical_url: 'https://example.com/jobs/sal-1',
+        source_url_hash: 'salhash123',
+        title: 'Backend Engineer',
+        company: 'PayCorp',
+        location: 'Dhaka',
+        description: 'Standard backend role description.',
+        status: 'ACTIVE',
+        revision: 4,
+        projection_status: 'INDEXED',
+        salary: {
+          currency: 'BDT',
+          period: 'MONTHLY',
+          min: 80000,
+          max: 120000,
+          normalized_monthly_min: 80000,
+          normalized_monthly_max: 120000,
+        },
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      const salaryUpdate = {
+        url: 'https://example.com/jobs/sal-1',
+        title: 'Backend Engineer',
+        company: 'PayCorp',
+        location: 'Dhaka',
+        description: 'Standard backend role description.',
+        salary: {
+          currency: 'BDT',
+          period: 'MONTHLY',
+          min: 100000,
+          max: 150000,
+        },
+      };
+
+      const result = await upsertJobDocument(mockCollection, salaryUpdate);
+      assert.strictEqual(result.revision, 5);
+      assert.strictEqual(result.is_updated, true);
+      assert.strictEqual(result.projection_status, 'PENDING');
+      assert.strictEqual(updatedDoc.$set.revision, 5);
+      assert.strictEqual(updatedDoc.$set.projection_status, 'PENDING');
+    });
+
+    it('bumps revision and sets projection_status PENDING when only skills change', async () => {
+      const existingDoc = {
+        _id: 'mongo-id-sk',
+        id: '22334455-6677-8899-0011-aabbccddeeff',
+        canonical_url: 'https://example.com/jobs/sk-1',
+        source_url_hash: 'skhash123',
+        title: 'Fullstack Dev',
+        company: 'SkillCorp',
+        location: 'Dhaka',
+        description: 'Standard fullstack role description.',
+        status: 'ACTIVE',
+        revision: 2,
+        projection_status: 'INDEXED',
+        skills: ['Node.js', 'React'],
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      const skillUpdate = {
+        url: 'https://example.com/jobs/sk-1',
+        title: 'Fullstack Dev',
+        company: 'SkillCorp',
+        location: 'Dhaka',
+        description: 'Standard fullstack role description.',
+        skills: ['Node.js', 'React', 'TypeScript'],
+      };
+
+      const result = await upsertJobDocument(mockCollection, skillUpdate);
+      assert.strictEqual(result.revision, 3);
+      assert.strictEqual(result.is_updated, true);
+      assert.strictEqual(result.projection_status, 'PENDING');
+    });
+
+    it('preserves EXPIRED moderation status even when crawler re-crawls listing', async () => {
+      const existingDoc = {
+        _id: 'mongo-id-exp',
+        id: '33445566-7788-9900-1122-aabbccddeeff',
+        canonical_url: 'https://example.com/jobs/exp-1',
+        source_url_hash: 'exphash123',
+        title: 'Archived Dev',
+        company: 'PastCorp',
+        location: 'Dhaka',
+        description: 'Role was closed by moderator.',
+        status: 'EXPIRED',
+        revision: 2,
+        projection_status: 'INDEXED',
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      const crawlerInput = {
+        url: 'https://example.com/jobs/exp-1',
+        title: 'Archived Dev',
+        company: 'PastCorp',
+        location: 'Dhaka',
+        description: 'Role was closed by moderator.',
+        status: 'ACTIVE', // Crawler claims ACTIVE
+      };
+
+      const result = await upsertJobDocument(mockCollection, crawlerInput);
+      assert.strictEqual(result.status, 'EXPIRED'); // Preserved EXPIRED
+      assert.strictEqual(updatedDoc.$set.status, 'EXPIRED');
+    });
+
+    it('ignores content changes from stale event with older event timestamp', async () => {
+      const existingDoc = {
+        _id: 'mongo-id-stale',
+        id: '44556677-8899-0011-2233-aabbccddeeff',
+        canonical_url: 'https://example.com/jobs/stale-1',
+        source_url_hash: 'stalehash123',
+        title: 'New Title V2',
+        company: 'FreshCorp',
+        location: 'Dhaka',
+        description: 'Updated fresh description.',
+        status: 'ACTIVE',
+        revision: 3,
+        projection_status: 'INDEXED',
+        last_event_timestamp: new Date('2026-10-28T12:00:00Z'),
+      };
+
+      let updatedDoc = null;
+      const mockCollection = {
+        findOne: async () => existingDoc,
+        updateOne: async (filter, update) => {
+          updatedDoc = update;
+        },
+      };
+
+      const staleEventInput = {
+        url: 'https://example.com/jobs/stale-1',
+        title: 'Old Title V1',
+        company: 'FreshCorp',
+        location: 'Dhaka',
+        description: 'Old stale description from replayed queue.',
+      };
+
+      const result = await upsertJobDocument(mockCollection, staleEventInput, {
+        eventTimestamp: '2026-10-27T10:00:00Z', // Older than 2026-10-28
+        isEnvelope: true,
+      });
+
+      // Does not regress title or bump revision
+      assert.strictEqual(result.title, 'New Title V2');
+      assert.strictEqual(result.revision, 3);
+      assert.strictEqual(result.is_updated, false);
+      assert.strictEqual(updatedDoc.$set.title, 'New Title V2');
     });
   });
 
@@ -734,6 +974,189 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(report.missing_indexed, 1);
       assert.strictEqual(report.excess_deleted, 1);
       assert.strictEqual(report.dry_run, false);
+    });
+
+    it('reconcileCatalog flags document as stale when only salary differs', async () => {
+      const mongoJobs = [
+        {
+          _id: 'm-sal',
+          id: 'job-sal-1',
+          title: 'Dev',
+          description: 'Desc',
+          status: 'ACTIVE',
+          revision: 2,
+          salary: { currency: 'BDT', period: 'MONTHLY', min: 90000, max: 120000 },
+        },
+      ];
+
+      const mockCollection = {
+        find: () => ({
+          batchSize: () => ({
+            hasNext: async () => mongoJobs.length > 0,
+            next: async () => mongoJobs.pop(),
+          }),
+        }),
+        findOne: async () => ({ id: 'job-sal-1' }),
+        updateOne: async () => {},
+      };
+
+      // ES has different salary
+      const mockEsClient = {
+        get: async () => ({
+          _source: {
+            id: 'job-sal-1',
+            title: 'Dev',
+            description: 'Desc',
+            status: 'ACTIVE',
+            revision: 2,
+            salary: { currency: 'BDT', period: 'MONTHLY', min: 70000, max: 100000 },
+          },
+        }),
+        search: async () => ({ hits: { hits: [] } }),
+        index: async () => {},
+      };
+
+      const report = await reconcileCatalog(mockCollection, mockEsClient, { dryRun: false });
+      assert.strictEqual(report.stale_updated, 1);
+    });
+
+    it('reconcileCatalog treats 500 error from ES as error and records in errors array', async () => {
+      const mongoJobs = [
+        {
+          _id: 'm-err',
+          id: 'job-err-1',
+          title: 'Dev',
+          description: 'Desc',
+          status: 'ACTIVE',
+        },
+      ];
+
+      const mockCollection = {
+        find: () => ({
+          batchSize: () => ({
+            hasNext: async () => mongoJobs.length > 0,
+            next: async () => mongoJobs.pop(),
+          }),
+        }),
+        findOne: async () => null,
+      };
+
+      const mockEsClient = {
+        get: async () => {
+          const err = new Error('Internal Server Error');
+          err.meta = { statusCode: 500 };
+          throw err;
+        },
+        search: async () => ({ hits: { hits: [] } }),
+      };
+
+      const report = await reconcileCatalog(mockCollection, mockEsClient, { dryRun: false });
+      assert.strictEqual(report.missing_indexed, 0); // Must NOT treat 500 as missing!
+      assert.strictEqual(report.errors.length, 1);
+      assert.ok(report.errors[0].error.includes('Elasticsearch lookup failed'));
+    });
+  });
+
+  describe('index rebuild, cleanup, and cutover safety', () => {
+    const { rebuildIndex } = require('../src/search/reindex');
+
+    it('does not delete serving alias target index if post-cutover Mongo update fails', async () => {
+      let createdIndex = null;
+      let deletedIndices = [];
+      let aliasActions = [];
+
+      const mockEsClient = {
+        count: async () => ({ count: 1 }),
+        search: async () => ({ hits: { hits: [{ _id: 'job-1' }] } }),
+        indices: {
+          create: async ({ index }) => {
+            createdIndex = index;
+          },
+          refresh: async () => {},
+          count: async () => ({ count: 1 }),
+          search: async () => ({ hits: { hits: [{ _id: 'job-1' }] } }),
+          exists: async () => false,
+          getAlias: async () => ({}),
+          updateAliases: async ({ body }) => {
+            aliasActions = body.actions;
+          },
+          delete: async ({ index }) => {
+            deletedIndices.push(index);
+          },
+        },
+        bulk: async () => ({ items: [{ index: { _id: 'job-1' } }] }),
+      };
+
+      let hasRead = false;
+      const mockCollection = {
+        find: () => ({
+          hasNext: async () => !hasRead,
+          next: async () => {
+            hasRead = true;
+            return { id: 'job-1', title: 'Cutover Test', status: 'ACTIVE', revision: 1 };
+          },
+        }),
+        updateOne: async () => {
+          // Controlled Mongo failure post-cutover
+          throw new Error('Post-cutover MongoDB connection terminated');
+        },
+      };
+
+      await assert.rejects(
+        async () => {
+          await rebuildIndex(mockCollection, mockEsClient, { alias: 'jobs_index' });
+        },
+        /Post-cutover MongoDB connection terminated/
+      );
+
+      // Verify alias cutover happened
+      assert.ok(aliasActions.some((a) => a.add && a.add.index === createdIndex));
+      // CRITICAL GUARANTEE: Target index serving traffic must NOT be deleted!
+      assert.ok(
+        !deletedIndices.includes(createdIndex),
+        `Safety violation: rebuildIndex deleted target index ${createdIndex} which is serving traffic!`
+      );
+    });
+
+    it('successfully migrates a legacy physical index to an alias', async () => {
+      let deletedPhysicalIndex = null;
+      let createdAlias = null;
+
+      const mockEsClient = {
+        count: async () => ({ count: 0 }),
+        search: async () => ({ hits: { hits: [] } }),
+        indices: {
+          create: async () => {},
+          refresh: async () => {},
+          count: async () => ({ count: 0 }),
+          search: async () => ({ hits: { hits: [] } }),
+          exists: async ({ index }) => index === 'jobs_index', // Physical index exists!
+          getAlias: async () => {
+            const err = new Error('Not an alias');
+            err.meta = { statusCode: 404 };
+            throw err;
+          },
+          delete: async ({ index }) => {
+            deletedPhysicalIndex = index;
+          },
+          putAlias: async ({ index, name }) => {
+            createdAlias = { index, name };
+          },
+        },
+        bulk: async () => ({}),
+      };
+
+      const mockCollection = {
+        find: () => ({
+          hasNext: async () => false,
+        }),
+      };
+
+      const result = await rebuildIndex(mockCollection, mockEsClient, { alias: 'jobs_index' });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(deletedPhysicalIndex, 'jobs_index');
+      assert.strictEqual(createdAlias.name, 'jobs_index');
+      assert.strictEqual(createdAlias.index, result.targetIndex);
     });
   });
 });

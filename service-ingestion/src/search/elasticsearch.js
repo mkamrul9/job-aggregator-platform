@@ -85,15 +85,22 @@ async function ensureEsIndex(client, targetIndex = null) {
 }
 
 /**
- * Indexes or updates a canonical job into Elasticsearch.
+ * Indexes or updates a canonical job into Elasticsearch with monotonic revision enforcement.
+ * Prevents stale workers from overwriting newer documents in Elasticsearch.
  */
 async function indexJobToEs(client, job, targetIndex = null) {
   if (!client || !job) return { success: false, reason: 'Client or job missing' };
   const indexName = targetIndex || getEsIndex();
+  const revision = typeof job.revision === 'number' && Number.isInteger(job.revision) && job.revision > 0
+    ? job.revision
+    : 1;
+
   try {
-    await client.index({
+    const res = await client.index({
       index: indexName,
       id: job.id,
+      version: revision,
+      version_type: 'external_gte',
       document: {
         id: job.id,
         canonical_url: job.canonical_url,
@@ -105,16 +112,34 @@ async function indexJobToEs(client, job, targetIndex = null) {
         remote_eligibility: job.remote_eligibility,
         job_type: job.job_type,
         seniority: job.seniority,
-        skills: job.skills,
+        skills: Array.isArray(job.skills) ? job.skills : [],
         salary: job.salary || null,
         status: job.status,
         published_at: job.published_at instanceof Date ? job.published_at.toISOString() : job.published_at,
         ingested_at: job.ingested_at instanceof Date ? job.ingested_at.toISOString() : job.ingested_at,
+        revision: revision,
         is_synthetic: Boolean(job.is_synthetic),
       },
     });
-    return { success: true, id: job.id };
+    return { success: true, id: job.id, revision, version: res?._version ?? res?.body?._version ?? revision };
   } catch (err) {
+    const isConflict =
+      err.meta?.statusCode === 409 ||
+      (err.name === 'ResponseError' &&
+        (err.message.includes('version_conflict_engine_exception') || String(err.meta?.body).includes('version_conflict')));
+
+    if (isConflict) {
+      console.warn(
+        `⚠️ Monotonic revision guard: Write rejected by Elasticsearch for job ${job.id} (revision ${revision}) due to newer existing version in search index.`
+      );
+      return {
+        success: false,
+        versionConflict: true,
+        revision,
+        reason: 'Newer revision already exists in search index',
+      };
+    }
+
     console.error(`⚠️ Elasticsearch indexing failed for "${job.title}":`, err.message);
     throw err;
   }

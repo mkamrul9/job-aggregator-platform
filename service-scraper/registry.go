@@ -7,12 +7,12 @@ import (
 )
 
 var (
-	registryLock sync.RWMutex
+	registryLock   sync.RWMutex
 	sourceRegistry = make(map[string]SourceConfig)
 )
 
 func init() {
-	// Register the agreed launch sources with explicit operational provenance
+	// Register sources with explicit operational provenance and verifiable configuration
 	defaultSources := []SourceConfig{
 		{
 			ID:             "greenhouse-feed",
@@ -64,19 +64,16 @@ func init() {
 			Version:        "1.0.0",
 			Owner:          "Seekers Ingestion Team",
 			ApprovedHosts:  []string{"jobs.bdjobs.com", "bdjobs.com"},
-			PermissionRef:  "Public syndication / public web listings; rate-limited compliant fetch; reviewed 2026-10-27",
+			PermissionRef:  "Syndication licensing pending formal publisher agreement",
 			ReviewDate:     "2026-10-27",
 			FieldsCoverage: []string{"title", "company", "location", "description", "url", "source_job_id"},
 			Attribution:    "Source: BDJobs public listings",
-			FetchBudget: FetchBudget{
-				MaxRequestsPerSecond: 1.0,
-				MaxBurst:             2,
-				DailyLimit:           1000,
-			},
+			FetchBudget:    FetchBudget{MaxRequestsPerSecond: 1.0, MaxBurst: 2, DailyLimit: 1000},
 			TimeoutSeconds: 15,
 			RetentionDays:  90,
 			ExpiryDays:     30,
-			Enabled:        true,
+			Enabled:        false,
+			DisabledReason: "Live collection disabled: unverified custom API schema; requires dedicated connector implementation and approved syndication agreement",
 			Type:           "feed",
 			BaseURL:        "https://jobs.bdjobs.com/jobsearch.asp",
 		},
@@ -86,19 +83,16 @@ func init() {
 			Version:        "1.0.0",
 			Owner:          "Seekers Ingestion Team",
 			ApprovedHosts:  []string{"chaldal.com", "careers.chaldal.com"},
-			PermissionRef:  "Direct employer public careers page; robots.txt allow; reviewed 2026-10-27",
+			PermissionRef:  "Employer direct careers API pending API schema specification",
 			ReviewDate:     "2026-10-27",
 			FieldsCoverage: []string{"title", "company", "location", "description", "url", "source_job_id"},
 			Attribution:    "Source: Chaldal Careers",
-			FetchBudget: FetchBudget{
-				MaxRequestsPerSecond: 1.0,
-				MaxBurst:             2,
-				DailyLimit:           500,
-			},
+			FetchBudget:    FetchBudget{MaxRequestsPerSecond: 1.0, MaxBurst: 2, DailyLimit: 500},
 			TimeoutSeconds: 15,
 			RetentionDays:  90,
 			ExpiryDays:     30,
-			Enabled:        true,
+			Enabled:        false,
+			DisabledReason: "Live collection disabled: employer endpoint is not an ATS feed; requires verified connector",
 			Type:           "json_api",
 			BaseURL:        "https://careers.chaldal.com/api/jobs",
 		},
@@ -108,19 +102,16 @@ func init() {
 			Version:        "1.0.0",
 			Owner:          "Seekers Ingestion Team",
 			ApprovedHosts:  []string{"pathao.com", "careers.pathao.com"},
-			PermissionRef:  "Direct employer public careers feed; robots.txt allow; reviewed 2026-10-27",
+			PermissionRef:  "Employer direct careers feed pending endpoint confirmation",
 			ReviewDate:     "2026-10-27",
 			FieldsCoverage: []string{"title", "company", "location", "description", "url", "source_job_id"},
 			Attribution:    "Source: Pathao Careers",
-			FetchBudget: FetchBudget{
-				MaxRequestsPerSecond: 1.0,
-				MaxBurst:             2,
-				DailyLimit:           500,
-			},
+			FetchBudget:    FetchBudget{MaxRequestsPerSecond: 1.0, MaxBurst: 2, DailyLimit: 500},
 			TimeoutSeconds: 15,
 			RetentionDays:  90,
 			ExpiryDays:     30,
-			Enabled:        true,
+			Enabled:        false,
+			DisabledReason: "Live collection disabled: employer endpoint is not an ATS feed; requires verified connector",
 			Type:           "json_api",
 			BaseURL:        "https://pathao.com/careers/jobs",
 		},
@@ -148,11 +139,11 @@ func init() {
 			Version:        "1.0.0",
 			Owner:          "Seekers Engineering",
 			ApprovedHosts:  []string{"localhost", "127.0.0.1"},
-			PermissionRef:  "Local synthetic test dataset for offline verification",
+			PermissionRef:  "Local mock fixture data for offline integration testing; no external network traffic",
 			ReviewDate:     "2026-10-27",
 			FieldsCoverage: []string{"title", "company", "location", "description", "url", "source_job_id"},
 			Attribution:    "Synthetic test fixture",
-			FetchBudget:    FetchBudget{MaxRequestsPerSecond: 100, MaxBurst: 100, DailyLimit: 100000},
+			FetchBudget:    FetchBudget{MaxRequestsPerSecond: 100.0, MaxBurst: 100, DailyLimit: 100000},
 			TimeoutSeconds: 5,
 			RetentionDays:  1,
 			ExpiryDays:     1,
@@ -162,48 +153,44 @@ func init() {
 	}
 
 	for _, s := range defaultSources {
-		RegisterSource(s)
+		sourceRegistry[s.ID] = s
 	}
 }
 
-// RegisterSource adds or updates a source configuration in the registry
-func RegisterSource(cfg SourceConfig) {
-	registryLock.Lock()
-	defer registryLock.Unlock()
-	sourceRegistry[cfg.ID] = cfg
-}
-
-// GetSource retrieves a source configuration by ID
+// GetSource returns the registered configuration for a source ID
 func GetSource(id string) (SourceConfig, error) {
 	registryLock.RLock()
 	defer registryLock.RUnlock()
-	cfg, exists := sourceRegistry[id]
+
+	src, exists := sourceRegistry[id]
 	if !exists {
 		return SourceConfig{}, fmt.Errorf("source '%s' not found in registry", id)
 	}
-	return cfg, nil
+	return src, nil
 }
 
 // ListSources returns all registered source configurations
 func ListSources() []SourceConfig {
 	registryLock.RLock()
 	defer registryLock.RUnlock()
-	list := make([]SourceConfig, 0, len(sourceRegistry))
-	for _, cfg := range sourceRegistry {
-		list = append(list, cfg)
+
+	out := make([]SourceConfig, 0, len(sourceRegistry))
+	for _, s := range sourceRegistry {
+		out = append(out, s)
 	}
-	return list
+	return out
 }
 
-// ListEnabledSources returns all sources where Enabled == true
+// ListEnabledSources returns only active and compliant sources
 func ListEnabledSources() []SourceConfig {
 	registryLock.RLock()
 	defer registryLock.RUnlock()
-	list := make([]SourceConfig, 0)
-	for _, cfg := range sourceRegistry {
-		if cfg.Enabled {
-			list = append(list, cfg)
+
+	out := make([]SourceConfig, 0, len(sourceRegistry))
+	for _, s := range sourceRegistry {
+		if s.Enabled {
+			out = append(out, s)
 		}
 	}
-	return list
+	return out
 }

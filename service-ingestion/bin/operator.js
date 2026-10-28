@@ -132,6 +132,10 @@ async function main() {
         const report = await reconcileCatalog(jobsCollection, esClient, { dryRun });
         console.log('\n--- Reconciliation Report ---');
         console.log(JSON.stringify(report, null, 2));
+        if (report.errors && report.errors.length > 0) {
+          console.error(`⚠️ Reconciliation completed with ${report.errors.length} errors.`);
+          process.exit(2);
+        }
         break;
       }
 
@@ -141,9 +145,14 @@ async function main() {
           process.exit(1);
         }
         console.log('Initiating zero-downtime index rebuild...');
-        const result = await rebuildIndex(jobsCollection, esClient);
-        console.log('\n--- Reindex Result ---');
-        console.log(JSON.stringify(result, null, 2));
+        try {
+          const result = await rebuildIndex(jobsCollection, esClient);
+          console.log('\n--- Reindex Result ---');
+          console.log(JSON.stringify(result, null, 2));
+        } catch (err) {
+          console.error('❌ Reindex failed:', err.message);
+          process.exit(1);
+        }
         break;
       }
 

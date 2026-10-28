@@ -84,6 +84,7 @@ type SourceConfig struct {
 type Checkpoint struct {
 	SourceID       string    `json:"source_id"`
 	WorkerID       string    `json:"worker_id,omitempty"`
+	FenceToken     int64     `json:"fence_token"`
 	LeaseUntil     time.Time `json:"lease_until,omitempty"`
 	LastRunAt      time.Time `json:"last_run_at"`
 	LastSuccessAt  time.Time `json:"last_success_at"`
@@ -96,6 +97,8 @@ type Checkpoint struct {
 // RunOutcome summarizes the result of a collection cycle
 type RunOutcome struct {
 	SourceID       string        `json:"source_id"`
+	WorkerID       string        `json:"worker_id,omitempty"`
+	FenceToken     int64         `json:"fence_token,omitempty"`
 	JobsCollected  int           `json:"jobs_collected"`
 	Duration       time.Duration `json:"duration"`
 	Status         string        `json:"status"` // "COMPLETED", "FAILED", "DRIFT_WARNING"

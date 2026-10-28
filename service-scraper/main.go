@@ -155,14 +155,20 @@ func runCLI(opts cliOptions) {
 		}
 
 		correlationID := GenerateUUIDv4()
+		published := 0
 		for _, job := range jobs {
 			envelope := CreateEnvelope(job, correlationID)
 			if err := publisher.PublishEnvelope(ctx, envelope); err != nil {
 				log.Fatalf("Failed to publish job %s: %v", job.SourceJobID, err)
 			}
+			published++
 		}
 
-		log.Printf("Successfully collected and emitted %d jobs from fixture (exit 0)", len(jobs))
+		if closer, ok := publisher.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+
+		log.Printf("Successfully collected and emitted %d jobs from fixture (exit 0)", published)
 		os.Exit(0)
 	}
 
@@ -175,12 +181,20 @@ func runCLI(opts cliOptions) {
 		}
 
 		totalCollected := 0
+		hasFailures := false
 		for _, src := range sources {
 			count, err := collectFromSource(ctx, src, opts.limit, publisher)
 			if err != nil {
 				log.Printf("Error collecting from '%s': %v", src.ID, err)
+				hasFailures = true
 			}
 			totalCollected += count
+		}
+		if closer, ok := publisher.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		if hasFailures {
+			os.Exit(1)
 		}
 		log.Printf("CLI batch finished. Total collected: %d", totalCollected)
 		os.Exit(0)
@@ -196,6 +210,9 @@ func runCLI(opts cliOptions) {
 	}
 
 	count, err := collectFromSource(ctx, src, opts.limit, publisher)
+	if closer, ok := publisher.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 	if err != nil {
 		log.Printf("Collection error: %v", err)
 		os.Exit(1)
@@ -235,14 +252,17 @@ func collectFromSource(ctx context.Context, src SourceConfig, limit int, pub Eve
 	}
 
 	correlationID := GenerateUUIDv4()
+	published := 0
 	for _, j := range jobs {
 		envelope := CreateEnvelope(j, correlationID)
 		if err := pub.PublishEnvelope(ctx, envelope); err != nil {
 			log.Printf("Failed to publish job %s: %v", j.SourceJobID, err)
+			return published, fmt.Errorf("publish failed for job %s: %w", j.SourceJobID, err)
 		}
+		published++
 	}
 
-	return len(jobs), nil
+	return published, nil
 }
 
 // -------------------------------------------------------------
@@ -321,12 +341,12 @@ func runCrawlCycle(ctx context.Context, store SchedulerStore, pub EventPublisher
 
 			// 1. Try to claim durable lease
 			leaseDuration := 5 * time.Minute
-			claimed, err := store.ClaimLease(s.ID, workerID, leaseDuration)
+			lease, claimed, err := store.ClaimLease(s.ID, workerID, leaseDuration)
 			if err != nil {
 				log.Printf("[%s] Error attempting to claim lease: %v", s.ID, err)
 				return
 			}
-			if !claimed {
+			if !claimed || lease == nil {
 				log.Printf("[%s] Skipped: lease currently active with another worker", s.ID)
 				return
 			}
@@ -336,6 +356,8 @@ func runCrawlCycle(ctx context.Context, store SchedulerStore, pub EventPublisher
 
 			outcome := RunOutcome{
 				SourceID:      s.ID,
+				WorkerID:      workerID,
+				FenceToken:    lease.FenceToken,
 				JobsCollected: count,
 				Duration:      time.Since(startTime),
 				Status:        "COMPLETED",
@@ -348,8 +370,12 @@ func runCrawlCycle(ctx context.Context, store SchedulerStore, pub EventPublisher
 				log.Printf("[%s] Successfully collected %d jobs in %v", s.ID, count, outcome.Duration)
 			}
 
-			_ = store.RecordOutcome(outcome)
-			_ = store.ReleaseLease(s.ID, workerID)
+			if err := store.RecordOutcome(outcome); err != nil {
+				log.Printf("[%s] RecordOutcome error: %v", s.ID, err)
+			}
+			if err := store.ReleaseLease(s.ID, workerID, lease.FenceToken); err != nil {
+				log.Printf("[%s] ReleaseLease error: %v", s.ID, err)
+			}
 		}(src)
 	}
 

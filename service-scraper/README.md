@@ -76,9 +76,9 @@ A concurrent, resilient web scraping and event collection engine written in Go 1
 |---|---|---|---|---|---|
 | `greenhouse-feed` | Greenhouse Public ATS Feed | `json_api` | `boards-api.greenhouse.io`, `boards.greenhouse.io` | **ENABLED** | Public career board API per Greenhouse documentation; terms reviewed 2026-10-27 |
 | `lever-feed` | Lever Public Careers API | `json_api` | `api.lever.co`, `jobs.lever.co` | **ENABLED** | Public postings API per Lever developer documentation; terms reviewed 2026-10-27 |
-| `bdjobs-tech` | BDJobs Tech Category Feed | `feed` | `jobs.bdjobs.com`, `bdjobs.com` | **ENABLED** | Public listings syndication; compliant rate-limited fetch; reviewed 2026-10-27 |
-| `chaldal-careers` | Chaldal Engineering Careers | `json_api` | `chaldal.com`, `careers.chaldal.com` | **ENABLED** | Direct employer public careers page; robots.txt allow; reviewed 2026-10-27 |
-| `pathao-careers` | Pathao Tech Careers | `json_api` | `pathao.com`, `careers.pathao.com` | **ENABLED** | Direct employer public careers feed; robots.txt allow; reviewed 2026-10-27 |
+| `bdjobs-tech` | BDJobs Tech Category Feed | `feed` | `jobs.bdjobs.com`, `bdjobs.com` | **DISABLED** | Live collection disabled: unverified custom API schema; requires dedicated connector implementation and approved syndication agreement |
+| `chaldal-careers` | Chaldal Engineering Careers | `json_api` | `chaldal.com`, `careers.chaldal.com` | **DISABLED** | Live collection disabled: employer endpoint is not an ATS feed; requires verified connector |
+| `pathao-careers` | Pathao Tech Careers | `json_api` | `pathao.com`, `careers.pathao.com` | **DISABLED** | Live collection disabled: employer endpoint is not an ATS feed; requires verified connector |
 | `linkedin-bd` | LinkedIn Bangladesh | `html` | `www.linkedin.com` | **DISABLED** | Live collection disabled: automated scraping requires formal LinkedIn partner agreement |
 | `fixture-local` | Deterministic Local Test Fixture | `fixture` | `localhost` | **ENABLED** | Local synthetic test dataset for zero-network offline verification |
 
