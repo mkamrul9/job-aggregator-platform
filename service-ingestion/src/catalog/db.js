@@ -215,9 +215,6 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
         projection_status: projectionStatus,
         sightings,
       },
-      $setOnInsert: {
-        first_seen_at: existing.first_seen_at || canonical.first_seen_at || now,
-      },
     };
 
     if (typeof jobsCollection.updateOne === 'function') {
@@ -239,7 +236,8 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
 
   // New document
   const id = canonical.id;
-  const newDoc = {
+  const initialFirstSeen = canonical.first_seen_at || now;
+  const setDoc = {
     id,
     canonical_url: canonical.canonical_url,
     source_url_hash: sourceUrlHash,
@@ -256,7 +254,6 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
     description: canonical.description,
     status: canonical.status,
     published_at: canonical.published_at,
-    first_seen_at: canonical.first_seen_at || now,
     last_seen_at: now,
     ingested_at: canonical.ingested_at || now,
     expires_at: canonical.expires_at,
@@ -277,13 +274,14 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
   if (typeof jobsCollection.updateOne === 'function') {
     await jobsCollection.updateOne(
       { canonical_url: canonical.canonical_url },
-      { $set: newDoc, $setOnInsert: { first_seen_at: now } },
+      { $set: setDoc, $setOnInsert: { first_seen_at: initialFirstSeen } },
       { upsert: true }
     );
   }
 
   return {
-    ...newDoc,
+    ...setDoc,
+    first_seen_at: initialFirstSeen,
     is_new: true,
     is_updated: true,
   };
