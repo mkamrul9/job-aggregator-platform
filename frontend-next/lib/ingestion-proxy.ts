@@ -32,14 +32,23 @@ export async function proxyToIngestion(request: NextRequest, subpath: string) {
     }
 
     const contentType = upstreamRes.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
+    const searchEngine = upstreamRes.headers.get('x-search-engine');
+    const proxyHeaders: Record<string, string> = {
+      'X-Correlation-ID': correlationId,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    };
+    if (searchEngine) {
+      proxyHeaders['X-Search-Engine'] = searchEngine;
+    }
+
+    if (contentType.includes('application/json') || contentType.includes('application/problem+json')) {
       const data = await upstreamRes.json();
+      if (contentType.includes('application/problem+json')) {
+        proxyHeaders['Content-Type'] = 'application/problem+json';
+      }
       return NextResponse.json(data, {
         status: upstreamRes.status,
-        headers: {
-          'X-Correlation-ID': correlationId,
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
-        },
+        headers: proxyHeaders,
       });
     }
 

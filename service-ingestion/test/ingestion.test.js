@@ -13,8 +13,9 @@ const {
   validateOutboundUrl,
   sanitizeDescription,
   toCanonicalJob,
+  isListingAvailable,
 } = require('../src/models/job');
-const { validateSearchParams } = require('../src/search/query-validator');
+const { validateSearchParams, encodeCursor } = require('../src/search/query-validator');
 
 describe('service-ingestion unit tests', () => {
   describe('escapeRegex', () => {
@@ -96,6 +97,39 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(validateOutboundUrl('http://192.168.1.1/router').valid, false);
       assert.strictEqual(validateOutboundUrl('http://10.0.0.5/internal').valid, false);
     });
+
+    it('accepts innocent domains containing "data" such as metadata.example.com', () => {
+      const res = validateOutboundUrl('https://metadata.example.com/jobs/1');
+      assert.strictEqual(res.valid, true);
+    });
+
+    it('rejects IPv6 loopback, link-local, and ULA addresses', () => {
+      assert.strictEqual(validateOutboundUrl('http://[::1]:8080/admin').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://[fe80::1]/test').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://[fd00::1]/internal').valid, false);
+      assert.strictEqual(validateOutboundUrl('http://internal/jobs').valid, false);
+    });
+  });
+
+  describe('isListingAvailable', () => {
+    it('considers ACTIVE listing with no expires_at available', () => {
+      assert.strictEqual(isListingAvailable({ status: 'ACTIVE' }), true);
+    });
+
+    it('considers ACTIVE listing with future expires_at available', () => {
+      const future = new Date(Date.now() + 100000);
+      assert.strictEqual(isListingAvailable({ status: 'ACTIVE', expires_at: future }), true);
+    });
+
+    it('considers ACTIVE listing with past expires_at unavailable', () => {
+      const past = new Date(Date.now() - 100000);
+      assert.strictEqual(isListingAvailable({ status: 'ACTIVE', expires_at: past }), false);
+    });
+
+    it('considers EXPIRED and FLAGGED listings unavailable', () => {
+      assert.strictEqual(isListingAvailable({ status: 'EXPIRED' }), false);
+      assert.strictEqual(isListingAvailable({ status: 'FLAGGED' }), false);
+    });
   });
 
   describe('search query validation', () => {
@@ -107,6 +141,33 @@ describe('service-ingestion unit tests', () => {
       const resOversized = validateSearchParams({ limit: '500' });
       assert.strictEqual(resOversized.valid, false);
       assert.strictEqual(resOversized.error.status, 400);
+    });
+
+    it('rejects non-integer limits with 400 Bad Request', () => {
+      for (const badLimit of ['1.5', '2junk', '1e2', 'NaN', 'null']) {
+        const res = validateSearchParams({ limit: badLimit });
+        assert.strictEqual(res.valid, false, `Expected limit "${badLimit}" to be rejected`);
+        assert.strictEqual(res.error.status, 400);
+      }
+    });
+
+    it('rejects malformed or mismatched cursors', () => {
+      // Empty JSON object cursor
+      const emptyCursor = Buffer.from('{}').toString('base64url');
+      const resEmpty = validateSearchParams({ cursor: emptyCursor });
+      assert.strictEqual(resEmpty.valid, false);
+
+      // Cursor with sort mismatch
+      const cursorData = encodeCursor({ v: 1, sort: 'salary_desc', q: '', sortValues: [1000, 'id'] });
+      const resMismatch = validateSearchParams({ cursor: cursorData, sort: 'date_desc' });
+      assert.strictEqual(resMismatch.valid, false);
+      assert.match(resMismatch.error.detail, /Cursor sort/);
+    });
+
+    it('rejects non-scalar query parameter types', () => {
+      const resArray = validateSearchParams({ limit: ['10', '20'] });
+      assert.strictEqual(resArray.valid, false);
+      assert.strictEqual(resArray.error.status, 400);
     });
 
     it('rejects overlong queries and invalid enums', () => {

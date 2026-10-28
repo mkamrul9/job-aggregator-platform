@@ -2,66 +2,39 @@ import React from 'react';
 import Link from 'next/link';
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import {
+  safeJsonLd,
+  fetchJobDetail,
+} from '../../lib/job-detail-helper';
 
 export const dynamic = 'force-dynamic';
-
-interface JobDetailResponse {
-  id: string;
-  title: string;
-  company: string;
-  location: string;
-  remote_eligibility: 'FULLY_REMOTE' | 'HYBRID' | 'ON_SITE' | 'UNSPECIFIED';
-  job_type: 'FULL_TIME' | 'PART_TIME' | 'CONTRACT' | 'INTERNSHIP' | 'UNSPECIFIED';
-  seniority: 'ENTRY' | 'MID' | 'SENIOR' | 'LEAD' | 'EXECUTIVE' | 'UNSPECIFIED';
-  salary?: {
-    currency: 'BDT' | 'USD';
-    min?: number;
-    max?: number;
-    period: 'MONTHLY' | 'YEARLY';
-  };
-  skills: string[];
-  source: string;
-  description: string;
-  canonical_url: string;
-  status: 'ACTIVE' | 'EXPIRED' | 'FLAGGED';
-  published_at: string;
-  ingested_at: string;
-}
-
-const INGESTION_API_URL = process.env.INGESTION_API_URL || 'http://localhost:5000';
-
-async function fetchJobDetail(id: string): Promise<JobDetailResponse | null> {
-  try {
-    const res = await fetch(`${INGESTION_API_URL}/api/v1/jobs/${id}`, {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-    });
-
-    if (res.status === 404) {
-      return null;
-    }
-
-    if (!res.ok) {
-      throw new Error(`Upstream error: ${res.status}`);
-    }
-
-    return await res.json();
-  } catch (err) {
-    console.warn(`Failed to fetch job ${id} from ingestion service:`, err);
-    return null;
-  }
-}
 
 export async function generateMetadata(
   props: { params: Promise<{ id: string }> }
 ): Promise<Metadata> {
   const { id } = await props.params;
-  const job = await fetchJobDetail(id);
+  const result = await fetchJobDetail(id);
 
-  if (!job) {
+  if (result.kind !== 'success') {
+    if (result.kind === 'not_found') {
+      return {
+        title: 'Job Not Found | Seekers',
+        description: 'The requested job listing could not be found.',
+      };
+    }
     return {
-      title: 'Job Not Found | Seekers',
-      description: 'The requested job listing could not be found.',
+      title: 'Service Unavailable | Seekers',
+      description: 'Job catalog service is temporarily unavailable.',
+    };
+  }
+
+  const job = result.job;
+
+  if (job.is_synthetic) {
+    return {
+      title: `[Demo] ${job.title} at ${job.company} | Seekers`,
+      description: `Simulated job listing for demonstration purposes.`,
+      robots: { index: false, follow: false },
     };
   }
 
@@ -91,56 +64,110 @@ export default async function JobDetailPage(
   props: { params: Promise<{ id: string }> }
 ) {
   const { id } = await props.params;
-  const job = await fetchJobDetail(id);
+  const result = await fetchJobDetail(id);
 
-  if (!job) {
+  if (result.kind === 'not_found') {
     notFound();
   }
 
-  const isExpired = job.status === 'EXPIRED';
-  const isFlagged = job.status === 'FLAGGED';
+  if (result.kind === 'service_unavailable') {
+    return (
+      <main style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '4rem 1rem' }}>
+        <div
+          style={{
+            maxWidth: '600px',
+            margin: '0 auto',
+            textAlign: 'center',
+            backgroundColor: 'var(--seekers-bg-surface)',
+            padding: '2.5rem',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--seekers-border-subtle)',
+          }}
+        >
+          <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚠️</div>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--seekers-text-primary)', marginBottom: '0.75rem' }}>
+            Job Catalog Service Unavailable
+          </h1>
+          <p style={{ color: 'var(--seekers-text-secondary)', marginBottom: '1.5rem', lineHeight: 1.5 }}>
+            We encountered a temporary issue contacting the job discovery service. The listing has not been marked as missing. Please retry in a few moments.
+          </p>
+          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+            <Link href="/" className="btn-secondary" style={{ textDecoration: 'none' }}>
+              ← Return to Search
+            </Link>
+            <a href={`/jobs/${id}`} className="btn-primary" style={{ textDecoration: 'none' }}>
+              Retry
+            </a>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
-  // Construct valid JobPosting Schema for active listings
-  const jsonLd =
-    job.status === 'ACTIVE'
-      ? {
-          '@context': 'https://schema.org',
-          '@type': 'JobPosting',
-          title: job.title,
-          description: job.description,
-          datePosted: job.published_at,
-          validThrough: new Date(new Date(job.published_at).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          hiringOrganization: {
-            '@type': 'Organization',
-            name: job.company,
-          },
-          jobLocation: {
-            '@type': 'Place',
-            address: {
-              '@type': 'PostalAddress',
-              addressLocality: job.location,
-              addressCountry: 'BD',
+  const job = result.job;
+  const isExpired = Boolean(job.is_expired);
+  const isFlagged = job.status === 'FLAGGED';
+  const isAvailable = job.status === 'ACTIVE' && !isExpired && !isFlagged;
+
+  // Construct valid JobPosting Schema for real active listings only
+  let jsonLd: Record<string, unknown> | null = null;
+  if (!job.is_synthetic && isAvailable) {
+    const employmentTypeMap: Record<string, string> = {
+      FULL_TIME: 'FULL_TIME',
+      PART_TIME: 'PART_TIME',
+      CONTRACT: 'CONTRACTOR',
+      INTERNSHIP: 'INTERN',
+    };
+
+    const isBangladesh =
+      job.location.toLowerCase().includes('dhaka') ||
+      job.location.toLowerCase().includes('chittagong') ||
+      job.location.toLowerCase().includes('sylhet') ||
+      job.location.toLowerCase().includes('bangladesh') ||
+      job.location.toLowerCase().includes('bd');
+
+    jsonLd = {
+      '@context': 'https://schema.org',
+      '@type': 'JobPosting',
+      title: job.title,
+      description: job.description,
+      datePosted: job.published_at,
+      ...(job.expires_at ? { validThrough: job.expires_at } : {}),
+      hiringOrganization: {
+        '@type': 'Organization',
+        name: job.company,
+      },
+      jobLocation:
+        job.remote_eligibility === 'FULLY_REMOTE'
+          ? undefined
+          : {
+              '@type': 'Place',
+              address: {
+                '@type': 'PostalAddress',
+                addressLocality: job.location,
+                ...(isBangladesh ? { addressCountry: 'BD' } : {}),
+              },
             },
-          },
-          employmentType: job.job_type,
-          baseSalary: job.salary
-            ? {
-                '@type': 'MonetaryAmount',
-                currency: job.salary.currency,
-                value: {
-                  '@type': 'QuantitativeValue',
-                  minValue: job.salary.min,
-                  maxValue: job.salary.max,
-                  unitText: job.salary.period === 'MONTHLY' ? 'MONTH' : 'YEAR',
-                },
-              }
-            : undefined,
-        }
-      : null;
+      ...(job.remote_eligibility === 'FULLY_REMOTE' ? { jobLocationType: 'TELECOMMUTE' } : {}),
+      ...(employmentTypeMap[job.job_type] ? { employmentType: employmentTypeMap[job.job_type] } : {}),
+      baseSalary: job.salary
+        ? {
+            '@type': 'MonetaryAmount',
+            currency: job.salary.currency,
+            value: {
+              '@type': 'QuantitativeValue',
+              minValue: job.salary.min,
+              maxValue: job.salary.max,
+              unitText: job.salary.period === 'MONTHLY' ? 'MONTH' : 'YEAR',
+            },
+          }
+        : undefined,
+    };
+  }
 
   const remoteText = {
     FULLY_REMOTE: 'Fully Remote',
-    HYBRID: 'Hybrid (Dhaka)',
+    HYBRID: 'Hybrid Work',
     ON_SITE: 'On-Site',
     UNSPECIFIED: 'Flexible Work',
   }[job.remote_eligibility];
@@ -150,7 +177,7 @@ export default async function JobDetailPage(
       {jsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
         />
       )}
 
@@ -180,6 +207,29 @@ export default async function JobDetailPage(
           </span>
         </div>
 
+        {/* Synthetic Demo Listing Banner */}
+        {job.is_synthetic && (
+          <div
+            style={{
+              padding: '0.875rem 1.25rem',
+              marginBottom: '1.5rem',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--seekers-text-primary)',
+              fontSize: '0.875rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+            }}
+          >
+            <span style={{ fontSize: '1.25rem' }}>🧪</span>
+            <div>
+              <strong>Synthetic Demo Listing:</strong> This vacancy is a simulated listing for developer demonstration and testing. It does not represent an actual hiring commitment.
+            </div>
+          </div>
+        )}
+
         {/* Expired / Inactive Notice */}
         {isExpired && (
           <div
@@ -193,7 +243,24 @@ export default async function JobDetailPage(
               fontSize: '0.875rem',
             }}
           >
-            ⚠️ <strong>Listing Expired:</strong> This job vacancy has expired or been filled. Outbound application redirection is inactive.
+            ⚠️ <strong>Listing Expired:</strong> This job vacancy has expired or reached its application deadline. Outbound application redirection is inactive.
+          </div>
+        )}
+
+        {/* Flagged Notice */}
+        {isFlagged && (
+          <div
+            style={{
+              padding: '1rem',
+              marginBottom: '1.5rem',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--seekers-amber-400)',
+              fontSize: '0.875rem',
+            }}
+          >
+            ⚠️ <strong>Listing Under Review:</strong> This listing has been flagged for moderation review. Outbound application links are temporarily suspended.
           </div>
         )}
 
@@ -211,7 +278,7 @@ export default async function JobDetailPage(
           <div style={{ borderBottom: '1px solid var(--seekers-border-subtle)', paddingBottom: '1.5rem', marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               <span className={`badge ${isExpired ? 'badge-danger' : isFlagged ? 'badge-warning' : 'badge-success'}`}>
-                {job.status} LISTING
+                {isExpired ? 'EXPIRED' : job.status} LISTING
               </span>
               <span className="badge badge-accent">{remoteText}</span>
               <span className="badge badge-outline">{job.seniority} LEVEL</span>
@@ -252,14 +319,14 @@ export default async function JobDetailPage(
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-              {isExpired ? (
+              {!isAvailable ? (
                 <button
                   type="button"
                   disabled
                   className="btn-primary"
                   style={{ opacity: 0.5, cursor: 'not-allowed' }}
                 >
-                  Vacancy Closed
+                  {isExpired ? 'Vacancy Closed' : isFlagged ? 'Under Moderation' : 'Unavailable'}
                 </button>
               ) : (
                 <a

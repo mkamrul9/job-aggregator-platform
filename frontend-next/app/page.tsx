@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navbar, { ActiveTab } from '../components/Navbar';
 import JobCard from '../components/JobCard';
@@ -62,17 +62,19 @@ function CandidatePortalContent() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   // Live API results and fetch state
-  const [liveJobs, setLiveJobs] = useState<JobDetail[]>([]);
+  const [liveJobs, setLiveJobs] = useState<JobSummary[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
   const [searchState, setSearchState] = useState<SearchState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-
   // Modal / Drawer States
-  const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null);
+  const [selectedJob, setSelectedJob] = useState<(JobDetail | JobSummary) | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const detailAbortControllerRef = useRef<AbortController | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
-  const [reportingJob, setReportingJob] = useState<JobDetail | null>(null);
+  const [reportingJob, setReportingJob] = useState<(JobDetail | JobSummary) | null>(null);
   const [isDataControlOpen, setIsDataControlOpen] = useState(false);
   const [isDemoInfoOpen, setIsDemoInfoOpen] = useState(false);
 
@@ -122,6 +124,7 @@ function CandidatePortalContent() {
       if (filters.remote) queryParams.set('remote_eligibility', filters.remote);
       if (filters.seniority) queryParams.set('seniority', filters.seniority);
       if (filters.jobType) queryParams.set('job_type', filters.jobType);
+      if (filters.minSalary > 0) queryParams.set('min_salary', String(filters.minSalary));
 
       if (filters.sort === 'salary') {
         queryParams.set('sort', 'salary_desc');
@@ -150,10 +153,16 @@ function CandidatePortalContent() {
 
         const data = await res.json();
         if (ignore) return;
-        setLiveJobs(data.items || []);
+        const items: JobSummary[] = (data.items || []).map((item: JobSummary) => {
+          if (item.expires_at) {
+            item.is_expired = new Date(item.expires_at).getTime() <= Date.now();
+          }
+          return item;
+        });
+        setLiveJobs(items);
         setTotalCount(data.total_count || 0);
         setNextCursor(data.next_cursor || null);
-        setSearchState((data.items || []).length === 0 ? 'empty' : 'success');
+        setSearchState(items.length === 0 ? 'empty' : 'success');
       } catch (err: unknown) {
         if (ignore || (err instanceof Error && err.name === 'AbortError')) return;
         console.error('Error fetching jobs from service-ingestion:', err);
@@ -280,21 +289,115 @@ function CandidatePortalContent() {
     updateUrlParams(filters, null, nextMode);
   };
 
-  const handleToggleSave = (e: React.MouseEvent, job: JobDetail) => {
+  const handleSelectJob = useCallback((job: JobDetail | JobSummary) => {
+    if (detailAbortControllerRef.current) {
+      detailAbortControllerRef.current.abort();
+      detailAbortControllerRef.current = null;
+    }
+
+    setSelectedJob(job);
+
+    if (isDemoMode) {
+      const demoMatch = SYNTHETIC_JOBS.find((s) => s.id === job.id);
+      if (demoMatch) {
+        setSelectedJob(demoMatch);
+      }
+      setIsLoadingDetail(false);
+      setDetailError(null);
+      return;
+    }
+
+    if ('description' in job && (job as JobDetail).description) {
+      setIsLoadingDetail(false);
+      setDetailError(null);
+      return;
+    }
+
+    setIsLoadingDetail(true);
+    setDetailError(null);
+
+    const controller = new AbortController();
+    detailAbortControllerRef.current = controller;
+
+    fetch(`/api/v1/jobs/${job.id}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load details (HTTP ${res.status})`);
+        }
+        const detail: JobDetail = await res.json();
+        detail.is_expired =
+          detail.status === 'EXPIRED' ||
+          Boolean(detail.expires_at && new Date(detail.expires_at).getTime() <= Date.now());
+        setSelectedJob(detail);
+        setIsLoadingDetail(false);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        setDetailError(err instanceof Error ? err.message : 'Failed to load details');
+        setIsLoadingDetail(false);
+      });
+  }, [isDemoMode]);
+
+  const handleCloseDrawer = useCallback(() => {
+    if (detailAbortControllerRef.current) {
+      detailAbortControllerRef.current.abort();
+      detailAbortControllerRef.current = null;
+    }
+    setSelectedJob(null);
+    setIsLoadingDetail(false);
+    setDetailError(null);
+  }, []);
+
+  const handleRetryDetail = useCallback(() => {
+    if (selectedJob) {
+      handleSelectJob(selectedJob);
+    }
+  }, [selectedJob, handleSelectJob]);
+
+  const handleToggleSave = (e: React.MouseEvent, job: JobDetail | JobSummary) => {
     e.stopPropagation();
     if (savedJobIds.has(job.id)) {
       setSavedJobs((prev) => prev.filter((j) => j.id !== job.id));
     } else {
-      setSavedJobs((prev) => [job, ...prev]);
+      const summary: JobSummary = {
+        id: job.id,
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        remote_eligibility: job.remote_eligibility,
+        job_type: job.job_type,
+        seniority: job.seniority,
+        salary: job.salary,
+        skills: job.skills,
+        source: job.source,
+        published_at: job.published_at,
+      };
+      setSavedJobs((prev) => [summary, ...prev]);
     }
   };
 
-  const handleTrackApplication = (job: JobDetail) => {
+  const handleTrackApplication = (job: JobDetail | JobSummary) => {
     if (trackedJobIds.has(job.id)) return;
+    const summary: JobSummary = {
+      id: job.id,
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      remote_eligibility: job.remote_eligibility,
+      job_type: job.job_type,
+      seniority: job.seniority,
+      salary: job.salary,
+      skills: job.skills,
+      source: job.source,
+      published_at: job.published_at,
+    };
     const newApp: TrackedApplication = {
       id: `app_track_${Date.now()}`,
       job_id: job.id,
-      job_summary: job,
+      job_summary: summary,
       status: 'APPLIED',
       notes: 'Tracked directly from job discovery.',
       applied_at: new Date().toISOString(),
@@ -671,7 +774,7 @@ function CandidatePortalContent() {
                         job={job}
                         isSelected={selectedJob?.id === job.id}
                         isSaved={savedJobIds.has(job.id)}
-                        onSelect={(j) => setSelectedJob(j)}
+                        onSelect={handleSelectJob}
                         onToggleSave={handleToggleSave}
                       />
                     ))}
@@ -764,7 +867,7 @@ function CandidatePortalContent() {
                       job={job as JobDetail}
                       isSelected={selectedJob?.id === job.id}
                       isSaved={true}
-                      onSelect={(j) => setSelectedJob(j)}
+                      onSelect={handleSelectJob}
                       onToggleSave={handleToggleSave}
                     />
                   ))}
@@ -780,7 +883,7 @@ function CandidatePortalContent() {
               onUpdateStatus={handleUpdateAppStatus}
               onUpdateNotes={handleUpdateAppNotes}
               onRemoveApplication={handleRemoveApplication}
-              onSelectJob={(j) => setSelectedJob(j)}
+              onSelectJob={handleSelectJob}
               onBrowseJobs={() => setActiveTab('discover')}
             />
           )}
@@ -811,7 +914,10 @@ function CandidatePortalContent() {
       {selectedJob && (
         <JobDetailDrawer
           job={selectedJob}
-          onClose={() => setSelectedJob(null)}
+          isLoadingDetail={isLoadingDetail}
+          detailError={detailError}
+          onRetryDetail={handleRetryDetail}
+          onClose={handleCloseDrawer}
           isSaved={savedJobIds.has(selectedJob.id)}
           onToggleSave={handleToggleSave}
           onTrackApplication={handleTrackApplication}
@@ -820,6 +926,7 @@ function CandidatePortalContent() {
             setReportingJob(j);
             setIsFeedbackOpen(true);
           }}
+          isDemoMode={isDemoMode}
         />
       )}
 

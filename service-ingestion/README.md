@@ -20,8 +20,9 @@ A high-performance streaming ingestion worker and REST discovery service that co
   - Strict filters on `status: "ACTIVE"`, `location`, `remote_eligibility`, `job_type`, `seniority`, and salary ranges.
   - Transparent fallback to MongoDB text/regex search if Elasticsearch is unreachable.
 - **Security & Safety:**
-  - RFC 7807 Problem Details for all validation and HTTP error responses.
-  - SSRF protection: outbound redirect destinations strictly validate against private IPs (RFC 1918), loopback ranges (`127.0.0.0/8`), link-local metadata addresses (`169.254.169.254`), credentials, and non-http(s) schemes.
+  - RFC 7807 Problem Details (`application/problem+json`) for all validation and HTTP error responses.
+  - SSRF protection: outbound redirect destinations strictly validate against IPv4/IPv6 private ranges (RFC 1918, ULA `fc00::/7`), loopback (`127.0.0.0/8`, `::1`), link-local metadata addresses (`169.254.169.254`, `fe80::/10`), single-label intranet hosts, credentials, and non-http(s) schemes.
+  - Lifecycle enforcement: outbound redirection requires active listings; expired or flagged listings return 404 RFC 7807 problem details.
 
 ---
 

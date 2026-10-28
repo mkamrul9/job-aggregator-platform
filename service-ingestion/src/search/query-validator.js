@@ -33,11 +33,20 @@ function encodeCursor(payload) {
  */
 function decodeCursor(cursorStr) {
   if (!cursorStr || typeof cursorStr !== 'string') return null;
+  if (cursorStr.length > 512) {
+    throw new Error('Cursor exceeds maximum allowable length of 512 characters');
+  }
   try {
     const raw = Buffer.from(cursorStr, 'base64url').toString('utf8');
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('Cursor must be a JSON object');
+    }
+    if (parsed.v !== 1) {
+      throw new Error('Cursor schema version must be 1');
+    }
+    if (!Array.isArray(parsed.sortValues) || parsed.sortValues.length === 0) {
+      throw new Error('Cursor is missing required sortValues array');
     }
     return parsed;
   } catch (err) {
@@ -51,6 +60,14 @@ function decodeCursor(cursorStr) {
  */
 function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   const errors = [];
+
+  // Reject array parameters
+  const scalarKeys = ['q', 'location', 'remote_eligibility', 'job_type', 'seniority', 'currency', 'min_salary', 'sort', 'limit', 'cursor'];
+  for (const key of scalarKeys) {
+    if (Array.isArray(query[key])) {
+      errors.push(`Parameter "${key}" must be a scalar value, not an array`);
+    }
+  }
 
   // 1. Keyword search (q)
   let q = undefined;
@@ -79,7 +96,7 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 3. Remote eligibility enum
   let remote_eligibility = undefined;
   if (query.remote_eligibility) {
-    if (!RemoteEligibility[query.remote_eligibility]) {
+    if (typeof query.remote_eligibility !== 'string' || !RemoteEligibility[query.remote_eligibility]) {
       errors.push(
         `Invalid remote_eligibility "${query.remote_eligibility}". Allowed: ${Object.keys(RemoteEligibility).join(', ')}`
       );
@@ -91,7 +108,7 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 4. Job type enum
   let job_type = undefined;
   if (query.job_type) {
-    if (!JobType[query.job_type]) {
+    if (typeof query.job_type !== 'string' || !JobType[query.job_type]) {
       errors.push(`Invalid job_type "${query.job_type}". Allowed: ${Object.keys(JobType).join(', ')}`);
     } else {
       job_type = query.job_type;
@@ -101,7 +118,7 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 5. Seniority enum
   let seniority = undefined;
   if (query.seniority) {
-    if (!Seniority[query.seniority]) {
+    if (typeof query.seniority !== 'string' || !Seniority[query.seniority]) {
       errors.push(`Invalid seniority "${query.seniority}". Allowed: ${Object.keys(Seniority).join(', ')}`);
     } else {
       seniority = query.seniority;
@@ -111,7 +128,7 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 6. Currency enum
   let currency = undefined;
   if (query.currency) {
-    if (!Currency[query.currency]) {
+    if (typeof query.currency !== 'string' || !Currency[query.currency]) {
       errors.push(`Invalid currency "${query.currency}". Allowed: ${Object.keys(Currency).join(', ')}`);
     } else {
       currency = query.currency;
@@ -121,18 +138,27 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 7. Minimum salary
   let min_salary = undefined;
   if (query.min_salary !== undefined && query.min_salary !== null && query.min_salary !== '') {
-    const parsedMin = Number(query.min_salary);
-    if (!Number.isFinite(parsedMin) || parsedMin < 0) {
+    if (typeof query.min_salary !== 'string' && typeof query.min_salary !== 'number') {
       errors.push('Parameter "min_salary" must be a non-negative finite number');
     } else {
-      min_salary = parsedMin;
+      const rawMin = String(query.min_salary).trim();
+      if (!/^\d+(?:\.\d+)?$/.test(rawMin)) {
+        errors.push('Parameter "min_salary" must be a non-negative finite number');
+      } else {
+        const parsedMin = Number(rawMin);
+        if (!Number.isFinite(parsedMin) || parsedMin < 0) {
+          errors.push('Parameter "min_salary" must be a non-negative finite number');
+        } else {
+          min_salary = parsedMin;
+        }
+      }
     }
   }
 
   // 8. Sort option
   let sort = SortOption.DATE_DESC;
   if (query.sort) {
-    if (!Object.values(SortOption).includes(query.sort)) {
+    if (typeof query.sort !== 'string' || !Object.values(SortOption).includes(query.sort)) {
       errors.push(`Invalid sort option "${query.sort}". Allowed: ${Object.values(SortOption).join(', ')}`);
     } else {
       sort = query.sort;
@@ -142,11 +168,20 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   // 9. Limit
   let limit = 20;
   if (query.limit !== undefined && query.limit !== null && query.limit !== '') {
-    const parsedLimit = parseInt(query.limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+    if (typeof query.limit !== 'string' && typeof query.limit !== 'number') {
       errors.push('Parameter "limit" must be an integer between 1 and 100');
     } else {
-      limit = parsedLimit;
+      const rawLimit = String(query.limit).trim();
+      if (!/^\d+$/.test(rawLimit)) {
+        errors.push('Parameter "limit" must be an integer between 1 and 100');
+      } else {
+        const parsedLimit = Number(rawLimit);
+        if (parsedLimit < 1 || parsedLimit > 100) {
+          errors.push('Parameter "limit" must be an integer between 1 and 100');
+        } else {
+          limit = parsedLimit;
+        }
+      }
     }
   }
 
@@ -154,11 +189,24 @@ function validateSearchParams(query, reqUrl = '/api/v1/jobs') {
   let cursor = null;
   let decodedCursor = null;
   if (query.cursor) {
-    try {
-      decodedCursor = decodeCursor(query.cursor);
-      cursor = query.cursor;
-    } catch (err) {
-      errors.push(err.message);
+    if (typeof query.cursor !== 'string') {
+      errors.push('Parameter "cursor" must be a scalar string');
+    } else {
+      try {
+        decodedCursor = decodeCursor(query.cursor);
+        cursor = query.cursor;
+
+        // Verify cursor binding to sort
+        if (decodedCursor && decodedCursor.sort && decodedCursor.sort !== sort) {
+          errors.push(`Cursor sort "${decodedCursor.sort}" does not match active query sort "${sort}"`);
+        }
+        // Verify cursor binding to keyword search
+        if (decodedCursor && decodedCursor.q !== undefined && decodedCursor.q !== (q || '')) {
+          errors.push('Cursor query predicate does not match active query predicate');
+        }
+      } catch (err) {
+        errors.push(err.message);
+      }
     }
   }
 

@@ -1,14 +1,14 @@
 'use client';
 
 import React from 'react';
-import { JobDetail } from '../lib/mock-data';
+import { JobDetail, JobSummary } from '../lib/mock-data';
 
 interface JobCardProps {
-  job: JobDetail;
+  job: JobDetail | JobSummary;
   isSelected?: boolean;
   isSaved: boolean;
-  onSelect: (job: JobDetail) => void;
-  onToggleSave: (e: React.MouseEvent, job: JobDetail) => void;
+  onSelect: (job: JobDetail | JobSummary) => void;
+  onToggleSave: (e: React.MouseEvent, job: JobDetail | JobSummary) => void;
 }
 
 export function formatSalary(salary?: JobDetail['salary']): string {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { TrackedApplication, JobDetail } from '../lib/mock-data';
+import { TrackedApplication, JobDetail, JobSummary } from '../lib/mock-data';
 import { formatSalary, formatTimeAgo } from './JobCard';
 
 interface ApplicationsWorkspaceProps {
@@ -9,7 +9,7 @@ interface ApplicationsWorkspaceProps {
   onUpdateStatus: (id: string, newStatus: TrackedApplication['status']) => void;
   onUpdateNotes: (id: string, notes: string) => void;
   onRemoveApplication: (id: string) => void;
-  onSelectJob: (job: JobDetail) => void;
+  onSelectJob: (job: JobDetail | JobSummary) => void;
   onBrowseJobs: () => void;
 }
 

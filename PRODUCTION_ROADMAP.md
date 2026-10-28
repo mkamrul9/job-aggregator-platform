@@ -315,16 +315,25 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
   - Distinct loading skeletons, honest error banners with bounded retry, and clear results count telemetry.
   - Preserved toggleable standalone portfolio demo mode (`?demo=true` or in-app button) with prominent amber banner and local fixtures.
 - **Verification & Testing Suite:**
-  - 24 unit tests in `service-ingestion` (`npm test`) covering normalization, UUID generation, URL safety, query validators, and endpoint mocks.
-  - 18 strict integration tests in `service-ingestion` (`npm run test:integration`) against live MongoDB and Elasticsearch.
-  - 9 Next.js regression tests (`npm test` in `frontend-next`) covering auth synchronization and job search/outbound proxying.
+  - 33 unit tests in `service-ingestion` (`npm test`) covering normalization, UUID generation, URL safety (including IPv6 ULA/loopback/link-local), query validators (strict integer limits, unified cursor schema), and endpoint mocks.
+  - 21 strict integration tests in `service-ingestion` (`npm run test:integration`) against isolated test MongoDB database and isolated Elasticsearch index (`jobs_index_test`), with standalone MongoDB fallback mode verification.
+  - 12 Next.js regression tests (`npm test` in `frontend-next`) covering auth synchronization (4 tests) and job search/outbound proxying/safe JSON-LD/503 resilience (8 tests).
   - Next.js Turbopack production compilation (`npm run build`) and ESLint (`npm run lint`) pass with 0 errors and 0 warnings.
   - Real browser visual and interaction verification across desktop (1280x800) and mobile (390x844), with zero horizontal overflow confirmed.
   - CI pipeline (`ci-pipeline.yml`) updated with live MongoDB and Elasticsearch services running unit and strict integration tests.
 
+**Repairs & Safety Hardening Completed:**
+- Safe JSON-LD serialization (`safeJsonLd`) escaping HTML script break-out tokens (`<`, `>`, `&`).
+- Truthful metadata without fabricated expiry dates or hardcoded countries; synthetic demo listings flagged with explicit `is_synthetic` provenance, suppressing search crawler indexing.
+- Outbound URL validator hardened against IPv6 loopback (`::1`), ULA (`fc00::/7`), link-local (`fe80::/10`), and single-label hosts while permitting domains with "data" substrings (e.g. `metadata.example.com`).
+- Effective listing availability strictly enforced across canonical detail and outbound endpoints (rejecting expired and flagged roles with RFC 7807 problem details).
+- Non-destructive Elasticsearch initialization preserving existing indexes on service startup.
+- Upstream 503 errors handled gracefully in Next.js SSR with accessible retry views rather than false 404 `notFound()`.
+- Client Job Detail Drawer fetches canonical detail dynamically with in-flight abort handling.
+
 **Completion gate:** search/detail/apply journeys and every filter pass against representative fixtures; `/api/jobs` and slash/versioned aliases have tested semantics; query plans/indexes are reviewed; error and no-result states are distinct; independent Next.js demo and seeded real-search API quickstart pass with accurate mode labels; no false “New” badges or fabricated catalog totals. `[PASS]`
 
-**Checkpoint:** `feat(jobs): deliver unified search and complete job browsing` → verified push.
+**Checkpoint:** `fix(jobs): close catalog safety and discovery regressions` → verified push.
 
 ### P07 — Build real source coverage and recoverable ingestion
 

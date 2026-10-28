@@ -244,19 +244,20 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `service-ingestion/package.json`
   - Lockfile: `service-ingestion/package-lock.json`
 - **Commands & Verification:**
-  - Unit Tests: `npm test` — `[Verified]` (24 unit tests covering URL normalization, regex escaping, stable UUIDs, outbound URL safety, query validation, and endpoint mocks)
-  - Integration Tests: `npm run test:integration` — `[Verified]` (18 strict integration tests against live MongoDB and Elasticsearch)
-  - Standalone Seed: `npm run seed` — `[Verified]` (seeds 12 curated Bangladesh tech jobs into MongoDB and ES)
+  - Unit Tests: `npm test` — `[Verified]` (33 unit tests covering URL normalization, regex escaping, stable UUIDs, IPv6 ULA/loopback outbound safety, query validation with strict integers, and endpoint mocks)
+  - Integration Tests: `npm run test:integration` — `[Verified]` (21 strict integration tests against isolated test MongoDB database and isolated Elasticsearch index, including standalone MongoDB fallback mode)
+  - Standalone Seed: `npm run seed` — `[Verified]` (seeds 12 curated Bangladesh tech jobs with explicit `is_synthetic` provenance into MongoDB and ES)
   - Standalone Run: `npm run start:standalone` (`node bin/standalone.js`) — `[Verified]` (runs search API without Kafka)
 - **Required Infrastructure:**
   - Standalone mode: MongoDB 6+ and Elasticsearch 8.x (zero Kafka dependency required to run search API).
   - Integrated mode: Kafka broker (`job.collected.v1`), MongoDB, Elasticsearch.
-- **Current Verification Status:** Node 22, Express 5, 24 unit tests, 18 integration tests passing; CI updated to run MongoDB/Elasticsearch services and integration tests; Docker packaging passes in CI.
-- **Completed in Phase P06:**
+- **Current Verification Status:** Node 22, Express 5, 33 unit tests, 21 integration tests passing; CI updated to run MongoDB/Elasticsearch services and integration tests; Docker packaging passes in CI.
+- **Completed in Phase P06 & P06 Repair:**
   - Canonical job catalog persistence in MongoDB with unique indexes on `id` and `canonical_url`.
-  - Deterministic keyset cursor pagination (`cursor`) for `date_desc`, `salary_desc`, and `relevance`.
+  - Deterministic keyset cursor pagination (`cursor`) for `date_desc`, `salary_desc`, and `relevance` with unified schema and query binding.
   - Full filter suite (`q`, `location`, `remote_eligibility`, `job_type`, `seniority`, `min_salary`, `currency`).
-  - Safe outbound URL validation rejecting private/loopback IPs, link-local metadata (169.254.169.254), credentials, and non-http(s) schemes.
+  - Safe outbound URL validation rejecting IPv4 and IPv6 private/loopback/ULA/link-local IPs and single-label hosts while permitting valid domains with "data" substrings.
+  - Outbound lifecycle enforcement rejecting expired and flagged listings with RFC 7807 problem details.
   - Transparent search engine fallback to MongoDB if Elasticsearch is unavailable.
 - **Intended Deployment Boundary:**
   - Container: `service-ingestion/Dockerfile`

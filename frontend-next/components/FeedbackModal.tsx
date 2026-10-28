@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { JobDetail } from '../lib/mock-data';
+import { JobDetail, JobSummary } from '../lib/mock-data';
 
 interface FeedbackModalProps {
   isOpen: boolean;
   onClose: () => void;
-  reportingJob?: JobDetail | null;
+  reportingJob?: JobDetail | JobSummary | null;
 }
 
 export default function FeedbackModal({

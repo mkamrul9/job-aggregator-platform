@@ -110,15 +110,49 @@ function validateOutboundUrl(urlStr, options = {}) {
       return { valid: false, reason: 'URL must not contain credentials' };
     }
 
-    const hostname = parsed.hostname.toLowerCase();
-    if (!hostname || hostname.includes('javascript') || hostname.includes('data')) {
-      return { valid: false, reason: 'Deceptive or invalid hostname' };
+    let hostname = parsed.hostname.toLowerCase();
+    if (!hostname) {
+      return { valid: false, reason: 'Missing or empty hostname' };
     }
 
-    const isLoopback = hostname === 'localhost' || /^127\./.test(hostname) || hostname === '::1' || hostname === '0.0.0.0';
-    const isPrivateIp = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)/.test(hostname);
+    // Strip IPv6 enclosing brackets if present
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      hostname = hostname.slice(1, -1);
+    }
 
-    if ((isLoopback || isPrivateIp) && !allowLocalhost) {
+    // IPv4 and IPv6 Loopback checks
+    const isLoopback =
+      hostname === 'localhost' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      /^0*(?::0*)*:0*1$/.test(hostname) ||
+      /^127\./.test(hostname);
+
+    // IPv4 Special/Private ranges (RFC 1918, Link-local, Carrier-grade NAT, Broadcast)
+    const isPrivateIpv4 = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|22[4-9]\.|23[0-9]\.|255\.255\.255\.255)/.test(
+      hostname
+    );
+
+    // IPv6 Private / Special ranges
+    // Unique Local Addresses (fc00::/7) start with fc or fd
+    const isUlaIpv6 = /^f[cd][0-9a-f]{2}:/i.test(hostname);
+    // Link-local (fe80::/10) starts with fe8, fe9, fea, feb
+    const isLinkLocalIpv6 = /^fe[89ab][0-9a-f]:/i.test(hostname);
+    // Unspecified IPv6
+    const isUnspecifiedIpv6 = hostname === '::' || /^0*(?::0*)*:0*$/.test(hostname);
+    // IPv4-mapped IPv6 (::ffff:127.0.0.1 or ::ffff:7f00:1)
+    let isIpv4MappedPrivate = false;
+    if (hostname.startsWith('::ffff:')) {
+      const mapped = hostname.replace('::ffff:', '');
+      if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.)/.test(mapped)) {
+        isIpv4MappedPrivate = true;
+      }
+    }
+
+    // Single-label hostnames without dot (e.g. intranet servers http://internal/, http://router/)
+    const isSingleLabel = !hostname.includes('.') && !hostname.includes(':');
+
+    if ((isLoopback || isPrivateIpv4 || isUlaIpv6 || isLinkLocalIpv6 || isUnspecifiedIpv6 || isIpv4MappedPrivate || isSingleLabel) && !allowLocalhost) {
       return { valid: false, reason: 'Destination must not target private or loopback networks' };
     }
 
@@ -188,7 +222,15 @@ function toCanonicalJob(rawRecord) {
     const max = typeof s.max === 'number' && Number.isFinite(s.max) && s.max >= (min || 0) ? s.max : null;
 
     if (currency && period) {
-      salary = { currency, period, min, max };
+      let normalized_monthly_min = null;
+      let normalized_monthly_max = null;
+      if (min !== null) {
+        normalized_monthly_min = period === PayPeriod.YEARLY ? Math.round(min / 12) : min;
+      }
+      if (max !== null) {
+        normalized_monthly_max = period === PayPeriod.YEARLY ? Math.round(max / 12) : max;
+      }
+      salary = { currency, period, min, max, normalized_monthly_min, normalized_monthly_max };
     }
   }
 
@@ -202,6 +244,7 @@ function toCanonicalJob(rawRecord) {
   const first_seen_at = rawRecord.first_seen_at ? new Date(rawRecord.first_seen_at) : ingested_at;
   const last_seen_at = rawRecord.last_seen_at ? new Date(rawRecord.last_seen_at) : now;
   const expires_at = rawRecord.expires_at ? new Date(rawRecord.expires_at) : null;
+  const is_synthetic = Boolean(rawRecord.is_synthetic);
 
   return {
     id,
@@ -223,7 +266,23 @@ function toCanonicalJob(rawRecord) {
     last_seen_at,
     ingested_at,
     expires_at,
+    is_synthetic,
   };
+}
+
+/**
+ * Checks if a listing is currently available for outbound redirection and active application.
+ */
+function isListingAvailable(job) {
+  if (!job) return false;
+  if (job.status !== JobStatus.ACTIVE) return false;
+  if (job.expires_at) {
+    const expiry = job.expires_at instanceof Date ? job.expires_at : new Date(job.expires_at);
+    if (!isNaN(expiry.getTime()) && expiry.getTime() <= Date.now()) {
+      return false; // Expired by date
+    }
+  }
+  return true;
 }
 
 /**
@@ -238,10 +297,18 @@ function toJobSummary(job) {
     remote_eligibility: job.remote_eligibility,
     job_type: job.job_type,
     seniority: job.seniority,
-    salary: job.salary || undefined,
+    salary: job.salary
+      ? {
+          currency: job.salary.currency,
+          period: job.salary.period,
+          min: job.salary.min,
+          max: job.salary.max,
+        }
+      : undefined,
     skills: job.skills,
     source: job.source,
     published_at: job.published_at instanceof Date ? job.published_at.toISOString() : new Date(job.published_at).toISOString(),
+    is_synthetic: Boolean(job.is_synthetic),
   };
 }
 
@@ -255,7 +322,13 @@ function toJobDetail(job) {
     description: job.description,
     canonical_url: job.canonical_url,
     status: job.status,
+    expires_at: job.expires_at
+      ? job.expires_at instanceof Date
+        ? job.expires_at.toISOString()
+        : new Date(job.expires_at).toISOString()
+      : null,
     ingested_at: job.ingested_at instanceof Date ? job.ingested_at.toISOString() : new Date(job.ingested_at).toISOString(),
+    is_synthetic: Boolean(job.is_synthetic),
   };
 }
 
@@ -274,4 +347,5 @@ module.exports = {
   toCanonicalJob,
   toJobSummary,
   toJobDetail,
+  isListingAvailable,
 };

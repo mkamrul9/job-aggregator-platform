@@ -21,6 +21,9 @@ export interface JobSummary {
   skills: string[];
   source: string;
   published_at: string;
+  expires_at?: string | null;
+  is_synthetic?: boolean;
+  is_expired?: boolean;
 }
 
 export interface JobDetail extends JobSummary {

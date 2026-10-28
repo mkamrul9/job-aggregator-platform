@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const {
   validateOutboundUrl,
   toJobDetail,
+  isListingAvailable,
 } = require('../models/job');
 const {
   createProblemDetails,
@@ -28,7 +29,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
   router.get('/', async (req, res) => {
     const validation = validateSearchParams(req.query, req.originalUrl);
     if (!validation.valid) {
-      return res.status(validation.error.status).json(validation.error);
+      return res.status(validation.error.status).type('application/problem+json').json(validation.error);
     }
 
     try {
@@ -46,7 +47,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
 
       if (!result) {
         if (!jobsCollection) {
-          return res.status(503).json(
+          return res.status(503).type('application/problem+json').json(
             createProblemDetails({
               type: 'https://errors.seekers.internal/service-unavailable',
               title: 'Service Unavailable',
@@ -64,7 +65,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
       return res.status(200).json(result);
     } catch (err) {
       console.error('Error in searchJobs:', err);
-      return res.status(500).json(
+      return res.status(500).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/internal-server-error',
           title: 'Internal Search Error',
@@ -80,7 +81,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
   router.get('/:id/outbound', async (req, res) => {
     const { id } = req.params;
     if (!UUID_REGEX.test(id)) {
-      return res.status(404).json(
+      return res.status(404).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/not-found',
           title: 'Not Found',
@@ -92,7 +93,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
     }
 
     if (!jobsCollection) {
-      return res.status(503).json(
+      return res.status(503).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/service-unavailable',
           title: 'Service Unavailable',
@@ -106,7 +107,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
     try {
       const job = await jobsCollection.findOne({ id });
       if (!job) {
-        return res.status(404).json(
+        return res.status(404).type('application/problem+json').json(
           createProblemDetails({
             type: 'https://errors.seekers.internal/not-found',
             title: 'Not Found',
@@ -117,13 +118,18 @@ function createJobsRouter({ jobsCollection, esClient }) {
         );
       }
 
-      if (job.status !== 'ACTIVE') {
-        return res.status(404).json(
+      if (!isListingAvailable(job)) {
+        const detail =
+          job.status !== 'ACTIVE'
+            ? `Job listing is ${job.status.toLowerCase()} and cannot be redirected`
+            : 'Job listing has expired and is no longer accepting applications';
+
+        return res.status(404).type('application/problem+json').json(
           createProblemDetails({
             type: 'https://errors.seekers.internal/listing-inactive',
-            title: 'Listing Inactive',
+            title: 'Listing Unavailable',
             status: 404,
-            detail: `Job listing is ${job.status.toLowerCase()} and cannot be redirected`,
+            detail,
             instance: req.originalUrl,
           })
         );
@@ -132,7 +138,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
       const allowLocalhost = process.env.ALLOW_LOCAL_OUTBOUND === 'true' || process.env.NODE_ENV === 'test';
       const validation = validateOutboundUrl(job.canonical_url, { allowLocalhost });
       if (!validation.valid) {
-        return res.status(400).json(
+        return res.status(400).type('application/problem+json').json(
           createProblemDetails({
             type: 'https://errors.seekers.internal/unsafe-outbound-url',
             title: 'Unsafe Destination URL',
@@ -163,7 +169,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
       return res.redirect(302, destination_url);
     } catch (err) {
       console.error('Error in trackOutboundClick:', err);
-      return res.status(500).json(
+      return res.status(500).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/internal-server-error',
           title: 'Internal Server Error',
@@ -179,7 +185,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
   router.get('/:id', async (req, res) => {
     const { id } = req.params;
     if (!UUID_REGEX.test(id)) {
-      return res.status(404).json(
+      return res.status(404).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/not-found',
           title: 'Not Found',
@@ -191,7 +197,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
     }
 
     if (!jobsCollection) {
-      return res.status(503).json(
+      return res.status(503).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/service-unavailable',
           title: 'Service Unavailable',
@@ -205,7 +211,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
     try {
       const job = await jobsCollection.findOne({ id });
       if (!job) {
-        return res.status(404).json(
+        return res.status(404).type('application/problem+json').json(
           createProblemDetails({
             type: 'https://errors.seekers.internal/not-found',
             title: 'Not Found',
@@ -219,7 +225,7 @@ function createJobsRouter({ jobsCollection, esClient }) {
       return res.status(200).json(toJobDetail(job));
     } catch (err) {
       console.error('Error fetching job by id:', err);
-      return res.status(500).json(
+      return res.status(500).type('application/problem+json').json(
         createProblemDetails({
           type: 'https://errors.seekers.internal/internal-server-error',
           title: 'Internal Server Error',

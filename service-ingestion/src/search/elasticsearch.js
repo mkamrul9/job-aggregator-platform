@@ -6,72 +6,74 @@ const ES_INDEX = process.env.ES_INDEX || 'jobs_index';
 
 /**
  * Ensures the Elasticsearch index exists with the appropriate mapping.
+ * Non-destructive: will never automatically delete an existing populated index.
  */
 async function ensureEsIndex(client) {
   if (!client) return;
   try {
-    let exists = await client.indices.exists({ index: ES_INDEX });
+    const exists = await client.indices.exists({ index: ES_INDEX });
     if (exists) {
       try {
         const mappingRes = await client.indices.getMapping({ index: ES_INDEX });
         const indexKey = Object.keys(mappingRes)[0];
         const props = mappingRes[indexKey]?.mappings?.properties || {};
         if (props.salary?.type === 'text' || !props.canonical_url) {
-          console.log(`♻️ Recreating legacy Elasticsearch index ${ES_INDEX} with canonical mappings...`);
-          await client.indices.delete({ index: ES_INDEX });
-          exists = false;
+          console.warn(`⚠️ Elasticsearch index ${ES_INDEX} has legacy incompatible mappings. Non-destructive migration required.`);
         }
       } catch (checkErr) {
         console.warn('Warning checking index mapping:', checkErr.message);
       }
+      return;
     }
-    if (!exists) {
-      await client.indices.create({
-        index: ES_INDEX,
-        body: {
-          settings: {
-            number_of_shards: 1,
-            number_of_replicas: 0,
-          },
-          mappings: {
-            properties: {
-              id: { type: 'keyword' },
-              canonical_url: { type: 'keyword' },
-              source: { type: 'keyword' },
-              title: {
-                type: 'text',
-                fields: { keyword: { type: 'keyword', ignore_above: 256 } },
-              },
-              company: {
-                type: 'text',
-                fields: { keyword: { type: 'keyword', ignore_above: 256 } },
-              },
-              description: { type: 'text' },
-              location: {
-                type: 'text',
-                fields: { keyword: { type: 'keyword', ignore_above: 256 } },
-              },
-              remote_eligibility: { type: 'keyword' },
-              job_type: { type: 'keyword' },
-              seniority: { type: 'keyword' },
-              skills: { type: 'keyword' },
-              salary: {
-                properties: {
-                  currency: { type: 'keyword' },
-                  min: { type: 'double' },
-                  max: { type: 'double' },
-                  period: { type: 'keyword' },
-                },
-              },
-              status: { type: 'keyword' },
-              published_at: { type: 'date' },
-              ingested_at: { type: 'date' },
+
+    await client.indices.create({
+      index: ES_INDEX,
+      body: {
+        settings: {
+          number_of_shards: 1,
+          number_of_replicas: 0,
+        },
+        mappings: {
+          properties: {
+            id: { type: 'keyword' },
+            canonical_url: { type: 'keyword' },
+            source: { type: 'keyword' },
+            title: {
+              type: 'text',
+              fields: { keyword: { type: 'keyword', ignore_above: 256 } },
             },
+            company: {
+              type: 'text',
+              fields: { keyword: { type: 'keyword', ignore_above: 256 } },
+            },
+            description: { type: 'text' },
+            location: {
+              type: 'text',
+              fields: { keyword: { type: 'keyword', ignore_above: 256 } },
+            },
+            remote_eligibility: { type: 'keyword' },
+            job_type: { type: 'keyword' },
+            seniority: { type: 'keyword' },
+            skills: { type: 'keyword' },
+            salary: {
+              properties: {
+                currency: { type: 'keyword' },
+                min: { type: 'double' },
+                max: { type: 'double' },
+                period: { type: 'keyword' },
+                normalized_monthly_min: { type: 'double' },
+                normalized_monthly_max: { type: 'double' },
+              },
+            },
+            status: { type: 'keyword' },
+            published_at: { type: 'date' },
+            ingested_at: { type: 'date' },
+            is_synthetic: { type: 'boolean' },
           },
         },
-      });
-      console.log(`✅ Created Elasticsearch index: ${ES_INDEX}`);
-    }
+      },
+    });
+    console.log(`✅ Created Elasticsearch index: ${ES_INDEX}`);
   } catch (err) {
     console.warn(`⚠️ Elasticsearch index initialization warning:`, err.message);
   }
@@ -81,7 +83,7 @@ async function ensureEsIndex(client) {
  * Indexes or updates a canonical job into Elasticsearch.
  */
 async function indexJobToEs(client, job) {
-  if (!client || !job) return;
+  if (!client || !job) return { success: false, reason: 'Client or job missing' };
   try {
     await client.index({
       index: ES_INDEX,
@@ -102,10 +104,13 @@ async function indexJobToEs(client, job) {
         status: job.status,
         published_at: job.published_at instanceof Date ? job.published_at.toISOString() : job.published_at,
         ingested_at: job.ingested_at instanceof Date ? job.ingested_at.toISOString() : job.ingested_at,
+        is_synthetic: Boolean(job.is_synthetic),
       },
     });
+    return { success: true, id: job.id };
   } catch (err) {
     console.error(`⚠️ Elasticsearch indexing failed for "${job.title}":`, err.message);
+    throw err;
   }
 }
 
@@ -229,14 +234,19 @@ async function searchJobsEs(client, params) {
   let next_cursor = null;
   if (hasMore && pageHits.length > 0) {
     const lastHit = pageHits[pageHits.length - 1];
-    next_cursor = encodeCursor({ sortValues: lastHit.sort });
+    next_cursor = encodeCursor({
+      v: 1,
+      sort,
+      q: q || '',
+      sortValues: lastHit.sort,
+    });
   }
 
   return {
     items,
     limit,
     next_cursor,
-    prev_cursor: decodedCursor ? 'prev_supported' : null,
+    prev_cursor: null,
     total_count,
   };
 }

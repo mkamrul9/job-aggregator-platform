@@ -78,39 +78,39 @@ async function searchJobsMongo(jobsCollection, params) {
     sortStage.id = 1;
   }
 
-  // Cursor handling
-  if (decodedCursor && decodedCursor.v) {
-    const v = decodedCursor.v;
-    if (sort === SortOption.SALARY_DESC && v.length >= 3) {
-      const cursorSalary = v[0];
-      const cursorDate = new Date(v[1]);
-      const cursorId = v[2];
+  // 1. Total count for active filter BEFORE applying keyset cursor filter
+  const total_count = await jobsCollection.countDocuments(filter);
 
-      const cursorFilter = {
+  // 2. Keyset cursor filtering
+  if (decodedCursor && Array.isArray(decodedCursor.sortValues)) {
+    const sv = decodedCursor.sortValues;
+    let cursorFilter = null;
+
+    if (sort === SortOption.SALARY_DESC && sv.length >= 3) {
+      const cursorSalary = Number(sv[0]);
+      const cursorDate = new Date(sv[1]);
+      const cursorId = String(sv[2]);
+
+      cursorFilter = {
         $or: [
           { 'salary.min': { $lt: cursorSalary } },
           { 'salary.min': cursorSalary, published_at: { $lt: cursorDate } },
           { 'salary.min': cursorSalary, published_at: cursorDate, id: { $gt: cursorId } },
         ],
       };
+    } else if (sv.length >= 2) {
+      const cursorDate = new Date(sv[sv.length - 2]);
+      const cursorId = String(sv[sv.length - 1]);
 
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, cursorFilter];
-        delete filter.$or;
-      } else {
-        Object.assign(filter, cursorFilter);
-      }
-    } else if (v.length >= 2) {
-      const cursorDate = new Date(v[0]);
-      const cursorId = v[1];
-
-      const cursorFilter = {
+      cursorFilter = {
         $or: [
           { published_at: { $lt: cursorDate } },
           { published_at: cursorDate, id: { $gt: cursorId } },
         ],
       };
+    }
 
+    if (cursorFilter) {
       if (filter.$or) {
         filter.$and = [{ $or: filter.$or }, cursorFilter];
         delete filter.$or;
@@ -127,14 +127,6 @@ async function searchJobsMongo(jobsCollection, params) {
     .limit(limit + 1)
     .toArray();
 
-  // Total count for current filter (excluding cursor filter for total count)
-  const countFilter = { ...filter };
-  delete countFilter.$and;
-  if (filter.$and && filter.$and[0] && filter.$and[0].$or) {
-    countFilter.$or = filter.$and[0].$or;
-  }
-  const total_count = await jobsCollection.countDocuments(countFilter);
-
   const hasMore = docs.length > limit;
   const pageDocs = hasMore ? docs.slice(0, limit) : docs;
   const items = pageDocs.map(toJobSummary);
@@ -142,22 +134,26 @@ async function searchJobsMongo(jobsCollection, params) {
   let next_cursor = null;
   if (hasMore && pageDocs.length > 0) {
     const lastDoc = pageDocs[pageDocs.length - 1];
-    if (sort === SortOption.SALARY_DESC) {
-      next_cursor = encodeCursor({
-        v: [lastDoc.salary?.min || 0, new Date(lastDoc.published_at).toISOString(), lastDoc.id],
-      });
-    } else {
-      next_cursor = encodeCursor({
-        v: [new Date(lastDoc.published_at).toISOString(), lastDoc.id],
-      });
-    }
+    const pubDate = lastDoc.published_at instanceof Date ? lastDoc.published_at : new Date(lastDoc.published_at);
+    const pubEpoch = pubDate.getTime();
+    const sortValues =
+      sort === SortOption.SALARY_DESC
+        ? [lastDoc.salary?.min || 0, pubEpoch, lastDoc.id]
+        : [pubEpoch, lastDoc.id];
+
+    next_cursor = encodeCursor({
+      v: 1,
+      sort,
+      q: q || '',
+      sortValues,
+    });
   }
 
   return {
     items,
     limit,
     next_cursor,
-    prev_cursor: decodedCursor ? 'prev_supported' : null,
+    prev_cursor: null,
     total_count,
   };
 }

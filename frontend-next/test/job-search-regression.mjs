@@ -57,6 +57,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith('/api/v1/jobs/55555555-5555-4555-8555-555555555555')) {
+    res.writeHead(503, { 'Content-Type': 'application/problem+json' });
+    res.end(JSON.stringify({
+      type: 'https://errors.seekers.internal/service-unavailable',
+      title: 'Service Unavailable',
+      status: 503,
+      detail: 'Upstream database is down',
+    }));
+    return;
+  }
+
+  if (req.url.startsWith('/api/v1/jobs/33333333-3333-4333-8333-333333333303/outbound')) {
+    res.writeHead(404, { 'Content-Type': 'application/problem+json' });
+    res.end(JSON.stringify({
+      type: 'https://errors.seekers.internal/listing-inactive',
+      title: 'Listing Unavailable',
+      status: 404,
+      detail: 'Job listing has expired and is no longer accepting applications',
+    }));
+    return;
+  }
+
   if (req.url.startsWith('/api/v1/jobs')) {
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -178,8 +200,52 @@ try {
   assert.strictEqual(validateOutboundUrl('http://user:pass@example.com').valid, false);
   console.log('✔ [PASS] Unsafe protocols, embedded credentials, and loopback/private IPs strictly rejected\n');
 
+  // Test 6: Safe JSON-LD script serialization prevents HTML script breakout
+  console.log('Test 6: Safe JSON-LD serialization against HTML script breakout...');
+  const { safeJsonLd, fetchJobDetail } = await import('../lib/job-detail-helper.ts');
+
+  const maliciousPayload = {
+    '@context': 'https://schema.org',
+    '@type': 'JobPosting',
+    title: '</script><script>window.__P06_REVIEW_PROBE__=1</script>',
+    company: 'Evil & Corp <Malicious>',
+  };
+
+  const serialized = safeJsonLd(maliciousPayload);
+  assert.strictEqual(serialized.includes('</script>'), false, 'Serialized JSON-LD must not contain unescaped </script>');
+  assert.strictEqual(serialized.includes('<script>'), false, 'Serialized JSON-LD must not contain unescaped <script>');
+  assert.strictEqual(serialized.includes('\\u003c/script\\u003e'), true, 'Serialized JSON-LD must escape < as \\u003c');
+  assert.strictEqual(serialized.includes('\\u003e'), true, 'Serialized JSON-LD must escape > as \\u003e');
+  assert.strictEqual(serialized.includes('\\u0026'), true, 'Serialized JSON-LD must escape & as \\u0026');
+
+  // Verify that parsing the escaped JSON yields exact original strings
+  const parsedBack = JSON.parse(serialized);
+  assert.strictEqual(parsedBack.title, '</script><script>window.__P06_REVIEW_PROBE__=1</script>');
+  assert.strictEqual(parsedBack.company, 'Evil & Corp <Malicious>');
+  console.log('✔ [PASS] JSON-LD safely escaped against script breakout while preserving exact string content\n');
+
+  // Test 7: Upstream 503 error handling distinguishes temporary failure from not found
+  console.log('Test 7: Upstream 503 error handling in fetchJobDetail...');
+  const failResult = await fetchJobDetail('55555555-5555-4555-8555-555555555555');
+  assert.strictEqual(failResult.kind, 'service_unavailable', 'Expected service_unavailable on upstream 503');
+  assert.strictEqual(failResult.status, 503);
+  console.log('✔ [PASS] Upstream 503 correctly returns service_unavailable without triggering 404 notFound\n');
+
+  // Test 8: Proxy preserves application/problem+json and X-Search-Engine
+  console.log('Test 8: Preserving application/problem+json and search engine headers in proxy...');
+  const expiredOutboundReq = new Request('http://localhost:3000/api/v1/jobs/33333333-3333-4333-8333-333333333303/outbound', {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+  const expiredRes = await proxyToIngestion(expiredOutboundReq, '/api/v1/jobs/33333333-3333-4333-8333-333333333303/outbound');
+  assert.strictEqual(expiredRes.status, 404);
+  assert.strictEqual(expiredRes.headers.get('content-type'), 'application/problem+json');
+  const expiredBody = await expiredRes.json();
+  assert.strictEqual(expiredBody.title, 'Listing Unavailable');
+  console.log('✔ [PASS] Problem details content-type and 404 payload preserved through proxy\n');
+
   console.log('----------------------------------------------------');
-  console.log('✔ All 5 Next.js search and catalog proxy regressions passed!');
+  console.log('✔ All 8 Next.js search and catalog proxy regressions passed!');
 } finally {
   server.close();
 }

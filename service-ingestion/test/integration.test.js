@@ -7,9 +7,13 @@ const request = require('supertest');
 const fs = require('fs');
 const path = require('path');
 
+const TEST_ES_INDEX = 'jobs_index_test';
+process.env.ES_INDEX = TEST_ES_INDEX;
+
 const { createIngestionApp } = require('../index');
 const { ensureMongoIndexes, upsertJobDocument } = require('../src/catalog/db');
 const { ensureEsIndex, indexJobToEs } = require('../src/search/elasticsearch');
+const { encodeCursor } = require('../src/search/query-validator');
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
 const ES_NODE = process.env.ES_NODE || 'http://localhost:9200';
@@ -44,8 +48,16 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
     // 2. Try connecting to Elasticsearch if running
     try {
       esClient = new EsClient({ node: ES_NODE });
+      // Reset isolated test index
+      const exists = await esClient.indices.exists({ index: TEST_ES_INDEX });
+      if (exists) {
+        await esClient.indices.delete({ index: TEST_ES_INDEX });
+      }
       await ensureEsIndex(esClient);
     } catch (err) {
+      if (process.env.REQUIRE_ES === 'true') {
+        throw new Error(`Elasticsearch is required in CI: ${err.message}`);
+      }
       console.warn('⚠️ Elasticsearch not running locally, test will run against canonical MongoDB engine.');
       esClient = null;
     }
@@ -59,14 +71,16 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       if (esClient) {
         try {
           await indexJobToEs(esClient, canonical);
-        } catch {}
+        } catch (esErr) {
+          console.warn('Warning indexing job to ES in test setup:', esErr.message);
+        }
       }
     }
 
     // Wait a brief moment for Elasticsearch index refresh if active
     if (esClient) {
       try {
-        await esClient.indices.refresh({ index: 'jobs_index' });
+        await esClient.indices.refresh({ index: TEST_ES_INDEX });
       } catch {}
     }
 
@@ -84,6 +98,9 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       await mongoClient.close();
     }
     if (esClient) {
+      try {
+        await esClient.indices.delete({ index: TEST_ES_INDEX });
+      } catch {}
       await esClient.close();
     }
   });
@@ -97,6 +114,12 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.ok(res.body.total_count > 0);
       assert.strictEqual(res.body.limit, 20);
       assert.ok(res.headers['x-correlation-id']);
+
+      if (esClient) {
+        assert.strictEqual(res.headers['x-search-engine'], 'elasticsearch');
+      } else {
+        assert.strictEqual(res.headers['x-search-engine'], 'mongodb');
+      }
 
       // Ensure EXPIRED listing is not in active search results
       const expiredFound = res.body.items.some((j) => j.status === 'EXPIRED');
@@ -194,6 +217,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.strictEqual(page1Res.status, 200);
       assert.strictEqual(page1Res.body.items.length, 3);
       assert.ok(page1Res.body.next_cursor);
+      assert.strictEqual(page1Res.body.prev_cursor, null);
 
       const page1Ids = page1Res.body.items.map((j) => j.id);
 
@@ -201,6 +225,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       const page2Res = await request(app).get(`/api/v1/jobs?sort=date_desc&limit=3&cursor=${encodeURIComponent(page1Res.body.next_cursor)}`);
       assert.strictEqual(page2Res.status, 200);
       assert.strictEqual(page2Res.body.items.length, 3);
+      assert.strictEqual(page1Res.body.total_count, page2Res.body.total_count, 'total_count must remain stable across cursor pages');
 
       const page2Ids = page2Res.body.items.map((j) => j.id);
 
@@ -253,6 +278,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       assert.strictEqual(res.status, 404);
       assert.strictEqual(res.body.status, 404);
       assert.strictEqual(res.body.title, 'Not Found');
+      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
     });
 
     it('GET /api/v1/jobs/:id/outbound performs safe 302 redirect for active listing', async () => {
@@ -283,7 +309,75 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       const res = await request(app).get(`/api/v1/jobs/${expiredId}/outbound`);
 
       assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
       assert.match(res.body.detail, /expired/i);
+    });
+
+    it('GET /api/v1/jobs/:id/outbound returns 404 for listing with past expires_at', async () => {
+      const pastJob = {
+        id: '99999999-9999-4999-8999-999999999999',
+        canonical_url: 'https://example.com/jobs/past-deadline',
+        source: 'aggregator',
+        source_id: 'past_1',
+        title: 'Past Deadline Role',
+        company: 'Late Inc',
+        location: 'Dhaka',
+        remote_eligibility: 'HYBRID',
+        job_type: 'FULL_TIME',
+        seniority: 'MID',
+        description: 'Past deadline role.',
+        status: 'ACTIVE',
+        published_at: new Date('2026-09-01T00:00:00Z'),
+        expires_at: new Date('2026-09-15T00:00:00Z'),
+        first_seen_at: new Date('2026-09-01T00:00:00Z'),
+        last_seen_at: new Date('2026-09-15T00:00:00Z'),
+        ingested_at: new Date('2026-09-01T00:05:00Z'),
+      };
+      await jobsCollection.insertOne(pastJob);
+
+      const res = await request(app).get(`/api/v1/jobs/${pastJob.id}/outbound`);
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.headers['content-type'], 'application/problem+json; charset=utf-8');
+      assert.match(res.body.detail, /expired/i);
+    });
+  });
+
+  describe('Standalone MongoDB engine mode (fallback/outage)', () => {
+    let mongoApp = null;
+    before(() => {
+      mongoApp = createIngestionApp(jobsCollection, null);
+    });
+
+    it('returns MongoDB search engine header and performs stable pagination', async () => {
+      const res = await request(mongoApp).get('/api/v1/jobs?limit=3&sort=date_desc');
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers['x-search-engine'], 'mongodb');
+      assert.ok(res.body.items.length > 0);
+      assert.ok(res.body.next_cursor);
+
+      const page2 = await request(mongoApp).get(`/api/v1/jobs?limit=3&sort=date_desc&cursor=${encodeURIComponent(res.body.next_cursor)}`);
+      assert.strictEqual(page2.status, 200);
+      assert.strictEqual(page2.headers['x-search-engine'], 'mongodb');
+      assert.strictEqual(res.body.total_count, page2.body.total_count, 'total_count must remain identical across cursor pages in MongoDB');
+
+      const p1Ids = new Set(res.body.items.map((j) => j.id));
+      page2.body.items.forEach((j) => {
+        assert.strictEqual(p1Ids.has(j.id), false, `ID ${j.id} appeared on both pages in MongoDB keyset pagination`);
+      });
+    });
+
+    it('consumes unified cursor format with sortValues seamlessly in MongoDB', async () => {
+      const sampleItem = await jobsCollection.findOne({ status: 'ACTIVE' });
+      const cursorStr = encodeCursor({
+        v: 1,
+        sort: 'date_desc',
+        q: '',
+        sortValues: [new Date(sampleItem.published_at).getTime(), sampleItem.id],
+      });
+
+      const res = await request(mongoApp).get(`/api/v1/jobs?sort=date_desc&cursor=${encodeURIComponent(cursorStr)}`);
+      assert.strictEqual(res.status, 200);
+      assert.ok(res.body.items.every((j) => j.id !== sampleItem.id));
     });
   });
 
