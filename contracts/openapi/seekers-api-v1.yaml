@@ -265,6 +265,73 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /users/resume/review:
+    post:
+      summary: Apply Reviewed Resume Skills to Profile
+      description: Applies candidate-reviewed skills from a completed parse task to the persistent profile.
+      operationId: reviewResumeSkills
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeReviewRequest'
+      responses:
+        '200':
+          description: Profile updated with reviewed skills.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/resume:
+    delete:
+      summary: Delete Active Resume
+      description: Deletes active resume document and removes object from private storage.
+      operationId: deleteResume
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Resume document deleted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/resume/download:
+    get:
+      summary: Download Active Resume PDF
+      description: Secure candidate download of active uploaded resume document.
+      operationId: downloadResume
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Resume PDF binary stream.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /users/saved-jobs:
     get:
       summary: List Saved Jobs
@@ -954,6 +1021,18 @@ components:
           type: string
         processing_time_ms:
           type: integer
+
+    ResumeReviewRequest:
+      type: object
+      required: [parse_id, selected_skills]
+      properties:
+        parse_id:
+          type: string
+          format: uuid
+        selected_skills:
+          type: array
+          items:
+            type: string
 
     SavedJobListResponse:
       type: object

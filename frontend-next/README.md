@@ -46,7 +46,8 @@ The candidate-facing web portal for the Seekers platform, providing job discover
 - **`MobileFilterSheet.tsx`:** Bottom-sheet modal for viewports `<768px` featuring touch targets $\ge 44$px, focus containment, reset action, and filter counter.
 - **`ApplicationsWorkspace.tsx`:** Candidate-managed Kanban/pipeline tracker (`APPLIED`, `INTERVIEWING`, `OFFERED`, `REJECTED`, `WITHDRAWN`) with inline notes editing and date stamps.
 - **`AlertsWorkspace.tsx`:** Simulated email alert subscription management with frequency selector (`IMMEDIATE`, `DAILY`, `WEEKLY`).
-- **`ProfileWorkspace.tsx`:** Candidate persona summary with interactive skills tag cloud (add/remove tokens) and digital resume status.
+- **`ProfileWorkspace.tsx`:** Candidate persona summary with interactive skills tag cloud (add/remove tokens), persistent profile preferences, and integrated `ResumeUpload` component.
+- **`ResumeUpload.tsx`:** Production candidate resume upload supporting drag-and-drop, 10MB bounds, asynchronous extraction polling (`/api/v1/users/resume/status/:parseId`), and candidate review checklist before applying extracted skills to profile.
 - **`AuthModal.tsx` & `FeedbackModal.tsx` & `DataControlModal.tsx`:** Truthfully prototyped dialogs for authentication validation, listing issue reporting, GDPR data export, and account deletion requests.
 
 ---

@@ -5,6 +5,8 @@ import {
   AccountDeletionRequest,
   AccountExportRequest,
   RemoteEligibility,
+  ResumeDocument,
+  ResumeParseResult,
 } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -269,5 +271,182 @@ export class UserRepository {
       update: { extractedSkills },
       create: { userId, extractedSkills },
     });
+  }
+
+  // ─── P08 OWNED RESUME DOCUMENT & PARSE LIFECYCLE ───────────────────────────
+
+  async createResumeDocument(data: {
+    id?: string;
+    userId: string;
+    storageKey: string;
+    fileName: string;
+    fileSizeBytes: number;
+    checksumSha256: string;
+    mimeType?: string;
+    status?: string;
+  }): Promise<ResumeDocument> {
+    // Supersede older active documents for this candidate
+    await this.prisma.resumeDocument.updateMany({
+      where: {
+        userId: data.userId,
+        status: { in: ['UPLOADED', 'PROCESSING', 'PARSED'] },
+      },
+      data: { status: 'SUPERSEDED' },
+    });
+
+    return this.prisma.resumeDocument.create({
+      data: {
+        id: data.id,
+        userId: data.userId,
+        storageKey: data.storageKey,
+        fileName: data.fileName,
+        fileSizeBytes: data.fileSizeBytes,
+        checksumSha256: data.checksumSha256,
+        mimeType: data.mimeType || 'application/pdf',
+        status: data.status || 'UPLOADED',
+      },
+    });
+  }
+
+  async findActiveResume(userId: string): Promise<ResumeDocument | null> {
+    return this.prisma.resumeDocument.findFirst({
+      where: {
+        userId,
+        status: { in: ['UPLOADED', 'PROCESSING', 'PARSED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findResumeById(id: string): Promise<ResumeDocument | null> {
+    return this.prisma.resumeDocument.findUnique({
+      where: { id },
+    });
+  }
+
+  async updateResumeStatus(
+    id: string,
+    status: string,
+  ): Promise<ResumeDocument> {
+    return this.prisma.resumeDocument.update({
+      where: { id },
+      data: { status },
+    });
+  }
+
+  async createParseResult(data: {
+    id?: string;
+    documentId: string;
+    userId: string;
+    status?: string;
+  }): Promise<ResumeParseResult> {
+    return this.prisma.resumeParseResult.create({
+      data: {
+        id: data.id,
+        documentId: data.documentId,
+        userId: data.userId,
+        status: data.status || 'QUEUED',
+      },
+    });
+  }
+
+  async findParseResultById(
+    id: string,
+  ): Promise<(ResumeParseResult & { document: ResumeDocument }) | null> {
+    return this.prisma.resumeParseResult.findUnique({
+      where: { id },
+      include: { document: true },
+    });
+  }
+
+  async updateParseResult(
+    id: string,
+    data: Partial<{
+      status: string;
+      extractedSkills: string[];
+      reviewedSkills: string[];
+      reviewedAt: Date;
+      errorCode: string;
+      errorMessage: string;
+      processingTimeMs: number;
+      attemptCount: number;
+      claimedBy: string | null;
+      claimedUntil: Date | null;
+    }>,
+  ): Promise<ResumeParseResult> {
+    return this.prisma.resumeParseResult.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async applyReviewedSkills(
+    userId: string,
+    parseId: string,
+    selectedSkills: string[],
+  ): Promise<UserWithProfile> {
+    // 1. Fetch current profile
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId },
+    });
+
+    const currentSkills = profile?.skills || [];
+    // Union preserving existing manual skills and appending newly accepted skills
+    const mergedSkills = Array.from(
+      new Set([...currentSkills, ...selectedSkills]),
+    );
+
+    // 2. Update profile skills
+    await this.prisma.profile.update({
+      where: { userId },
+      data: {
+        skills: mergedSkills,
+        extractedSkills: selectedSkills,
+      },
+    });
+
+    // 3. Mark parse result reviewed
+    await this.prisma.resumeParseResult.update({
+      where: { id: parseId },
+      data: {
+        reviewedSkills: selectedSkills,
+        reviewedAt: new Date(),
+      },
+    });
+
+    const updatedUser = await this.findById(userId);
+    if (!updatedUser) {
+      throw new Error(`User ${userId} not found after skill review`);
+    }
+    return updatedUser;
+  }
+
+  async deleteActiveResume(userId: string): Promise<ResumeDocument | null> {
+    const activeDoc = await this.findActiveResume(userId);
+    if (activeDoc) {
+      await this.prisma.resumeDocument.update({
+        where: { id: activeDoc.id },
+        data: { status: 'DELETED' },
+      });
+      // Cancel any pending parse results
+      await this.prisma.resumeParseResult.updateMany({
+        where: {
+          documentId: activeDoc.id,
+          status: { in: ['QUEUED', 'PROCESSING'] },
+        },
+        data: { status: 'CANCELLED' },
+      });
+    }
+
+    // Clean up profile resumeUrl and extractedSkills
+    await this.prisma.profile.updateMany({
+      where: { userId },
+      data: {
+        resumeUrl: null,
+        extractedSkills: [],
+      },
+    });
+
+    return activeDoc;
   }
 }

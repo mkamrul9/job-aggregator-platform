@@ -24,17 +24,19 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cresume.proto\x12\x06resume\"!\n\x0cParseRequest\x12\x11\n\tfile_path\x18\x01 \x01(\t\"0\n\rParseResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0e\n\x06skills\x18\x02 \x03(\t2J\n\x0cResumeParser\x12:\n\x0bParseResume\x12\x14.resume.ParseRequest\x1a\x15.resume.ParseResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cresume.proto\x12\x06resume\"g\n\x0cParseRequest\x12\x15\n\tfile_path\x18\x01 \x01(\tB\x02\x18\x01\x12\x13\n\x0b\x64ocument_id\x18\x02 \x01(\t\x12\x15\n\rcontent_bytes\x18\x03 \x01(\x0c\x12\x14\n\x0c\x63\x61ndidate_id\x18\x04 \x01(\t\"w\n\rParseResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0e\n\x06skills\x18\x02 \x03(\t\x12\x12\n\nerror_code\x18\x03 \x01(\t\x12\x15\n\rerror_message\x18\x04 \x01(\t\x12\x1a\n\x12processing_time_ms\x18\x05 \x01(\x05\x32J\n\x0cResumeParser\x12:\n\x0bParseResume\x12\x14.resume.ParseRequest\x1a\x15.resume.ParseResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'resume_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_PARSEREQUEST'].fields_by_name['file_path']._loaded_options = None
+  _globals['_PARSEREQUEST'].fields_by_name['file_path']._serialized_options = b'\030\001'
   _globals['_PARSEREQUEST']._serialized_start=24
-  _globals['_PARSEREQUEST']._serialized_end=57
-  _globals['_PARSERESPONSE']._serialized_start=59
-  _globals['_PARSERESPONSE']._serialized_end=107
-  _globals['_RESUMEPARSER']._serialized_start=109
-  _globals['_RESUMEPARSER']._serialized_end=183
+  _globals['_PARSEREQUEST']._serialized_end=127
+  _globals['_PARSERESPONSE']._serialized_start=129
+  _globals['_PARSERESPONSE']._serialized_end=248
+  _globals['_RESUMEPARSER']._serialized_start=250
+  _globals['_RESUMEPARSER']._serialized_end=324
 # @@protoc_insertion_point(module_scope)

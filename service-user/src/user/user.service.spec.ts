@@ -2,9 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
+import { StorageService } from '../storage/storage.service';
 import { PrismaService } from '../prisma.service';
 import { of } from 'rxjs';
 import { RemoteEligibility } from '@prisma/client';
+import { Readable } from 'stream';
 
 describe('UserService', () => {
   let service: UserService;
@@ -45,6 +47,15 @@ describe('UserService', () => {
     createDeletionRequest: jest.fn(),
     getAccountStatus: jest.fn(),
     updateSkills: jest.fn(),
+    createResumeDocument: jest.fn(),
+    createParseResult: jest.fn(),
+    findParseResultById: jest.fn(),
+    updateParseResult: jest.fn(),
+    updateResumeStatus: jest.fn(),
+    applyReviewedSkills: jest.fn(),
+    deleteActiveResume: jest.fn(),
+    findActiveResume: jest.fn(),
+    findResumeById: jest.fn(),
   };
 
   const mockClientGrpc = {
@@ -53,6 +64,14 @@ describe('UserService', () => {
         .fn()
         .mockReturnValue(of({ success: true, skills: ['Python', 'FastAPI'] })),
     }),
+  };
+
+  const mockStorageService = {
+    validatePdfBuffer: jest.fn(),
+    computeChecksumSha256: jest.fn().mockReturnValue('dummy-checksum-sha256'),
+    putObject: jest.fn().mockResolvedValue(undefined),
+    getObject: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 sample')),
+    deleteObject: jest.fn().mockResolvedValue(true),
   };
 
   beforeEach(async () => {
@@ -64,6 +83,10 @@ describe('UserService', () => {
         {
           provide: UserRepository,
           useValue: mockUserRepository,
+        },
+        {
+          provide: StorageService,
+          useValue: mockStorageService,
         },
         {
           provide: 'RESUME_PACKAGE',
@@ -217,6 +240,160 @@ describe('UserService', () => {
       await expect(
         service.requestAccountDeletion('unknown-uid', 'key-123', 'reason'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('P08 Owned Resume Lifecycle', () => {
+    const mockFile: Express.Multer.File = {
+      buffer: Buffer.from('%PDF-1.4 Valid candidate resume'),
+      originalname: 'candidate_cv.pdf',
+      fieldname: 'file',
+      encoding: '7bit',
+      mimetype: 'application/pdf',
+      size: 32,
+      stream: null as unknown as Readable,
+      destination: '',
+      filename: '',
+      path: '',
+    };
+
+    describe('uploadResume', () => {
+      it('accepts valid PDF, stores to private storage, creates DB records, and returns 202 payload', async () => {
+        mockUserRepository.createResumeDocument.mockResolvedValue({
+          id: 'doc-uuid-1',
+          userId: 'firebase-uid-123',
+          storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
+          fileName: 'candidate_cv.pdf',
+        });
+        mockUserRepository.createParseResult.mockResolvedValue({
+          id: 'parse-uuid-1',
+          documentId: 'doc-uuid-1',
+          userId: 'firebase-uid-123',
+          status: 'QUEUED',
+        });
+        mockUserRepository.updateProfile.mockResolvedValue(mockUserWithProfile);
+
+        const res = await service.uploadResume('firebase-uid-123', mockFile);
+
+        expect(res.parse_id).toBeDefined();
+        expect(res.status).toBe('QUEUED');
+        expect(res.message).toContain('accepted for asynchronous processing');
+        expect(mockStorageService.validatePdfBuffer).toHaveBeenCalled();
+        expect(mockStorageService.putObject).toHaveBeenCalled();
+        expect(mockUserRepository.createResumeDocument).toHaveBeenCalled();
+        expect(mockUserRepository.createParseResult).toHaveBeenCalled();
+      });
+    });
+
+    describe('getParseStatus', () => {
+      it('returns extraction status and skills for owning candidate', async () => {
+        mockUserRepository.findParseResultById.mockResolvedValue({
+          id: 'parse-uuid-1',
+          userId: 'firebase-uid-123',
+          documentId: 'doc-uuid-1',
+          status: 'COMPLETED',
+          extractedSkills: ['Python', 'FastAPI', 'Docker'],
+          processingTimeMs: 18,
+        });
+
+        const status = await service.getParseStatus(
+          'firebase-uid-123',
+          'parse-uuid-1',
+        );
+
+        expect(status.parse_id).toBe('parse-uuid-1');
+        expect(status.status).toBe('COMPLETED');
+        expect(status.extracted_skills).toEqual([
+          'Python',
+          'FastAPI',
+          'Docker',
+        ]);
+        expect(status.processing_time_ms).toBe(18);
+      });
+
+      it('rejects access from a different candidate with NotFoundException', async () => {
+        mockUserRepository.findParseResultById.mockResolvedValue({
+          id: 'parse-uuid-1',
+          userId: 'candidate-A',
+          documentId: 'doc-uuid-1',
+          status: 'COMPLETED',
+          extractedSkills: ['Go'],
+        });
+
+        await expect(
+          service.getParseStatus('candidate-B', 'parse-uuid-1'),
+        ).rejects.toThrow(NotFoundException);
+      });
+    });
+
+    describe('reviewParseSkills', () => {
+      it('merges accepted skills into profile without clobbering existing manual skills', async () => {
+        mockUserRepository.findParseResultById.mockResolvedValue({
+          id: 'parse-uuid-1',
+          userId: 'firebase-uid-123',
+          documentId: 'doc-uuid-1',
+          status: 'COMPLETED',
+          extractedSkills: ['Python', 'Docker'],
+        });
+
+        const updatedWithSkills = {
+          ...mockUserWithProfile,
+          profile: {
+            ...mockUserWithProfile.profile,
+            skills: ['TypeScript', 'Node.js', 'React', 'Python'],
+          },
+        };
+        mockUserRepository.applyReviewedSkills.mockResolvedValue(
+          updatedWithSkills,
+        );
+
+        const res = await service.reviewParseSkills(
+          'firebase-uid-123',
+          'parse-uuid-1',
+          ['Python'],
+        );
+
+        expect(res.skills).toContain('TypeScript');
+        expect(res.skills).toContain('Python');
+        expect(mockUserRepository.applyReviewedSkills).toHaveBeenCalledWith(
+          'firebase-uid-123',
+          'parse-uuid-1',
+          ['Python'],
+        );
+      });
+
+      it('rejects review if parse task is still PROCESSING', async () => {
+        mockUserRepository.findParseResultById.mockResolvedValue({
+          id: 'parse-uuid-1',
+          userId: 'firebase-uid-123',
+          status: 'PROCESSING',
+        });
+
+        await expect(
+          service.reviewParseSkills('firebase-uid-123', 'parse-uuid-1', [
+            'Python',
+          ]),
+        ).rejects.toThrow();
+      });
+    });
+
+    describe('deleteResume', () => {
+      it('deletes active resume document and removes object from storage', async () => {
+        mockUserRepository.deleteActiveResume.mockResolvedValue({
+          id: 'doc-uuid-1',
+          storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
+        });
+
+        const res = await service.deleteResume('firebase-uid-123');
+
+        expect(res.message).toBe('Resume document deleted successfully');
+        expect(mockUserRepository.deleteActiveResume).toHaveBeenCalledWith(
+          'firebase-uid-123',
+        );
+        expect(mockStorageService.deleteObject).toHaveBeenCalledWith(
+          'resumes/firebase-uid-123/doc-uuid-1.pdf',
+        );
+      });
     });
   });
 });

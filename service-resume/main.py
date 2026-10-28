@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from fastapi.responses import HTMLResponse
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 import spacy
 from spacy.matcher import PhraseMatcher
 import io
 import json
+import time
 
 app = FastAPI(
     title="Seekers Resume Parsing & NLP Service",
@@ -23,64 +24,233 @@ TECH_SKILLS = [
     "AWS", "Terraform", "CI/CD", "Linux", "gRPC", "GraphQL", "TailwindCSS"
 ]
 
-CANONICAL_SKILLS = {skill.lower(): skill for skill in TECH_SKILLS}
-patterns = [nlp.make_doc(skill) for skill in TECH_SKILLS]
+CANONICAL_ALIASES = {
+    "golang": "Go",
+    "go": "Go",
+    "js": "JavaScript",
+    "javascript": "JavaScript",
+    "ts": "TypeScript",
+    "typescript": "TypeScript",
+    "postgres": "PostgreSQL",
+    "postgresql": "PostgreSQL",
+    "mongo": "MongoDB",
+    "mongodb": "MongoDB",
+    "k8s": "Kubernetes",
+    "kubernetes": "Kubernetes",
+    "aws": "AWS",
+    "react": "React",
+    "reactjs": "React",
+    "angular": "Angular",
+    "vue": "Vue",
+    "vuejs": "Vue",
+    "nextjs": "Next.js",
+    "next.js": "Next.js",
+    "nodejs": "Node.js",
+    "node.js": "Node.js",
+    "nestjs": "NestJS",
+    "nest.js": "NestJS",
+    "python": "Python",
+    "fastapi": "FastAPI",
+    "django": "Django",
+    "flask": "Flask",
+    "java": "Java",
+    "spring boot": "Spring Boot",
+    "docker": "Docker",
+    "kafka": "Kafka",
+    "redis": "Redis",
+    "microservices": "Microservices",
+    "terraform": "Terraform",
+    "ci/cd": "CI/CD",
+    "linux": "Linux",
+    "grpc": "gRPC",
+    "graphql": "GraphQL",
+    "tailwindcss": "TailwindCSS",
+}
+
+for skill in TECH_SKILLS:
+    CANONICAL_ALIASES[skill.lower()] = skill
+
+patterns = [nlp.make_doc(term) for term in CANONICAL_ALIASES.keys()]
 matcher.add("SKILLS", patterns)
 
-def extract_skills_from_text(text: str):
+def generate_sample_pdf_bytes(title: str, text: str) -> bytes:
+    """Generates standard conformant PDF 1.4 bytes in-memory with real selectable text."""
+    content = f"BT /F1 14 Tf 50 720 Td ({title}) Tj /F1 10 Tf 0 -24 Td ({text}) Tj ET"
+    content_bytes = content.encode("latin-1", errors="replace")
+    stream_len = len(content_bytes)
+
+    obj1 = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    obj2 = b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+    obj3 = b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n"
+    obj4 = b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+    obj5 = f"5 0 obj\n<< /Length {stream_len} >>\nstream\n".encode("latin-1") + content_bytes + b"\nendstream\nendobj\n"
+
+    header = b"%PDF-1.4\n"
+    offsets = [0]
+    curr = len(header)
+    offsets.append(curr); curr += len(obj1)
+    offsets.append(curr); curr += len(obj2)
+    offsets.append(curr); curr += len(obj3)
+    offsets.append(curr); curr += len(obj4)
+    offsets.append(curr); curr += len(obj5)
+
+    xref = f"xref\n0 6\n0000000000 65535 f \n{offsets[1]:010d} 00000 n \n{offsets[2]:010d} 00000 n \n{offsets[3]:010d} 00000 n \n{offsets[4]:010d} 00000 n \n{offsets[5]:010d} 00000 n \n"
+    trailer = f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{curr}\n%%EOF\n"
+
+    return header + obj1 + obj2 + obj3 + obj4 + obj5 + xref.encode("latin-1") + trailer.encode("latin-1")
+
+def extract_skills_from_text(text: str) -> list[str]:
+    """Tokenizes text with spaCy and extracts canonical technology skills."""
+    if not text:
+        return []
     doc = nlp(text)
     matches = matcher(doc)
     extracted_skills = set()
     for match_id, start, end in matches:
         span = doc[start:end]
-        canonical_skill = CANONICAL_SKILLS.get(span.text.lower(), span.text)
+        canonical_skill = CANONICAL_ALIASES.get(span.text.lower(), span.text)
         extracted_skills.add(canonical_skill)
     return sorted(list(extracted_skills))
+
+def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50) -> dict:
+    """Unified PDF text extraction and skill analysis with strict safety boundaries."""
+    start_time = time.time()
+
+    # 1. Signature check
+    if not pdf_bytes.startswith(b"%PDF"):
+        return {
+            "success": False,
+            "error_code": "INVALID_PDF_SIGNATURE",
+            "error_message": "Document does not start with valid %PDF header.",
+            "skills": []
+        }
+
+    # 2. Maximum byte size check (10MB)
+    if len(pdf_bytes) > 10 * 1024 * 1024:
+        return {
+            "success": False,
+            "error_code": "FILE_TOO_LARGE",
+            "error_message": "File size exceeds the 10MB limit.",
+            "skills": []
+        }
+
+    try:
+        pdf_stream = io.BytesIO(pdf_bytes)
+        reader = PdfReader(pdf_stream)
+
+        # 3. Encryption check
+        if reader.is_encrypted:
+            return {
+                "success": False,
+                "error_code": "ENCRYPTED_PDF",
+                "error_message": "Document is password protected or encrypted.",
+                "skills": []
+            }
+
+        # 4. Bounded page text extraction
+        pages_to_process = reader.pages[:max_pages]
+        extracted_pages = []
+        for page in pages_to_process:
+            try:
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    extracted_pages.append(page_text.strip())
+            except Exception:
+                continue
+
+        raw_text = " ".join(extracted_pages).strip()
+
+        # 5. Scanned PDF / empty text check
+        if not raw_text:
+            return {
+                "success": False,
+                "error_code": "SCANNED_PDF_NO_TEXT",
+                "error_message": "No selectable text layer found. Scanned documents require OCR, which is disabled under the $0 budget profile.",
+                "skills": []
+            }
+
+        # 6. Skill extraction
+        skills = extract_skills_from_text(raw_text)
+        elapsed_ms = max(1, int((time.time() - start_time) * 1000))
+
+        return {
+            "success": True,
+            "skills": skills,
+            "page_count": len(reader.pages),
+            "character_count": len(raw_text),
+            "processing_time_ms": elapsed_ms
+        }
+
+    except Exception as e:
+        elapsed_ms = max(1, int((time.time() - start_time) * 1000))
+        return {
+            "success": False,
+            "error_code": "MALFORMED_PDF",
+            "error_message": f"Malformed PDF structure: {str(e)}",
+            "skills": [],
+            "processing_time_ms": elapsed_ms
+        }
 
 @app.get("/health")
 def health_check():
     return {
         "status": "Resume Extractor Service is running.",
         "model": "en_core_web_sm",
-        "skills_vocabulary_size": len(TECH_SKILLS)
+        "skills_vocabulary_size": len(TECH_SKILLS),
+        "runtime": "Python 3.11 / FastAPI",
+        "limits": {
+            "max_file_size_bytes": 10 * 1024 * 1024,
+            "max_pages": 50
+        }
     }
+
+@app.get("/sample-resume.pdf")
+def get_sample_resume():
+    """Serves a genuine synthetic PDF with real selectable text and technical skills."""
+    sample_text = (
+        "Experienced Senior Fullstack Engineer with 7+ years building distributed cloud platforms. "
+        "Core competencies include Go, Python, FastAPI, React, TypeScript, Node.js, and NestJS. "
+        "Expertise in container orchestration with Docker and Kubernetes, event streaming with Kafka, "
+        "and relational database modeling using PostgreSQL and Redis caching. "
+        "Proven track record designing Microservices architecture, gRPC APIs, and automated CI/CD pipelines."
+    )
+    pdf_bytes = generate_sample_pdf_bytes("Farhan Ahmed - Senior Fullstack CV", sample_text)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="Farhan_Ahmed_Senior_FullStack_CV.pdf"'}
+    )
 
 @app.post("/parse")
 async def parse_resume(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf":
+    if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     try:
-        file_content = await file.read()
-        if len(file_content) > 10 * 1024 * 1024:
+        # Bounded streaming read up to 10MB + 1 byte
+        chunk = await file.read(10 * 1024 * 1024 + 1)
+        if len(chunk) > 10 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File size exceeds maximum 10MB limit.")
 
-        pdf_stream = io.BytesIO(file_content)
-        reader = PdfReader(pdf_stream)
+        outcome = extract_skills_from_pdf_bytes(chunk)
 
-        if reader.is_encrypted:
-            raise HTTPException(
-                status_code=422,
-                detail="ENCRYPTED_PDF: Document is password protected or encrypted."
-            )
-
-        extracted_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
-        raw_text = " ".join(extracted_pages).strip()
-
-        if not raw_text:
-            raise HTTPException(
-                status_code=422,
-                detail="SCANNED_PDF_NO_TEXT: No selectable text layer found. OCR is not enabled under $0 budget profile."
-            )
-
-        extracted_skills = extract_skills_from_text(raw_text)
+        if not outcome["success"]:
+            code = outcome.get("error_code")
+            msg = outcome.get("error_message")
+            if code == "INVALID_PDF_SIGNATURE":
+                raise HTTPException(status_code=400, detail=f"{code}: {msg}")
+            elif code in ("ENCRYPTED_PDF", "SCANNED_PDF_NO_TEXT", "MALFORMED_PDF"):
+                raise HTTPException(status_code=422, detail=f"{code}: {msg}")
+            else:
+                raise HTTPException(status_code=500, detail=f"Error processing NLP: {msg}")
 
         return {
             "filename": file.filename,
             "status": "success",
-            "page_count": len(reader.pages),
-            "character_count": len(raw_text),
-            "extracted_skills": extracted_skills
+            "page_count": outcome["page_count"],
+            "character_count": outcome["character_count"],
+            "processing_time_ms": outcome["processing_time_ms"],
+            "extracted_skills": outcome["skills"]
         }
 
     except HTTPException:
@@ -88,7 +258,7 @@ async def parse_resume(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing NLP: {str(e)}")
 
-# ─── STANDALONE HTML/CSS PROTOTYPE ───────────────────────────────────────────
+# ─── STANDALONE HTML/CSS RESUME EXTRACTOR CONSOLE ─────────────────────────────
 DEMO_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -236,7 +406,7 @@ DEMO_HTML = """<!DOCTYPE html>
     </div>
 
     <div style="display: flex; align-items: center; gap: 0.75rem;">
-      <span class="badge badge-amber">Standalone Demo Mode</span>
+      <span class="badge badge-amber">Standalone Python App</span>
       <a href="/docs" target="_blank" class="btn btn-ghost" style="min-height: 34px; font-size: 12px;">FastAPI Docs ↗</a>
     </div>
   </header>
@@ -248,7 +418,7 @@ DEMO_HTML = """<!DOCTYPE html>
       <span style="font-size: 1.25rem;">🔒</span>
       <div>
         <strong style="color: var(--text-primary);">Candidate Privacy & Data Hygiene:</strong>
-        Resumes processed in this extractor console are parsed strictly in-memory and immediately discarded. Under the $0 operating budget, no PDF files are saved to disk, and no candidate profile data is uploaded to cloud object storage.
+        Resumes processed in this standalone extractor console are parsed strictly in-memory and immediately discarded. No PDF files are saved to disk, and no candidate profile data is uploaded to cloud object storage in standalone mode.
       </div>
     </div>
 
@@ -289,7 +459,7 @@ DEMO_HTML = """<!DOCTYPE html>
       <!-- Edge Case Simulation Buttons -->
       <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
         <span style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">
-          Edge Case Simulation:
+          Edge Case Demonstration:
         </span>
         <button type="button" class="btn btn-ghost" style="font-size: 11px; padding: 0.3rem 0.6rem; min-height: 32px;" onclick="simulateScannedPdf()">
           Simulate Scanned PDF (No text layer)
@@ -320,7 +490,7 @@ DEMO_HTML = """<!DOCTYPE html>
               Extracted Technical Competencies (<span id="skills-count">0</span>)
             </h2>
             <div style="font-size: 12px; color: var(--text-muted);" id="file-meta">
-              Parsed via spaCy PhraseMatcher in 14ms
+              Parsed via spaCy PhraseMatcher
             </div>
           </div>
 
@@ -334,7 +504,7 @@ DEMO_HTML = """<!DOCTYPE html>
         <!-- Raw JSON Payload Presentation -->
         <div style="margin-top: 1rem;">
           <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.4rem;">
-            OpenAPI Contract Payload (resume.parsed.v1)
+            Extraction Result Payload
           </div>
           <pre id="json-preview"></pre>
         </div>
@@ -349,16 +519,11 @@ DEMO_HTML = """<!DOCTYPE html>
     let activeFile = null;
     let extractedResult = null;
 
-    const SAMPLE_SKILLS = [
-      "Go", "Python", "FastAPI", "React", "TypeScript", "Node.js", "Docker",
-      "Kubernetes", "PostgreSQL", "Kafka", "Microservices", "Redis"
-    ];
-
     function handleFileSelected(event) {
       const file = event.target.files[0];
       if (!file) return;
 
-      if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) {
+      if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
         showError("Invalid File Format: Only digital text-layer PDF documents are supported.");
         return;
       }
@@ -374,17 +539,22 @@ DEMO_HTML = """<!DOCTYPE html>
       document.getElementById('extract-btn').disabled = false;
     }
 
-    function loadSampleResume() {
-      activeFile = {
-        name: "Farhan_Ahmed_Senior_FullStack_CV.pdf",
-        size: 182 * 1024
-      };
+    async function loadSampleResume() {
       hideError();
-      document.getElementById('dropzone-label').textContent = activeFile.name + " (182 KB - Sample)";
-      document.getElementById('extract-btn').disabled = false;
+      document.getElementById('dropzone-label').textContent = 'Fetching real sample PDF from service...';
+      try {
+        const res = await fetch('/sample-resume.pdf');
+        if (!res.ok) throw new Error('Sample resume could not be retrieved');
+        const blob = await res.blob();
+        activeFile = new File([blob], 'Farhan_Ahmed_Senior_FullStack_CV.pdf', { type: 'application/pdf' });
+        document.getElementById('dropzone-label').textContent = activeFile.name + ' (' + (activeFile.size / 1024).toFixed(1) + ' KB - Real PDF)';
+        document.getElementById('extract-btn').disabled = false;
+      } catch (err) {
+        showError('Failed to load sample PDF: ' + err.message);
+      }
     }
 
-    function runExtraction() {
+    async function runExtraction() {
       if (!activeFile) return;
 
       hideError();
@@ -396,47 +566,70 @@ DEMO_HTML = """<!DOCTYPE html>
       progressWrap.style.display = 'block';
       progressStatus.style.display = 'block';
       progressFill.style.width = '30%';
-      progressStatus.textContent = 'Reading PDF text-layer streams...';
+      progressStatus.textContent = 'Reading PDF text streams...';
 
-      setTimeout(() => {
-        progressFill.style.width = '70%';
+      try {
+        const formData = new FormData();
+        formData.append('file', activeFile);
+
+        progressFill.style.width = '60%';
         progressStatus.textContent = 'Executing spaCy PhraseMatcher on en_core_web_sm...';
 
-        setTimeout(() => {
-          progressFill.style.width = '100%';
-          progressStatus.textContent = 'Normalizing canonical skill tokens...';
+        const response = await fetch('/parse', {
+          method: 'POST',
+          body: formData
+        });
 
-          setTimeout(() => {
-            progressWrap.style.display = 'none';
-            progressStatus.style.display = 'none';
-            displayResults(SAMPLE_SKILLS, activeFile.name);
-          }, 300);
-        }, 400);
-      }, 350);
+        progressFill.style.width = '90%';
+        progressStatus.textContent = 'Normalizing canonical skill tokens...';
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + response.status));
+        }
+
+        const data = await response.json();
+        progressFill.style.width = '100%';
+
+        setTimeout(() => {
+          progressWrap.style.display = 'none';
+          progressStatus.style.display = 'none';
+          displayResults(data.extracted_skills || [], activeFile.name, data.processing_time_ms || 15, data);
+        }, 150);
+
+      } catch (err) {
+        progressWrap.style.display = 'none';
+        progressStatus.style.display = 'none';
+        showError('Extraction failed: ' + err.message);
+      }
     }
 
-    function displayResults(skills, filename) {
+    function displayResults(skills, filename, elapsedMs, rawData) {
       extractedResult = {
         parse_id: "pars_" + Math.random().toString(36).substring(2, 10),
         status: "COMPLETED",
         filename: filename,
         skills_matched: skills.length,
-        processing_time_ms: 14,
+        processing_time_ms: elapsedMs,
         extracted_skills: skills,
         timestamp: new Date().toISOString()
       };
 
       document.getElementById('skills-count').textContent = skills.length;
-      document.getElementById('file-meta').textContent = filename + " • Processed in 14ms via spaCy PhraseMatcher";
+      document.getElementById('file-meta').textContent = filename + " • Processed in " + elapsedMs + "ms via spaCy PhraseMatcher";
 
       const cloud = document.getElementById('skills-cloud');
       cloud.innerHTML = '';
-      skills.forEach(skill => {
-        const tag = document.createElement('span');
-        tag.className = 'skill-tag';
-        tag.textContent = skill;
-        cloud.appendChild(tag);
-      });
+      if (skills.length === 0) {
+        cloud.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">No matching technical skills found in document.</span>';
+      } else {
+        skills.forEach(skill => {
+          const tag = document.createElement('span');
+          tag.className = 'skill-tag';
+          tag.textContent = '✓ ' + skill;
+          cloud.appendChild(tag);
+        });
+      }
 
       document.getElementById('json-preview').textContent = JSON.stringify(extractedResult, null, 2);
       document.getElementById('results-panel').style.display = 'block';
@@ -444,12 +637,12 @@ DEMO_HTML = """<!DOCTYPE html>
 
     function simulateScannedPdf() {
       resetForm();
-      showError("SCANNED_PDF_NO_TEXT: The submitted document contains scanned images without an underlying selectable digital text layer. OCR extraction (Tesseract) is disabled under the $0 budget profile. Please upload a digitally generated PDF.");
+      showError("SCANNED_PDF_NO_TEXT: The submitted document contains scanned images without an underlying selectable digital text layer. OCR extraction is disabled under the $0 budget profile. Please upload a digitally generated PDF.");
     }
 
     function simulateEncryptedPdf() {
       resetForm();
-      showError("ENCRYPTED_PDF: The PDF file is protected with password encryption and cannot be read by pypdf without credentials.");
+      showError("ENCRYPTED_PDF: The PDF file is protected with password encryption and cannot be read without credentials.");
     }
 
     function simulateOversizedPdf() {

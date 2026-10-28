@@ -81,7 +81,13 @@ async function request(url, options = {}) {
     };
 
     const u = new URL(url);
-    const body = options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : null;
+    const body = options.body
+      ? Buffer.isBuffer(options.body)
+        ? options.body
+        : typeof options.body === 'string'
+          ? Buffer.from(options.body)
+          : Buffer.from(JSON.stringify(options.body))
+      : null;
 
     const req = http.request(
       {
@@ -90,8 +96,10 @@ async function request(url, options = {}) {
         path: u.pathname + u.search,
         method: options.method || 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}),
+          ...(Buffer.isBuffer(options.body)
+            ? {}
+            : { 'Content-Type': 'application/json' }),
+          ...(body ? { 'Content-Length': body.length } : {}),
           ...options.headers,
         },
       },
@@ -358,7 +366,7 @@ async function run() {
   assert(candidateBDeleteRes.data && candidateBDeleteRes.data.request_id !== deleteRes.data.request_id, 'Candidate B receives their own distinct request_id (no foreign data leak)', candidateBDeleteRes.data && candidateBDeleteRes.data.request_id);
 
   // Step 16: Account Lifecycle Status Query
-  console.log('\n[16/16] Testing account status query (/users/account/status)...');
+  console.log('\n[16/20] Testing account status query (/users/account/status)...');
   const statusRes = await request(`${API_BASE}/users/account/status`, {
     headers: { Authorization: `Bearer ${candidateA.token}` },
   });
@@ -367,6 +375,58 @@ async function run() {
   assert(statusRes.data && statusRes.data.pending_deletion && (statusRes.data.pending_deletion.status === 'PENDING' || statusRes.data.pending_deletion.status === 'PENDING_GRACE_PERIOD'), 'Pending deletion has active status', statusRes.data && statusRes.data.pending_deletion);
   assert(Array.isArray(statusRes.data && statusRes.data.recent_exports) && statusRes.data.recent_exports.length >= 1, 'Status reflects at least 1 recorded recent export', statusRes.data && statusRes.data.recent_exports);
 
+  // Step 17: P08 Multipart Resume Upload (/users/resume/upload)
+  console.log('\n[17/20] Testing multipart PDF resume upload (/users/resume/upload)...');
+  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+  const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n5 0 obj\n<< /Length 75 >>\nstream\nBT /F1 12 Tf 72 720 Td (Candidate CV skilled in Python, Go, and Kubernetes.) Tj ET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000224 00000 n \n0000000293 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n420\n%%EOF\n';
+
+  const multipartPrefix = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="candidate_resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`;
+  const multipartSuffix = `\r\n--${boundary}--\r\n`;
+  const multipartBuffer = Buffer.concat([
+    Buffer.from(multipartPrefix, 'ascii'),
+    Buffer.from(pdfContent, 'ascii'),
+    Buffer.from(multipartSuffix, 'ascii'),
+  ]);
+
+  const uploadRes = await request(`${API_BASE}/users/resume/upload`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+    },
+    body: multipartBuffer,
+  });
+
+  assert(uploadRes.status === 202, 'Resume upload returns HTTP 202 Accepted', uploadRes.status);
+  assert(Boolean(uploadRes.data && uploadRes.data.parse_id), 'Upload response returns parse_id', uploadRes.data && uploadRes.data.parse_id);
+  assert(uploadRes.data && uploadRes.data.status === 'QUEUED', 'Initial parse status is QUEUED', uploadRes.data && uploadRes.data.status);
+  const parseId = uploadRes.data ? uploadRes.data.parse_id : 'none';
+
+  // Step 18: P08 Resume Parse Status Query (/users/resume/status/:parseId)
+  console.log('\n[18/20] Testing resume status query for owning candidate...');
+  const resumeStatusRes = await request(`${API_BASE}/users/resume/status/${parseId}`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(resumeStatusRes.status === 200, 'Resume status returns HTTP 200', resumeStatusRes.status);
+  assert(resumeStatusRes.data && resumeStatusRes.data.parse_id === parseId, 'Status response matches parse_id', resumeStatusRes.data && resumeStatusRes.data.parse_id);
+  assert(resumeStatusRes.data && (resumeStatusRes.data.status === 'QUEUED' || resumeStatusRes.data.status === 'PROCESSING' || resumeStatusRes.data.status === 'COMPLETED' || resumeStatusRes.data.status === 'FAILED'), 'Parse status is a valid lifecycle state', resumeStatusRes.data && resumeStatusRes.data.status);
+
+  // Step 19: Cross-Candidate Ownership Protection on Resume Status
+  console.log('\n[19/20] Testing cross-candidate status boundary (Candidate B accesses Candidate A parseId)...');
+  const crossStatusRes = await request(`${API_BASE}/users/resume/status/${parseId}`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  assert(crossStatusRes.status === 404, 'Candidate B cannot access Candidate A parse status (HTTP 404)', crossStatusRes.status);
+
+  // Step 20: Candidate Resume Deletion (/users/resume)
+  console.log('\n[20/20] Testing candidate resume deletion (/users/resume)...');
+  const deleteResumeRes = await request(`${API_BASE}/users/resume`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(deleteResumeRes.status === 200, 'Resume deletion returns HTTP 200', deleteResumeRes.status);
+  assert(deleteResumeRes.data && typeof deleteResumeRes.data.message === 'string', 'Deletion response contains confirmation message', deleteResumeRes.data && deleteResumeRes.data.message);
+
   // Final Evaluation
   console.log('\n----------------------------------------------------');
   if (failedAssertions > 0) {
@@ -374,7 +434,7 @@ async function run() {
     process.exit(1);
   }
 
-  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 16 integration checks.\x1b[0m`);
+  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 20 integration checks.\x1b[0m`);
 }
 
 run().catch((err) => {

@@ -3,18 +3,21 @@ import {
   Get,
   Post,
   Put,
+  Delete,
+  Param,
   Req,
+  Res,
   Body,
   Headers,
+  HttpCode,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import * as fs from 'fs';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 import {
   FirebaseAuthGuard,
   type AuthenticatedRequest,
@@ -23,7 +26,6 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserService } from './user.service';
 import { validateUpdateProfileInput } from './dto/update-profile.dto';
 import { validateDeleteAccountInput } from './dto/delete-account.dto';
-const getUploadDir = () => process.env.UPLOAD_DIR || './uploads';
 
 @Controller('users')
 export class UserController {
@@ -64,7 +66,7 @@ export class UserController {
 
   /**
    * GET /users/profile
-   * Returns current authenticated candidate profile.
+   * Returns the candidate profile for the authenticated identity.
    */
   @Get('profile')
   @UseGuards(FirebaseAuthGuard)
@@ -72,17 +74,17 @@ export class UserController {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException({
-        code: 'UNAUTHENTICATED',
-        message: 'Valid authentication token required.',
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
       });
     }
+
     return this.userService.getProfile(uid);
   }
 
   /**
    * PUT /users/profile
-   * Updates candidate profile attributes, skills, and preferences.
-   * Enforces server ownership strictly by authenticated UID.
+   * Updates candidate profile with strict server-side validation.
    */
   @Put('profile')
   @UseGuards(FirebaseAuthGuard)
@@ -93,80 +95,83 @@ export class UserController {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException({
-        code: 'UNAUTHENTICATED',
-        message: 'Valid authentication token required.',
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
       });
     }
 
-    const validatedInput = validateUpdateProfileInput(body);
-    return this.userService.updateProfile(uid, validatedInput);
+    const validatedDto = validateUpdateProfileInput(body);
+    return this.userService.updateProfile(uid, validatedDto);
   }
 
   /**
-   * POST /users/account/export
-   * Initiates/returns machine-readable candidate data archive.
+   * POST /users/account/export and /users/export
+   * Initiates an export of the authenticated candidate's persistent profile data.
    */
-  @Post('account/export')
+  @Post(['account/export', 'export'])
   @UseGuards(FirebaseAuthGuard)
   async exportData(@Req() request: AuthenticatedRequest) {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException({
-        code: 'UNAUTHENTICATED',
-        message: 'Valid authentication token required.',
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
       });
     }
+
     return this.userService.exportUserData(uid);
   }
 
   /**
-   * POST /users/account/delete
-   * Initiates account erasure workflow with 30-day grace period.
-   * Supports Idempotency-Key header for duplicate protection.
+   * POST /users/account/delete and /users/delete
+   * Initiates a scheduled deletion request with a 30-day grace period.
    */
-  @Post('account/delete')
+  @Post(['account/delete', 'delete'])
   @UseGuards(FirebaseAuthGuard)
   async deleteAccount(
     @Req() request: AuthenticatedRequest,
     @Body() body: unknown,
-    @Headers('idempotency-key') idempotencyKey?: string,
+    @Headers('idempotency-key') idempotencyKeyHeader?: string,
   ) {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException({
-        code: 'UNAUTHENTICATED',
-        message: 'Valid authentication token required.',
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
       });
     }
 
     const validated = validateDeleteAccountInput(body);
+    const effectiveIdempotencyKey = idempotencyKeyHeader;
+
     return this.userService.requestAccountDeletion(
       uid,
-      idempotencyKey,
+      effectiveIdempotencyKey,
       validated.reason,
     );
   }
 
   /**
-   * GET /users/account/status
-   * Returns current account lifecycle status (pending deletion, recent exports).
+   * GET /users/account-status
+   * Returns current account lifecycle status, pending deletions, and exports.
    */
-  @Get('account/status')
+  @Get('account-status')
   @UseGuards(FirebaseAuthGuard)
   async getAccountStatus(@Req() request: AuthenticatedRequest) {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException({
-        code: 'UNAUTHENTICATED',
-        message: 'Valid authentication token required.',
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
       });
     }
+
     return this.userService.getAccountStatus(uid);
   }
 
   /**
    * GET /users/admin/test-privileged
-   * Privileged endpoint used for verifying server-enforced role boundaries.
+   * Server-enforced role verification for administrative operations.
    * Non-admin identities receive 403 Forbidden.
    */
   @Get('admin/test-privileged')
@@ -180,62 +185,140 @@ export class UserController {
     };
   }
 
+  // ─── P08 OWNED RESUME CONTRACTED ENDPOINTS ─────────────────────────────────
+
   /**
-   * POST /users/upload-resume
-   * Multipart PDF resume upload endpoint.
+   * POST /users/resume/upload and legacy POST /users/upload-resume
+   * Multipart PDF resume upload endpoint with 10MB bounds and 202 Accepted lifecycle.
+   * Seamlessly accepts both OpenAPI 'file' and legacy 'resume' multipart field names.
    */
-  @Post('upload-resume')
+  @Post(['resume/upload', 'upload-resume'])
+  @HttpCode(202)
   @UseGuards(FirebaseAuthGuard)
   @UseInterceptors(
-    FileInterceptor('resume', {
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          const dir = getUploadDir();
-          try {
-            fs.mkdirSync(dir, { recursive: true });
-          } catch {
-            // Directory already exists or read-only volume
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'resume', maxCount: 1 },
+      ],
+      {
+        storage: memoryStorage(),
+        limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+        fileFilter: (_req, file, cb) => {
+          if (
+            file.mimetype !== 'application/pdf' &&
+            !file.originalname.toLowerCase().endsWith('.pdf')
+          ) {
+            return cb(
+              new BadRequestException('Only PDF files are supported'),
+              false,
+            );
           }
-          cb(null, dir);
+          cb(null, true);
         },
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (file.mimetype !== 'application/pdf') {
-          return cb(
-            new BadRequestException('Only PDF files are allowed'),
-            false,
-          );
-        }
-        cb(null, true);
       },
-    }),
+    ),
   )
   async uploadResume(
     @Req() request: AuthenticatedRequest,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles()
+    files: { file?: Express.Multer.File[]; resume?: Express.Multer.File[] },
   ) {
     const uid = request.user?.uid;
     if (!uid) {
       throw new BadRequestException('User identification missing from token');
     }
 
-    if (!file) {
-      throw new BadRequestException('No file uploaded');
+    const uploaded = files?.file?.[0] || files?.resume?.[0];
+    if (!uploaded) {
+      throw new BadRequestException('No PDF file provided in upload request');
     }
 
-    const updatedProfile = await this.userService.processUserResume(
-      uid,
-      file.path,
-    );
+    return this.userService.uploadResume(uid, uploaded);
+  }
 
-    return {
-      message: 'Resume uploaded and processed',
-      profile: updatedProfile,
-    };
+  /**
+   * GET /users/resume/status/:parseId
+   * Polling endpoint to check asynchronous extraction status and retrieve extracted skills.
+   */
+  @Get('resume/status/:parseId')
+  @UseGuards(FirebaseAuthGuard)
+  async getResumeParseStatus(
+    @Req() request: AuthenticatedRequest,
+    @Param('parseId') parseId: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+
+    return this.userService.getParseStatus(uid, parseId);
+  }
+
+  /**
+   * POST /users/resume/review
+   * Applies candidate-reviewed skills to persistent candidate profile without clobbering unselected skills.
+   */
+  @Post('resume/review')
+  @UseGuards(FirebaseAuthGuard)
+  async reviewResumeSkills(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: { parse_id: string; selected_skills: string[] },
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+
+    if (!body?.parse_id || !Array.isArray(body?.selected_skills)) {
+      throw new BadRequestException(
+        'parse_id and selected_skills array are required in review request body.',
+      );
+    }
+
+    return this.userService.reviewParseSkills(
+      uid,
+      body.parse_id,
+      body.selected_skills,
+    );
+  }
+
+  /**
+   * DELETE /users/resume
+   * Removes active resume document and deletes object from private storage.
+   */
+  @Delete('resume')
+  @UseGuards(FirebaseAuthGuard)
+  async deleteResume(@Req() request: AuthenticatedRequest) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+
+    return this.userService.deleteResume(uid);
+  }
+
+  /**
+   * GET /users/resume/download
+   * Secure candidate download of active uploaded resume document.
+   */
+  @Get('resume/download')
+  @UseGuards(FirebaseAuthGuard)
+  async downloadResume(
+    @Req() request: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+
+    const { buffer, fileName, mimeType } =
+      await this.userService.downloadResume(uid);
+
+    res.setHeader('Content-Type', mimeType || 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return res.send(buffer);
   }
 }

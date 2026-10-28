@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../lib/auth-context';
+import ResumeUpload from './ResumeUpload';
 
 interface ProfileWorkspaceProps {
   onOpenDataControl: () => void;
@@ -553,21 +554,8 @@ export default function ProfileWorkspace({
             )}
           </div>
 
-          {/* Separation notice for parser */}
-          <div
-            style={{
-              marginTop: '1.5rem',
-              padding: '0.75rem',
-              backgroundColor: 'var(--seekers-bg-elevated)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--seekers-border-subtle)',
-              fontSize: '0.75rem',
-              color: 'var(--seekers-text-secondary)',
-              lineHeight: 1.4,
-            }}
-          >
-            <strong style={{ color: 'var(--seekers-text-primary)' }}>Architecture Note:</strong> Candidate-managed skills are strictly isolated from automated NLP parser extraction. In Phase 8, resume uploads extract skills to a candidate review staging area before profile enrichment.
-          </div>
+          {/* P08 Candidate Resume & Extraction Review */}
+          <ResumeUpload key={user?.uid || 'guest'} />
         </div>
       </div>
     </div>

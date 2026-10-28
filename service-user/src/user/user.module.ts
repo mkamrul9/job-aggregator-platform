@@ -4,6 +4,7 @@ import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { PrismaService } from '../prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -37,7 +38,13 @@ const hasProto = existsSync(resolvedProtoPath);
       ]
     : [],
   controllers: [UserController],
-  providers: [UserService, UserRepository, PrismaService, RolesGuard],
-  exports: [UserService, UserRepository, RolesGuard],
+  providers: [
+    UserService,
+    UserRepository,
+    PrismaService,
+    StorageService,
+    RolesGuard,
+  ],
+  exports: [UserService, UserRepository, StorageService, RolesGuard],
 })
 export class UserModule {}

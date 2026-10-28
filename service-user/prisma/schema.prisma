@@ -31,6 +31,8 @@ model User {
   profile          Profile?
   deletionRequests AccountDeletionRequest[]
   exportRequests   AccountExportRequest[]
+  resumes          ResumeDocument[]
+  parseResults     ResumeParseResult[]
 
   @@index([role])
 }
@@ -82,4 +84,45 @@ model AccountExportRequest {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
+}
+
+model ResumeDocument {
+  id             String              @id @default(uuid())
+  userId         String
+  storageKey     String
+  fileName       String
+  fileSizeBytes  Int
+  checksumSha256 String
+  mimeType       String              @default("application/pdf")
+  status         String              @default("UPLOADED") // UPLOADED, PROCESSING, PARSED, FAILED, DELETED, SUPERSEDED
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parseResults   ResumeParseResult[]
+
+  @@index([userId, status])
+  @@index([storageKey])
+}
+
+model ResumeParseResult {
+  id               String          @id @default(uuid())
+  documentId       String
+  userId           String
+  status           String          @default("QUEUED") // QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED
+  extractedSkills  String[]        @default([])
+  reviewedSkills   String[]        @default([])
+  reviewedAt       DateTime?
+  errorCode        String?
+  errorMessage     String?
+  processingTimeMs Int?
+  attemptCount     Int             @default(0)
+  claimedBy        String?
+  claimedUntil     DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  document         ResumeDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([documentId])
 }

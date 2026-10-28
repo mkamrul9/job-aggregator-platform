@@ -26,7 +26,7 @@ if _version_not_supported:
 
 
 class ResumeParserStub:
-    """The service definition
+    """The resume parser service definition
     """
 
     def __init__(self, channel):
@@ -43,11 +43,11 @@ class ResumeParserStub:
 
 
 class ResumeParserServicer:
-    """The service definition
+    """The resume parser service definition
     """
 
     def ParseResume(self, request, context):
-        """A standard remote procedure call
+        """Parses a candidate resume and extracts structured skills
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -70,7 +70,7 @@ def add_ResumeParserServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class ResumeParser:
-    """The service definition
+    """The resume parser service definition
     """
 
     @staticmethod
