@@ -188,6 +188,21 @@ describe('UserController', () => {
     });
   });
 
+  describe('GET /users/account-status & /users/account/status', () => {
+    it('should return account lifecycle status for authenticated user', async () => {
+      const req = createMockRequest({ uid: 'candidate-99' });
+      mockUserService.getAccountStatus.mockResolvedValue({
+        has_pending_deletion: true,
+        pending_deletion: { status: 'PENDING' },
+        recent_exports: [{ request_id: 'exp-1' }],
+      });
+
+      const res = await controller.getAccountStatus(req);
+      expect(res.has_pending_deletion).toBe(true);
+      expect(mockUserService.getAccountStatus).toHaveBeenCalledWith('candidate-99');
+    });
+  });
+
   describe('GET /users/admin/test-privileged', () => {
     it('should return admin confirmation for authorized request', () => {
       const req = createMockRequest({ uid: 'admin-super', role: 'ADMIN' });
