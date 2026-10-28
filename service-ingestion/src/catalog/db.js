@@ -280,7 +280,9 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
   }
 
   return {
+    ...canonical,
     ...setDoc,
+    source_url_hash: sourceUrlHash,
     first_seen_at: initialFirstSeen,
     is_new: true,
     is_updated: true,
@@ -300,7 +302,12 @@ async function quarantineDeadLetter(deadLettersCollection, rawData, errors, enve
     event_type: envelope?.event_type || 'unknown',
     producer: envelope?.producer || null,
     correlation_id: envelope?.correlation_id || null,
-    raw_payload: typeof rawData === 'string' ? rawData : JSON.stringify(rawData),
+    raw_payload:
+      typeof rawData === 'string'
+        ? rawData
+        : Buffer.isBuffer(rawData)
+        ? rawData.toString('utf8')
+        : JSON.stringify(rawData),
     errors: Array.isArray(errors) ? errors : [String(errors)],
     quarantined_at: new Date(),
     retry_count: 0,

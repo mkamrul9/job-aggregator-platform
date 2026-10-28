@@ -2,23 +2,28 @@
 const { SortOption, toJobSummary } = require('../models/job');
 const { encodeCursor } = require('./query-validator');
 
-const ES_INDEX = process.env.ES_INDEX || 'jobs_index';
+function getEsIndex() {
+  return process.env.ES_INDEX || 'jobs_index';
+}
+
+const ES_INDEX = getEsIndex();
 
 /**
  * Ensures the Elasticsearch index exists with the appropriate mapping.
  * Non-destructive: will never automatically delete an existing populated index.
  */
-async function ensureEsIndex(client) {
+async function ensureEsIndex(client, targetIndex = null) {
   if (!client) return;
+  const indexName = targetIndex || getEsIndex();
   try {
-    const exists = await client.indices.exists({ index: ES_INDEX });
+    const exists = await client.indices.exists({ index: indexName });
     if (exists) {
       try {
-        const mappingRes = await client.indices.getMapping({ index: ES_INDEX });
+        const mappingRes = await client.indices.getMapping({ index: indexName });
         const indexKey = Object.keys(mappingRes)[0];
         const props = mappingRes[indexKey]?.mappings?.properties || {};
         if (props.salary?.type === 'text' || !props.canonical_url) {
-          console.warn(`⚠️ Elasticsearch index ${ES_INDEX} has legacy incompatible mappings. Non-destructive migration required.`);
+          console.warn(`⚠️ Elasticsearch index ${indexName} has legacy incompatible mappings. Non-destructive migration required.`);
         }
       } catch (checkErr) {
         console.warn('Warning checking index mapping:', checkErr.message);
@@ -27,7 +32,7 @@ async function ensureEsIndex(client) {
     }
 
     await client.indices.create({
-      index: ES_INDEX,
+      index: indexName,
       body: {
         settings: {
           number_of_shards: 1,
@@ -82,11 +87,12 @@ async function ensureEsIndex(client) {
 /**
  * Indexes or updates a canonical job into Elasticsearch.
  */
-async function indexJobToEs(client, job) {
+async function indexJobToEs(client, job, targetIndex = null) {
   if (!client || !job) return { success: false, reason: 'Client or job missing' };
+  const indexName = targetIndex || getEsIndex();
   try {
     await client.index({
-      index: ES_INDEX,
+      index: indexName,
       id: job.id,
       document: {
         id: job.id,
@@ -204,8 +210,8 @@ async function searchJobsEs(client, params) {
     ];
   }
 
-  const searchBody = {
-    index: ES_INDEX,
+    const searchBody = {
+    index: getEsIndex(),
     size: limit + 1,
     query: {
       bool: {
@@ -253,6 +259,7 @@ async function searchJobsEs(client, params) {
 
 module.exports = {
   ES_INDEX,
+  getEsIndex,
   ensureEsIndex,
   indexJobToEs,
   searchJobsEs,

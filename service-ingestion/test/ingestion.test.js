@@ -71,6 +71,25 @@ describe('service-ingestion unit tests', () => {
       assert.strictEqual(canonical.job_type, 'UNSPECIFIED');
       assert.strictEqual(canonical.seniority, 'UNSPECIFIED');
     });
+
+    it('converts JobCollectedV1 payload with source_job_id and collected_at to canonical schema', () => {
+      const eventPayload = {
+        source: 'greenhouse-feed',
+        source_job_id: 'gh-49120',
+        url: 'https://boards.greenhouse.io/corp/jobs/gh-49120',
+        source_url_hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        title: 'Platform Infrastructure Engineer',
+        company: 'Corp Inc',
+        location: 'Dhaka',
+        description: 'Building reliable distributed systems at scale.',
+        collected_at: '2026-10-28T15:00:00.000Z',
+      };
+      const canonical = toCanonicalJob(eventPayload);
+      assert.strictEqual(canonical.source_id, 'gh-49120');
+      assert.strictEqual(canonical.source, 'greenhouse-feed');
+      assert.strictEqual(canonical.source_url_hash, eventPayload.source_url_hash);
+      assert.strictEqual(new Date(canonical.published_at).toISOString(), '2026-10-28T15:00:00.000Z');
+    });
   });
 
   describe('outbound URL security validation', () => {

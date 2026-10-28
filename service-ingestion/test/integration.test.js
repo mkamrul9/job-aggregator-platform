@@ -71,6 +71,10 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
       if (esClient) {
         try {
           await indexJobToEs(esClient, canonical);
+          await jobsCollection.updateOne(
+            { id: canonical.id },
+            { $set: { projection_status: 'INDEXED', projection_version: canonical.revision || 1 } }
+          );
         } catch (esErr) {
           console.warn('Warning indexing job to ES in test setup:', esErr.message);
         }
@@ -403,8 +407,11 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
     const { rebuildIndex } = require('../src/search/reindex');
     let deadLettersCollection = null;
 
-    before(() => {
+    before(async () => {
       deadLettersCollection = db.collection('dead_letters');
+      try {
+        await deadLettersCollection.drop();
+      } catch {}
     });
 
     it('processes conformant job.collected.v1 event, persists to MongoDB and updates projection', async () => {
@@ -506,7 +513,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
 
       await jobsCollection.insertOne(pendingDoc);
 
-      const stats = await projectPendingJobs(jobsCollection, esClient, { batchSize: 10 });
+      const stats = await projectPendingJobs(jobsCollection, esClient, { batchSize: 50 });
       assert.ok(stats.attempted >= 1);
       assert.ok(stats.projected >= 1);
 
@@ -518,7 +525,7 @@ describe('service-ingestion integration tests (real MongoDB + optional Elasticse
     it('reconciles catalog and reports accurate statistics', async () => {
       if (!esClient) return;
 
-      const report = await reconcileCatalog(jobsCollection, esClient, { dryRun: true });
+      const report = await reconcileCatalog(jobsCollection, esClient, { dryRun: true, index: TEST_ES_INDEX });
       assert.strictEqual(report.dry_run, true);
       assert.ok(report.scanned_mongo >= 0);
     });

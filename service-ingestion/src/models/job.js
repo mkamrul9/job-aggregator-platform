@@ -239,7 +239,13 @@ function toCanonicalJob(rawRecord) {
     : [];
 
   const now = new Date();
-  const published_at = rawRecord.published_at ? new Date(rawRecord.published_at) : (rawRecord.scraped_at ? new Date(rawRecord.scraped_at) : now);
+  const published_at = rawRecord.published_at
+    ? new Date(rawRecord.published_at)
+    : rawRecord.scraped_at
+    ? new Date(rawRecord.scraped_at)
+    : rawRecord.collected_at
+    ? new Date(rawRecord.collected_at)
+    : now;
   const ingested_at = rawRecord.ingested_at ? new Date(rawRecord.ingested_at) : now;
   const first_seen_at = rawRecord.first_seen_at ? new Date(rawRecord.first_seen_at) : ingested_at;
   const last_seen_at = rawRecord.last_seen_at ? new Date(rawRecord.last_seen_at) : now;
@@ -250,7 +256,8 @@ function toCanonicalJob(rawRecord) {
     id,
     canonical_url,
     source: (rawRecord.source || 'aggregator').trim(),
-    source_id: rawRecord.source_id ? String(rawRecord.source_id).trim() : null,
+    source_id: (rawRecord.source_id || rawRecord.source_job_id) ? String(rawRecord.source_id || rawRecord.source_job_id).trim() : null,
+    source_url_hash: rawRecord.source_url_hash || null,
     title,
     company,
     location: (rawRecord.location || 'Unspecified').trim(),

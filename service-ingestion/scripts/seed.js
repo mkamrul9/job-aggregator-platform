@@ -79,6 +79,10 @@ async function seed(options = {}) {
         const res = await indexJobToEs(esClient, canonical);
         if (res && res.success) {
           esSucceeded++;
+          await jobsCollection.updateOne(
+            { id: canonical.id },
+            { $set: { projection_status: 'INDEXED', projection_version: canonical.revision || 1 } }
+          );
         } else {
           esFailed++;
           console.error(`❌ ES indexing reported failure for "${canonical.id}"`);

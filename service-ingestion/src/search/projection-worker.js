@@ -31,12 +31,13 @@ async function projectPendingJobs(jobsCollection, esClient, { batchSize = 50 } =
         await indexJobToEs(esClient, job);
 
         // Concurrency guard: update only if MongoDB document revision matches
+        const revision = job.revision || 1;
         const updateRes = await jobsCollection.updateOne(
-          { _id: job._id, revision: job.revision },
+          { _id: job._id, revision },
           {
             $set: {
               projection_status: 'INDEXED',
-              projection_version: job.revision,
+              projection_version: revision,
               projected_at: new Date(),
               last_projection_error: null,
             },
