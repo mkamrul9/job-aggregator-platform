@@ -12,6 +12,12 @@ import {
   RemoteEligibility,
   ResumeDocument,
   ResumeParseResult,
+  SavedJob,
+  SavedSearch,
+  TrackedApplication,
+  ApplicationHistory,
+  SupportReport,
+  AlertSubscription,
 } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -708,5 +714,670 @@ export class UserRepository {
         ...(userId ? { userId } : {}),
       },
     });
+  }
+
+  // ─── SAVED JOBS ──────────────────────────────────────────────────────────
+
+  async saveJob(
+    userId: string,
+    jobId: string,
+    snapshot: {
+      title: string;
+      company: string;
+      location?: string;
+      jobUrl?: string;
+      salary?: string;
+      source?: string;
+      statusAtSave?: string;
+    },
+  ): Promise<SavedJob> {
+    return this.prisma.savedJob.upsert({
+      where: {
+        userId_jobId: { userId, jobId },
+      },
+      create: {
+        userId,
+        jobId,
+        titleSnapshot: snapshot.title,
+        companySnapshot: snapshot.company,
+        locationSnapshot: snapshot.location || null,
+        jobUrlSnapshot: snapshot.jobUrl || null,
+        salarySnapshot: snapshot.salary || null,
+        sourceSnapshot: snapshot.source || null,
+        statusAtSave: snapshot.statusAtSave || 'ACTIVE',
+      },
+      update: {
+        titleSnapshot: snapshot.title,
+        companySnapshot: snapshot.company,
+        locationSnapshot: snapshot.location || null,
+        jobUrlSnapshot: snapshot.jobUrl || null,
+        salarySnapshot: snapshot.salary || null,
+        sourceSnapshot: snapshot.source || null,
+        statusAtSave: snapshot.statusAtSave || 'ACTIVE',
+      },
+    });
+  }
+
+  async unsaveJob(userId: string, jobId: string): Promise<boolean> {
+    const deleted = await this.prisma.savedJob.deleteMany({
+      where: { userId, jobId },
+    });
+    return deleted.count > 0;
+  }
+
+  async findSavedJobs(
+    userId: string,
+    options: { limit?: number; cursor?: string } = {},
+  ): Promise<{ items: SavedJob[]; nextCursor: string | null; total: number }> {
+    const limit = Math.min(Math.max(options.limit || 20, 1), 100);
+    const total = await this.prisma.savedJob.count({ where: { userId } });
+
+    const items = await this.prisma.savedJob.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(options.cursor
+        ? {
+            cursor: { id: options.cursor },
+            skip: 1,
+          }
+        : {}),
+    });
+    let nextCursor: string | null = null;
+    if (items.length > limit) {
+      items.pop();
+      nextCursor = items[items.length - 1]?.id || null;
+    }
+
+    return { items, nextCursor, total };
+  }
+
+  async isJobSaved(userId: string, jobId: string): Promise<boolean> {
+    const count = await this.prisma.savedJob.count({
+      where: { userId, jobId },
+    });
+    return count > 0;
+  }
+
+  // ─── SAVED SEARCHES ──────────────────────────────────────────────────────
+
+  async createSavedSearch(
+    userId: string,
+    data: {
+      name: string;
+      query?: string;
+      location?: string;
+      remoteEligibility?: string;
+      seniority?: string;
+      jobType?: string;
+      minSalary?: number;
+      currency?: string;
+      payPeriod?: string;
+      sort?: string;
+      alertsEnabled?: boolean;
+      alertFrequency?: string;
+    },
+  ): Promise<SavedSearch> {
+    return this.prisma.savedSearch.create({
+      data: {
+        userId,
+        name: data.name,
+        query: data.query || null,
+        location: data.location || null,
+        remoteEligibility: data.remoteEligibility || null,
+        seniority: data.seniority || null,
+        jobType: data.jobType || null,
+        minSalary: data.minSalary !== undefined ? data.minSalary : null,
+        currency: data.currency || 'BDT',
+        payPeriod: data.payPeriod || 'MONTHLY',
+        sort: data.sort || 'date_desc',
+        alertsEnabled: Boolean(data.alertsEnabled),
+        alertFrequency: data.alertFrequency || null,
+      },
+    });
+  }
+
+  async updateSavedSearch(
+    userId: string,
+    searchId: string,
+    data: Partial<{
+      name: string;
+      query?: string;
+      location?: string;
+      remoteEligibility?: string;
+      seniority?: string;
+      jobType?: string;
+      minSalary?: number;
+      currency?: string;
+      payPeriod?: string;
+      sort?: string;
+      alertsEnabled?: boolean;
+      alertFrequency?: string;
+    }>,
+  ): Promise<SavedSearch> {
+    const existing = await this.prisma.savedSearch.findFirst({
+      where: { id: searchId, userId },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        code: 'SAVED_SEARCH_NOT_FOUND',
+        message: `Saved search ${searchId} was not found.`,
+      });
+    }
+
+    return this.prisma.savedSearch.update({
+      where: { id: searchId },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.query !== undefined ? { query: data.query || null } : {}),
+        ...(data.location !== undefined
+          ? { location: data.location || null }
+          : {}),
+        ...(data.remoteEligibility !== undefined
+          ? { remoteEligibility: data.remoteEligibility || null }
+          : {}),
+        ...(data.seniority !== undefined
+          ? { seniority: data.seniority || null }
+          : {}),
+        ...(data.jobType !== undefined
+          ? { jobType: data.jobType || null }
+          : {}),
+        ...(data.minSalary !== undefined ? { minSalary: data.minSalary } : {}),
+        ...(data.currency !== undefined ? { currency: data.currency } : {}),
+        ...(data.payPeriod !== undefined ? { payPeriod: data.payPeriod } : {}),
+        ...(data.sort !== undefined ? { sort: data.sort } : {}),
+        ...(data.alertsEnabled !== undefined
+          ? { alertsEnabled: Boolean(data.alertsEnabled) }
+          : {}),
+        ...(data.alertFrequency !== undefined
+          ? { alertFrequency: data.alertFrequency || null }
+          : {}),
+      },
+    });
+  }
+
+  async deleteSavedSearch(userId: string, searchId: string): Promise<boolean> {
+    const deleted = await this.prisma.savedSearch.deleteMany({
+      where: { id: searchId, userId },
+    });
+    return deleted.count > 0;
+  }
+
+  async findSavedSearches(
+    userId: string,
+    options: { limit?: number; cursor?: string } = {},
+  ): Promise<{
+    items: SavedSearch[];
+    nextCursor: string | null;
+    total: number;
+  }> {
+    const limit = Math.min(Math.max(options.limit || 20, 1), 100);
+    const total = await this.prisma.savedSearch.count({ where: { userId } });
+
+    const items = await this.prisma.savedSearch.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(options.cursor
+        ? {
+            cursor: { id: options.cursor },
+            skip: 1,
+          }
+        : {}),
+    });
+    let nextCursor: string | null = null;
+    if (items.length > limit) {
+      items.pop();
+      nextCursor = items[items.length - 1]?.id || null;
+    }
+
+    return { items, nextCursor, total };
+  }
+
+  async findSavedSearchById(
+    userId: string,
+    searchId: string,
+  ): Promise<SavedSearch | null> {
+    return this.prisma.savedSearch.findFirst({
+      where: { id: searchId, userId },
+    });
+  }
+
+  // ─── TRACKED APPLICATIONS ────────────────────────────────────────────────
+
+  async createApplication(
+    userId: string,
+    data: {
+      jobId: string;
+      status?: string;
+      notes?: string;
+    },
+    snapshot: {
+      title: string;
+      company: string;
+      location?: string;
+      jobUrl?: string;
+      salary?: string;
+      source?: string;
+    },
+  ): Promise<TrackedApplication & { history: ApplicationHistory[] }> {
+    const initialStatus = data.status || 'APPLIED';
+    return this.prisma.$transaction(async (tx) => {
+      // Idempotency check: if application already tracked, return existing without clobbering status or notes
+      const existing = await tx.trackedApplication.findUnique({
+        where: {
+          userId_jobId: { userId, jobId: data.jobId },
+        },
+        include: {
+          history: {
+            orderBy: { changedAt: 'asc' },
+          },
+        },
+      });
+
+      if (existing) {
+        return existing;
+      }
+
+      const app = await tx.trackedApplication.create({
+        data: {
+          userId,
+          jobId: data.jobId,
+          titleSnapshot: snapshot.title,
+          companySnapshot: snapshot.company,
+          locationSnapshot: snapshot.location || null,
+          jobUrlSnapshot: snapshot.jobUrl || null,
+          salarySnapshot: snapshot.salary || null,
+          sourceSnapshot: snapshot.source || null,
+          status: initialStatus,
+          notes: data.notes || null,
+          version: 1,
+        },
+      });
+
+      await tx.applicationHistory.create({
+        data: {
+          applicationId: app.id,
+          userId,
+          fromStatus: null,
+          toStatus: initialStatus,
+          notesSnapshot: data.notes || null,
+        },
+      });
+
+      return tx.trackedApplication.findUniqueOrThrow({
+        where: { id: app.id },
+        include: {
+          history: {
+            orderBy: { changedAt: 'asc' },
+          },
+        },
+      });
+    });
+  }
+
+  async updateApplication(
+    userId: string,
+    applicationId: string,
+    data: {
+      status?: string;
+      notes?: string;
+      expectedVersion?: number;
+    },
+  ): Promise<TrackedApplication & { history: ApplicationHistory[] }> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.trackedApplication.findFirst({
+        where: { id: applicationId, userId },
+      });
+
+      if (!existing) {
+        throw new NotFoundException({
+          code: 'APPLICATION_NOT_FOUND',
+          message: `Tracked application ${applicationId} was not found.`,
+        });
+      }
+
+      // Check expected version precondition
+      if (
+        data.expectedVersion !== undefined &&
+        existing.version !== data.expectedVersion
+      ) {
+        throw new ConflictException({
+          code: 'CONCURRENCY_CONFLICT',
+          message:
+            'This application record was modified by another session. Please reload and retry.',
+          current_version: existing.version,
+          expected_version: data.expectedVersion,
+        });
+      }
+
+      const statusChanged = Boolean(
+        data.status && data.status !== existing.status,
+      );
+      const notesChanged = Boolean(
+        data.notes !== undefined && data.notes !== existing.notes,
+      );
+
+      // No-op update returns current state without version churn
+      if (!statusChanged && !notesChanged) {
+        return tx.trackedApplication.findUniqueOrThrow({
+          where: { id: applicationId },
+          include: {
+            history: {
+              orderBy: { changedAt: 'asc' },
+            },
+          },
+        });
+      }
+
+      // Atomic conditional update to guard against race conditions
+      const updateResult = await tx.trackedApplication.updateMany({
+        where: {
+          id: applicationId,
+          userId,
+          ...(data.expectedVersion !== undefined
+            ? { version: data.expectedVersion }
+            : {}),
+        },
+        data: {
+          ...(data.status ? { status: data.status } : {}),
+          ...(data.notes !== undefined ? { notes: data.notes } : {}),
+          version: { increment: 1 },
+        },
+      });
+
+      if (updateResult.count === 0) {
+        const latest = await tx.trackedApplication.findUnique({
+          where: { id: applicationId },
+          select: { version: true },
+        });
+        throw new ConflictException({
+          code: 'CONCURRENCY_CONFLICT',
+          message:
+            'This application record was modified by another session. Please reload and retry.',
+          current_version: latest?.version ?? existing.version,
+          expected_version: data.expectedVersion,
+        });
+      }
+
+      await tx.applicationHistory.create({
+        data: {
+          applicationId: existing.id,
+          userId,
+          fromStatus: existing.status,
+          toStatus: data.status || existing.status,
+          notesSnapshot: data.notes !== undefined ? data.notes : existing.notes,
+        },
+      });
+
+      return tx.trackedApplication.findUniqueOrThrow({
+        where: { id: applicationId },
+        include: {
+          history: {
+            orderBy: { changedAt: 'asc' },
+          },
+        },
+      });
+    });
+  }
+
+  async deleteApplication(
+    userId: string,
+    applicationId: string,
+  ): Promise<boolean> {
+    const deleted = await this.prisma.trackedApplication.deleteMany({
+      where: { id: applicationId, userId },
+    });
+    return deleted.count > 0;
+  }
+
+  async findApplications(
+    userId: string,
+    options: { status?: string; limit?: number; cursor?: string } = {},
+  ): Promise<{
+    items: (TrackedApplication & { history: ApplicationHistory[] })[];
+    nextCursor: string | null;
+    total: number;
+  }> {
+    const limit = Math.min(Math.max(options.limit || 50, 1), 100);
+    const where = {
+      userId,
+      ...(options.status ? { status: options.status } : {}),
+    };
+
+    const total = await this.prisma.trackedApplication.count({ where });
+
+    const items = await this.prisma.trackedApplication.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: {
+        history: {
+          orderBy: { changedAt: 'asc' },
+        },
+      },
+      ...(options.cursor
+        ? {
+            cursor: { id: options.cursor },
+            skip: 1,
+          }
+        : {}),
+    });
+    let nextCursor: string | null = null;
+    if (items.length > limit) {
+      items.pop();
+      nextCursor = items[items.length - 1]?.id || null;
+    }
+
+    return { items, nextCursor, total };
+  }
+
+  async findApplicationById(
+    userId: string,
+    applicationId: string,
+  ): Promise<(TrackedApplication & { history: ApplicationHistory[] }) | null> {
+    return this.prisma.trackedApplication.findFirst({
+      where: { id: applicationId, userId },
+      include: {
+        history: {
+          orderBy: { changedAt: 'asc' },
+        },
+      },
+    });
+  }
+
+  // ─── SUPPORT REPORTS ─────────────────────────────────────────────────────
+
+  async createSupportReport(data: {
+    referenceNum: string;
+    userId?: string;
+    jobId?: string;
+    reportType: string;
+    description: string;
+    contactEmail?: string;
+    ipHash?: string;
+  }): Promise<SupportReport> {
+    return this.prisma.supportReport.create({
+      data: {
+        referenceNum: data.referenceNum,
+        userId: data.userId || null,
+        jobId: data.jobId || null,
+        reportType: data.reportType,
+        description: data.description,
+        contactEmail: data.contactEmail || null,
+        status: 'RECEIVED',
+        ipHash: data.ipHash || null,
+      },
+    });
+  }
+
+  async findReportByIdOrRef(
+    idOrRef: string,
+    userId?: string,
+    isAdmin = false,
+  ): Promise<SupportReport | null> {
+    const report = await this.prisma.supportReport.findFirst({
+      where: {
+        OR: [{ id: idOrRef }, { referenceNum: idOrRef }],
+      },
+    });
+
+    if (!report) return null;
+
+    if (!isAdmin) {
+      if (!userId || report.userId !== userId) {
+        return null;
+      }
+    }
+
+    return report;
+  }
+
+  async listSupportReports(
+    options: {
+      status?: string;
+      limit?: number;
+      cursor?: string;
+    } = {},
+  ): Promise<{
+    items: SupportReport[];
+    nextCursor: string | null;
+    total: number;
+  }> {
+    const limit = Math.min(Math.max(options.limit || 50, 1), 100);
+    const where = {
+      ...(options.status ? { status: options.status } : {}),
+    };
+
+    const total = await this.prisma.supportReport.count({ where });
+
+    const items = await this.prisma.supportReport.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(options.cursor
+        ? {
+            cursor: { id: options.cursor },
+            skip: 1,
+          }
+        : {}),
+    });
+    let nextCursor: string | null = null;
+    if (items.length > limit) {
+      items.pop();
+      nextCursor = items[items.length - 1]?.id || null;
+    }
+
+    return { items, nextCursor, total };
+  }
+
+  async updateSupportReportStatus(
+    reportId: string,
+    data: {
+      status: string;
+      operatorNotes?: string;
+      resolvedBy?: string;
+    },
+  ): Promise<SupportReport> {
+    return this.prisma.supportReport.update({
+      where: { id: reportId },
+      data: {
+        status: data.status,
+        ...(data.operatorNotes !== undefined
+          ? { operatorNotes: data.operatorNotes }
+          : {}),
+        ...(data.status === 'RESOLVED' || data.status === 'DISMISSED'
+          ? { resolvedAt: new Date(), resolvedBy: data.resolvedBy || 'admin' }
+          : { resolvedAt: null, resolvedBy: null }),
+      },
+    });
+  }
+
+  // ─── ALERTS ──────────────────────────────────────────────────────────────
+
+  async createAlert(
+    userId: string,
+    data: { query: string; location?: string; frequency?: string },
+  ): Promise<AlertSubscription> {
+    return this.prisma.alertSubscription.create({
+      data: {
+        userId,
+        query: data.query,
+        location: data.location || null,
+        frequency: data.frequency || 'DAILY',
+        active: true,
+      },
+    });
+  }
+
+  async listAlerts(userId: string): Promise<AlertSubscription[]> {
+    return this.prisma.alertSubscription.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async deleteAlert(userId: string, alertId: string): Promise<boolean> {
+    const deleted = await this.prisma.alertSubscription.deleteMany({
+      where: { id: alertId, userId },
+    });
+    return deleted.count > 0;
+  }
+
+  async toggleAlertActive(
+    userId: string,
+    alertId: string,
+  ): Promise<AlertSubscription> {
+    const existing = await this.prisma.alertSubscription.findFirst({
+      where: { id: alertId, userId },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        code: 'ALERT_NOT_FOUND',
+        message: `Alert subscription ${alertId} was not found.`,
+      });
+    }
+
+    return this.prisma.alertSubscription.update({
+      where: { id: alertId },
+      data: { active: !existing.active },
+    });
+  }
+
+  // ─── ACCOUNT EXPORT COMPREHENSIVE QUERY ──────────────────────────────────
+
+  async getComprehensiveUserData(userId: string) {
+    const [savedJobs, savedSearches, applications, supportReports, alerts] =
+      await Promise.all([
+        this.prisma.savedJob.findMany({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.savedSearch.findMany({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.trackedApplication.findMany({
+          where: { userId },
+          include: { history: { orderBy: { changedAt: 'asc' } } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.supportReport.findMany({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.alertSubscription.findMany({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
+
+    return {
+      savedJobs,
+      savedSearches,
+      applications,
+      supportReports,
+      alerts,
+    };
   }
 }

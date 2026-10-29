@@ -6,8 +6,16 @@ import { formatSalary, formatTimeAgo } from './JobCard';
 
 interface ApplicationsWorkspaceProps {
   applications: TrackedApplication[];
-  onUpdateStatus: (id: string, newStatus: TrackedApplication['status']) => void;
-  onUpdateNotes: (id: string, notes: string) => void;
+  onUpdateStatus: (
+    id: string,
+    newStatus: TrackedApplication['status'],
+    currentVersion?: number,
+  ) => void;
+  onUpdateNotes: (
+    id: string,
+    notes: string,
+    currentVersion?: number,
+  ) => void;
   onRemoveApplication: (id: string) => void;
   onSelectJob: (job: JobDetail | JobSummary) => void;
   onBrowseJobs: () => void;
@@ -19,11 +27,12 @@ export default function ApplicationsWorkspace({
   onUpdateNotes,
   onRemoveApplication,
   onSelectJob,
-  onBrowseJobs
+  onBrowseJobs,
 }: ApplicationsWorkspaceProps) {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempNotes, setTempNotes] = useState<string>('');
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
 
   const filtered = applications.filter((app) => {
     if (filterStatus === 'ALL') return true;
@@ -35,7 +44,7 @@ export default function ApplicationsWorkspace({
     INTERVIEWING: 'badge-amber',
     OFFERED: 'badge-success',
     REJECTED: 'badge-danger',
-    WITHDRAWN: 'badge-onsite'
+    WITHDRAWN: 'badge-onsite',
   };
 
   const startEditNotes = (app: TrackedApplication) => {
@@ -43,9 +52,13 @@ export default function ApplicationsWorkspace({
     setTempNotes(app.notes || '');
   };
 
-  const saveNotes = (id: string) => {
-    onUpdateNotes(id, tempNotes);
+  const saveNotes = (app: TrackedApplication) => {
+    onUpdateNotes(app.id, tempNotes, app.version);
     setEditingId(null);
+  };
+
+  const toggleHistory = (appId: string) => {
+    setExpandedHistoryId((prev) => (prev === appId ? null : appId));
   };
 
   return (
@@ -167,17 +180,40 @@ export default function ApplicationsWorkspace({
                   </div>
                 </div>
 
-                {/* Status Dropdown */}
+                {/* Status Dropdown & Version Badge */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {app.version !== undefined && (
+                    <span
+                      style={{
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        color: 'var(--seekers-text-muted)',
+                        backgroundColor: 'var(--seekers-bg-surface)',
+                        padding: '0.2rem 0.4rem',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--seekers-border-subtle)',
+                      }}
+                      title="Optimistic concurrency record version"
+                    >
+                      v{app.version}
+                    </span>
+                  )}
+
                   <select
                     className={`select-input ${statusColors[app.status]}`}
                     value={app.status}
-                    onChange={(e) => onUpdateStatus(app.id, e.target.value as TrackedApplication['status'])}
+                    onChange={(e) =>
+                      onUpdateStatus(
+                        app.id,
+                        e.target.value as TrackedApplication['status'],
+                        app.version,
+                      )
+                    }
                     style={{
                       fontWeight: 600,
                       minHeight: '38px',
                       padding: '0.35rem 0.75rem',
-                      fontSize: '0.8125rem'
+                      fontSize: '0.8125rem',
                     }}
                     aria-label={`Update status for ${app.job_summary.title}`}
                   >
@@ -248,7 +284,7 @@ export default function ApplicationsWorkspace({
                       <button
                         type="button"
                         className="btn-primary"
-                        onClick={() => saveNotes(app.id)}
+                        onClick={() => saveNotes(app)}
                         style={{ minHeight: '32px', fontSize: '0.8125rem' }}
                       >
                         Save Notes
@@ -261,10 +297,65 @@ export default function ApplicationsWorkspace({
                   </p>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--seekers-text-muted)', marginTop: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--seekers-text-muted)', marginTop: '0.5rem' }}>
                   <span>Applied: {formatTimeAgo(app.applied_at)}</span>
+                  {app.history && app.history.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => toggleHistory(app.id)}
+                      style={{ fontSize: '0.75rem', padding: '0.1rem 0.4rem', minHeight: '24px' }}
+                    >
+                      {expandedHistoryId === app.id ? 'Hide History ▲' : `Stage History (${app.history.length}) ▼`}
+                    </button>
+                  )}
                   <span>Updated: {formatTimeAgo(app.updated_at)}</span>
                 </div>
+
+                {/* History Timeline */}
+                {expandedHistoryId === app.id && app.history && app.history.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: '0.75rem',
+                      paddingTop: '0.75rem',
+                      borderTop: '1px dashed var(--seekers-border-subtle)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.35rem',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--seekers-text-secondary)', textTransform: 'uppercase' }}>
+                      Lifecycle Stage Transitions
+                    </span>
+                    {app.history.map((entry, idx) => (
+                      <div
+                        key={entry.id || idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'baseline',
+                          gap: '0.5rem',
+                          fontSize: '0.775rem',
+                          color: 'var(--seekers-text-secondary)',
+                        }}
+                      >
+                        <span
+                          className={`badge ${statusColors[entry.status as keyof typeof statusColors] || 'badge-seniority'}`}
+                          style={{ fontSize: '0.7rem', padding: '0.1rem 0.35rem' }}
+                        >
+                          {entry.status}
+                        </span>
+                        <span style={{ color: 'var(--seekers-text-muted)', fontSize: '0.7rem' }}>
+                          {new Date(entry.changed_at).toLocaleDateString()}
+                        </span>
+                        {entry.notes && (
+                          <span style={{ color: 'var(--seekers-text-primary)' }}>
+                            — {entry.notes}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}

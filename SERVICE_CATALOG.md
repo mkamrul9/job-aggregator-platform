@@ -28,7 +28,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 | `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (16/16); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, threadpool offloading, and gRPC verified |
 | `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Production build passes; standalone operations console with live simulation adapter verified |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
-| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 | ESLint passes (0 errors); tsc & Jest pass (42/42 across 6 suites); P08 resume storage & lifecycle verified |
+| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 | ESLint passes (0 errors); tsc & Jest pass (59/59 across 7 suites); P09 candidate workspace, optimistic locking, saved searches, support triage verified |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
 | `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | Safe jsonTransport default; 5 unit tests pass; Socket.io & metric counter verified |
 | `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype verified |
@@ -210,8 +210,8 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 44 Jest unit tests across 6 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (25 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
-- **Completed in Phases P05 & P08:**
+- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 59 Jest unit tests across 7 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (33 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`, `20261029000000_p09_candidate_workspace_and_support`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Completed in Phases P05, P08 & P09:**
   - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
   - Persistent candidate profile read & update (`GET/PUT /users/profile`).
   - Scheduled account deletion with 30-day grace period and idempotency (`POST /users/account/delete`).
@@ -222,13 +222,18 @@ All platform services interact through versioned machine-readable contracts loca
   - P08 Active resume query endpoint (`GET /users/resume`) for state hydration and UI synchronization.
   - P08 Candidate review checklist endpoint (`POST /users/resume/review`) allowing selective skill application to profile without silent clobbering.
   - P08 Candidate resume deletion (`DELETE /users/resume`) with atomic superseding tombstones and authorized stream download (`GET /users/resume/download`).
-  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099, PostgreSQL, and real Python gRPC server, extended to 25 verification steps.
+  - P09 Candidate Workspace: Saved/unsaved jobs (`/users/saved-jobs`), cursor pagination lookahead fix, catalog TTL cache, and accurate listing availability checking.
+  - P09 Saved Searches: Full CRUD (`/users/saved-searches`) with query and filter persistence, alert configuration, and execution deep links.
+  - P09 Application Tracker: Candidate-managed tracking (`/users/applications`) with atomic database-level optimistic concurrency control (`expected_version` -> 409 Conflict), state machine transition history, and idempotent creation.
+  - P09 Support & Moderation: Support report submission (`POST /reports`) with optional auth guard (rejects malformed tokens with 401; allows anonymous with IP hash), durable `RPT-YYYYMMDD-XXXX` receipts, reporter status lookup, and role-enforced admin triage queue (`/admin/reports`).
+  - P09 Account export extended to package all personal workspace entities (`saved_jobs`, `saved_searches`, `applications`, `reports`) while omitting internal operator notes and IP hashes.
+  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099, PostgreSQL, and real Python gRPC server, extended to 33 verification steps.
   - Negative error handling regression suite (`npm run test:smoke:negative`) ensuring no false-positive test reporting.
   - Automated CI integration job running database migrations, Python gRPC extractor, and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
 - **Intended Deployment Boundary:**
   - Container: `service-user/Dockerfile`
   - Ports: `3000` (internal) / `3002` (host)
-  - Owning Feature Phase: **P05 & P08 (Completed)**
+  - Owning Feature Phase: **P05, P08 & P09 (Completed)**
 
 ---
 

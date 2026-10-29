@@ -449,6 +449,109 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/saved-searches:
+    get:
+      summary: List Saved Searches
+      operationId: listSavedSearches
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SavedSearch'
+                  next_cursor:
+                    type: string
+                  total_count:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create Saved Search
+      operationId: createSavedSearch
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSavedSearchRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/saved-searches/{id}:
+    put:
+      summary: Update Saved Search
+      operationId: updateSavedSearch
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSavedSearchRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearch'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete Saved Search
+      operationId: deleteSavedSearch
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Saved search deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /users/applications:
     get:
       summary: List Candidate-Managed Tracked Applications
@@ -1097,6 +1200,101 @@ components:
           items:
             $ref: '#/components/schemas/JobSummary'
         next_cursor:
+          type: string
+
+    SavedSearch:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        query:
+          type: string
+        location:
+          type: string
+        remote_eligibility:
+          type: string
+        seniority:
+          type: string
+        job_type:
+          type: string
+        min_salary:
+          type: number
+        currency:
+          type: string
+        pay_period:
+          type: string
+        sort:
+          type: string
+        alerts_enabled:
+          type: boolean
+        alert_frequency:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSavedSearchRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        query:
+          type: string
+        location:
+          type: string
+        remote_eligibility:
+          type: string
+        seniority:
+          type: string
+        job_type:
+          type: string
+        min_salary:
+          type: number
+        currency:
+          type: string
+        pay_period:
+          type: string
+        sort:
+          type: string
+        alerts_enabled:
+          type: boolean
+        alert_frequency:
+          type: string
+
+    UpdateSavedSearchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        query:
+          type: string
+        location:
+          type: string
+        remote_eligibility:
+          type: string
+        seniority:
+          type: string
+        job_type:
+          type: string
+        min_salary:
+          type: number
+        currency:
+          type: string
+        pay_period:
+          type: string
+        sort:
+          type: string
+        alerts_enabled:
+          type: boolean
+        alert_frequency:
           type: string
 
     TrackedApplication:

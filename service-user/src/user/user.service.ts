@@ -15,6 +15,7 @@ import type { ClientGrpc } from '@nestjs/microservices';
 import { lastValueFrom, Observable } from 'rxjs';
 import { timeout } from 'rxjs/operators';
 import { Metadata } from '@grpc/grpc-js';
+import * as crypto from 'crypto';
 import { UserRepository } from './user.repository';
 import { StorageService } from '../storage/storage.service';
 import {
@@ -22,6 +23,19 @@ import {
   mapToUserProfileResponse,
 } from './dto/user-profile-response.dto';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
+import type { TrackedApplication, ApplicationHistory } from '@prisma/client';
+import type {
+  JobSnapshotInput,
+  CatalogJobResponse,
+  CreateSavedSearchDto,
+  UpdateSavedSearchDto,
+  TrackApplicationDto,
+  UpdateApplicationDto,
+  CreateReportDto,
+  TriageReportDto,
+  CreateAlertDto,
+  PaginationOptionsDto,
+} from './dto/workspace.dto';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 
@@ -157,8 +171,10 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     request_id: string;
     status: string;
     profile: UserProfileResponseDto;
-    applications: unknown[];
     saved_jobs: unknown[];
+    saved_searches: unknown[];
+    applications: unknown[];
+    reports: unknown[];
     alerts: unknown[];
   }> {
     const user = await this.userRepository.findById(userId);
@@ -170,6 +186,8 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     }
 
     const exportRecord = await this.userRepository.createExportRequest(userId);
+    const comprehensive =
+      await this.userRepository.getComprehensiveUserData(userId);
 
     return {
       user_id: user.id,
@@ -177,9 +195,50 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       request_id: exportRecord.id,
       status: exportRecord.status,
       profile: mapToUserProfileResponse(user, user.profile),
-      applications: [],
-      saved_jobs: [],
-      alerts: [],
+      saved_jobs: comprehensive.savedJobs.map((j) => ({
+        id: j.id,
+        job_id: j.jobId,
+        title: j.titleSnapshot,
+        company: j.companySnapshot,
+        location: j.locationSnapshot,
+        saved_at: j.createdAt.toISOString(),
+      })),
+      saved_searches: comprehensive.savedSearches.map((s) => ({
+        id: s.id,
+        name: s.name,
+        query: s.query,
+        location: s.location,
+        created_at: s.createdAt.toISOString(),
+      })),
+      applications: comprehensive.applications.map((a) => ({
+        id: a.id,
+        job_id: a.jobId,
+        title: a.titleSnapshot,
+        company: a.companySnapshot,
+        status: a.status,
+        notes: a.notes,
+        applied_at: a.appliedAt.toISOString(),
+        history: a.history.map((h) => ({
+          from_status: h.fromStatus,
+          to_status: h.toStatus,
+          changed_at: h.changedAt.toISOString(),
+        })),
+      })),
+      reports: comprehensive.supportReports.map((r) => ({
+        id: r.id,
+        reference_num: r.referenceNum,
+        report_type: r.reportType,
+        status: r.status,
+        created_at: r.createdAt.toISOString(),
+      })),
+      alerts: comprehensive.alerts.map((al) => ({
+        id: al.id,
+        query: al.query,
+        location: al.location,
+        frequency: al.frequency,
+        active: al.active,
+        created_at: al.createdAt.toISOString(),
+      })),
     };
   }
 
@@ -564,6 +623,779 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       buffer,
       fileName: doc.fileName,
       mimeType: doc.mimeType,
+    };
+  }
+
+  // ─── P09 CANDIDATE WORKSPACE & SUPPORT ─────────────────────────────────────
+
+  private readonly catalogCache = new Map<
+    string,
+    {
+      result:
+        | { kind: 'FOUND'; job: CatalogJobResponse }
+        | { kind: 'NOT_FOUND' }
+        | { kind: 'UNAVAILABLE' };
+      expiresAt: number;
+    }
+  >();
+
+  /**
+   * Verified catalog job fetch from authoritative service-ingestion API with 30s cache.
+   */
+  async fetchCatalogJob(
+    jobId: string,
+  ): Promise<
+    | { kind: 'FOUND'; job: CatalogJobResponse }
+    | { kind: 'NOT_FOUND' }
+    | { kind: 'UNAVAILABLE' }
+  > {
+    const cached = this.catalogCache.get(jobId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
+
+    const ingestionUrl =
+      process.env.INGESTION_SERVICE_URL || 'http://localhost:5000';
+    try {
+      const res = await fetch(`${ingestionUrl}/api/v1/jobs/${jobId}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(2500),
+      });
+
+      if (res.status === 200) {
+        const job = (await res.json()) as CatalogJobResponse;
+        const result = { kind: 'FOUND' as const, job };
+        this.catalogCache.set(jobId, {
+          result,
+          expiresAt: Date.now() + 30_000,
+        });
+        return result;
+      }
+
+      if (res.status === 404) {
+        const result = { kind: 'NOT_FOUND' as const };
+        this.catalogCache.set(jobId, {
+          result,
+          expiresAt: Date.now() + 10_000,
+        });
+        return result;
+      }
+
+      return { kind: 'UNAVAILABLE' };
+    } catch {
+      return { kind: 'UNAVAILABLE' };
+    }
+  }
+
+  // ─── SAVED JOBS ──────────────────────────────────────────────────────────
+
+  async saveJob(
+    userId: string,
+    jobId: string,
+    fallbackSnapshot?: JobSnapshotInput,
+  ) {
+    if (!jobId || typeof jobId !== 'string' || !jobId.trim()) {
+      throw new BadRequestException('Valid jobId is required to save a job.');
+    }
+
+    // Block unsafe URLs (such as javascript: or data:)
+    const rawUrl = fallbackSnapshot?.job_url || fallbackSnapshot?.jobUrl;
+    if (rawUrl) {
+      const trimmed = rawUrl.trim().toLowerCase();
+      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        throw new BadRequestException('Job URL must use http or https scheme.');
+      }
+    }
+
+    const catalogResult = await this.fetchCatalogJob(jobId);
+
+    // Definite 404 from authoritative catalog -> reject saving non-existent listing
+    if (catalogResult.kind === 'NOT_FOUND') {
+      throw new NotFoundException({
+        code: 'JOB_NOT_FOUND',
+        message: `Job ${jobId} was not found in the canonical job catalog.`,
+      });
+    }
+
+    let title: string;
+    let company: string;
+    let location: string | undefined;
+    let jobUrl: string | undefined;
+    let salary: string | undefined;
+    let source: string;
+    let statusAtSave: string;
+
+    if (catalogResult.kind === 'FOUND') {
+      const catalogJob = catalogResult.job;
+      title = catalogJob.title;
+      company = catalogJob.company;
+      location = catalogJob.location;
+      jobUrl = catalogJob.canonical_url || catalogJob.job_url || rawUrl;
+      salary = catalogJob.salary
+        ? typeof catalogJob.salary === 'object'
+          ? `${catalogJob.salary.min || ''}-${catalogJob.salary.max || ''} ${catalogJob.salary.currency || ''}`.trim()
+          : String(catalogJob.salary)
+        : fallbackSnapshot?.salary;
+      source = catalogJob.source || fallbackSnapshot?.source || 'platform';
+      const isExpired =
+        catalogJob.status === 'EXPIRED' ||
+        Boolean(catalogJob.is_expired) ||
+        Boolean(
+          catalogJob.expires_at &&
+          new Date(catalogJob.expires_at).getTime() <= Date.now(),
+        );
+      statusAtSave = isExpired ? 'EXPIRED' : catalogJob.status || 'ACTIVE';
+    } else {
+      // Outage / timeout: allow saving if snapshot is present, but explicitly stage as UNVERIFIED
+      if (!fallbackSnapshot?.title || !fallbackSnapshot?.company) {
+        throw new BadRequestException(
+          'Catalog service is currently unavailable and snapshot details were not provided.',
+        );
+      }
+      title = fallbackSnapshot.title;
+      company = fallbackSnapshot.company;
+      location = fallbackSnapshot.location;
+      jobUrl = rawUrl;
+      salary = fallbackSnapshot.salary;
+      source = fallbackSnapshot.source || 'platform';
+      statusAtSave = 'UNVERIFIED';
+    }
+
+    const saved = await this.userRepository.saveJob(userId, jobId, {
+      title,
+      company,
+      location,
+      jobUrl,
+      salary,
+      source,
+      statusAtSave,
+    });
+
+    return {
+      id: saved.id,
+      job_id: saved.jobId,
+      title: saved.titleSnapshot,
+      company: saved.companySnapshot,
+      location: saved.locationSnapshot,
+      salary: saved.salarySnapshot,
+      job_url: saved.jobUrlSnapshot,
+      source: saved.sourceSnapshot,
+      status: saved.statusAtSave,
+      created_at: saved.createdAt.toISOString(),
+    };
+  }
+
+  async unsaveJob(userId: string, jobId: string) {
+    const success = await this.userRepository.unsaveJob(userId, jobId);
+    return {
+      success,
+      message: success ? 'Job unsaved.' : 'Job was not saved.',
+    };
+  }
+
+  async getSavedJobs(userId: string, options: PaginationOptionsDto = {}) {
+    const { items, nextCursor, total } =
+      await this.userRepository.findSavedJobs(userId, options);
+
+    const formattedItems = await Promise.all(
+      items.map(async (saved) => {
+        const catalogResult = await this.fetchCatalogJob(saved.jobId);
+        const liveCatalog =
+          catalogResult.kind === 'FOUND' ? catalogResult.job : null;
+
+        const isExpired = liveCatalog
+          ? Boolean(
+              liveCatalog.is_expired ||
+              liveCatalog.status === 'EXPIRED' ||
+              (liveCatalog.expires_at &&
+                new Date(liveCatalog.expires_at).getTime() <= Date.now()),
+            )
+          : saved.statusAtSave === 'EXPIRED';
+
+        const isAvailable = Boolean(
+          liveCatalog && liveCatalog.status === 'ACTIVE' && !isExpired,
+        );
+
+        return {
+          id: saved.jobId,
+          saved_id: saved.id,
+          title: liveCatalog?.title || saved.titleSnapshot,
+          company: liveCatalog?.company || saved.companySnapshot,
+          location: liveCatalog?.location || saved.locationSnapshot || '',
+          remote_eligibility: liveCatalog?.remote_eligibility || 'UNSPECIFIED',
+          job_type: liveCatalog?.job_type || 'UNSPECIFIED',
+          seniority: liveCatalog?.seniority || 'UNSPECIFIED',
+          salary:
+            liveCatalog?.salary && typeof liveCatalog.salary === 'object'
+              ? liveCatalog.salary
+              : undefined,
+          skills: liveCatalog?.skills || [],
+          source: liveCatalog?.source || saved.sourceSnapshot || 'platform',
+          published_at:
+            liveCatalog?.published_at || saved.createdAt.toISOString(),
+          is_expired: isExpired,
+          is_available: isAvailable,
+          saved_at: saved.createdAt.toISOString(),
+        };
+      }),
+    );
+
+    return {
+      items: formattedItems,
+      next_cursor: nextCursor,
+      total_count: total,
+    };
+  }
+
+  // ─── SAVED SEARCHES ──────────────────────────────────────────────────────
+
+  async createSavedSearch(userId: string, data: CreateSavedSearchDto) {
+    if (
+      !data.name ||
+      typeof data.name !== 'string' ||
+      data.name.trim().length === 0
+    ) {
+      throw new BadRequestException('Saved search name is required.');
+    }
+
+    const created = await this.userRepository.createSavedSearch(userId, {
+      name: data.name.trim(),
+      query: data.query || data.q,
+      location: data.location,
+      remoteEligibility: data.remoteEligibility || data.remote_eligibility,
+      seniority: data.seniority,
+      jobType: data.jobType || data.job_type,
+      minSalary:
+        data.minSalary !== undefined
+          ? Number(data.minSalary)
+          : data.min_salary !== undefined
+            ? Number(data.min_salary)
+            : undefined,
+      currency: data.currency,
+      payPeriod: data.payPeriod || data.pay_period,
+      sort: data.sort,
+      alertsEnabled:
+        data.alertsEnabled !== undefined
+          ? Boolean(data.alertsEnabled)
+          : data.alerts_enabled !== undefined
+            ? Boolean(data.alerts_enabled)
+            : false,
+      alertFrequency: data.alertFrequency || data.alert_frequency,
+    });
+
+    return {
+      id: created.id,
+      name: created.name,
+      query: created.query,
+      location: created.location,
+      remote_eligibility: created.remoteEligibility,
+      seniority: created.seniority,
+      job_type: created.jobType,
+      min_salary: created.minSalary,
+      currency: created.currency,
+      pay_period: created.payPeriod,
+      sort: created.sort,
+      alerts_enabled: created.alertsEnabled,
+      alert_frequency: created.alertFrequency,
+      created_at: created.createdAt.toISOString(),
+      updated_at: created.updatedAt.toISOString(),
+    };
+  }
+
+  async getSavedSearches(userId: string, options: PaginationOptionsDto = {}) {
+    const { items, nextCursor, total } =
+      await this.userRepository.findSavedSearches(userId, options);
+    return {
+      items: items.map((s) => ({
+        id: s.id,
+        name: s.name,
+        query: s.query,
+        location: s.location,
+        remote_eligibility: s.remoteEligibility,
+        seniority: s.seniority,
+        job_type: s.jobType,
+        min_salary: s.minSalary,
+        currency: s.currency,
+        pay_period: s.payPeriod,
+        sort: s.sort,
+        alerts_enabled: s.alertsEnabled,
+        alert_frequency: s.alertFrequency,
+        created_at: s.createdAt.toISOString(),
+        updated_at: s.updatedAt.toISOString(),
+      })),
+      next_cursor: nextCursor,
+      total_count: total,
+    };
+  }
+
+  async updateSavedSearch(
+    userId: string,
+    searchId: string,
+    data: UpdateSavedSearchDto,
+  ) {
+    const updated = await this.userRepository.updateSavedSearch(
+      userId,
+      searchId,
+      {
+        name: data.name,
+        query: data.query || data.q,
+        location: data.location,
+        remoteEligibility: data.remoteEligibility || data.remote_eligibility,
+        seniority: data.seniority,
+        jobType: data.jobType || data.job_type,
+        minSalary:
+          data.minSalary !== undefined ? Number(data.minSalary) : undefined,
+        currency: data.currency,
+        payPeriod: data.payPeriod || data.pay_period,
+        sort: data.sort,
+        alertsEnabled:
+          data.alertsEnabled !== undefined
+            ? Boolean(data.alertsEnabled)
+            : undefined,
+        alertFrequency: data.alertFrequency || data.alert_frequency,
+      },
+    );
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      query: updated.query,
+      location: updated.location,
+      remote_eligibility: updated.remoteEligibility,
+      seniority: updated.seniority,
+      job_type: updated.jobType,
+      min_salary: updated.minSalary,
+      currency: updated.currency,
+      pay_period: updated.payPeriod,
+      sort: updated.sort,
+      alerts_enabled: updated.alertsEnabled,
+      alert_frequency: updated.alertFrequency,
+      created_at: updated.createdAt.toISOString(),
+      updated_at: updated.updatedAt.toISOString(),
+    };
+  }
+
+  async deleteSavedSearch(userId: string, searchId: string) {
+    const success = await this.userRepository.deleteSavedSearch(
+      userId,
+      searchId,
+    );
+    return {
+      success,
+      message: success ? 'Saved search deleted.' : 'Saved search not found.',
+    };
+  }
+
+  // ─── TRACKED APPLICATIONS ────────────────────────────────────────────────
+
+  async trackApplication(userId: string, data: TrackApplicationDto) {
+    if (
+      !data.job_id ||
+      typeof data.job_id !== 'string' ||
+      !data.job_id.trim()
+    ) {
+      throw new BadRequestException(
+        'Valid job_id is required to track an application.',
+      );
+    }
+
+    const rawUrl =
+      data.job_url || data.job_summary?.job_url || data.job_summary?.jobUrl;
+    if (rawUrl) {
+      const trimmed = rawUrl.trim().toLowerCase();
+      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        throw new BadRequestException('Job URL must use http or https scheme.');
+      }
+    }
+
+    const catalogResult = await this.fetchCatalogJob(data.job_id);
+    if (catalogResult.kind === 'NOT_FOUND') {
+      throw new NotFoundException({
+        code: 'JOB_NOT_FOUND',
+        message: `Job ${data.job_id} was not found in the canonical job catalog.`,
+      });
+    }
+
+    const catalogJob =
+      catalogResult.kind === 'FOUND' ? catalogResult.job : null;
+
+    const title =
+      catalogJob?.title ||
+      data.title ||
+      data.job_summary?.title ||
+      'Tracked Application';
+    const company =
+      catalogJob?.company ||
+      data.company ||
+      data.job_summary?.company ||
+      'Company';
+    const location =
+      catalogJob?.location || data.location || data.job_summary?.location;
+    const jobUrl = catalogJob?.canonical_url || catalogJob?.job_url || rawUrl;
+    const salary = catalogJob?.salary
+      ? typeof catalogJob.salary === 'object'
+        ? `${catalogJob.salary.min || ''}-${catalogJob.salary.max || ''} ${catalogJob.salary.currency || ''}`.trim()
+        : String(catalogJob.salary)
+      : data.salary || data.job_summary?.salary;
+    const source =
+      catalogJob?.source ||
+      data.source ||
+      data.job_summary?.source ||
+      'platform';
+
+    const validStatuses = [
+      'APPLIED',
+      'INTERVIEWING',
+      'OFFERED',
+      'REJECTED',
+      'WITHDRAWN',
+    ];
+    const status =
+      data.status && validStatuses.includes(data.status)
+        ? data.status
+        : 'APPLIED';
+
+    const app = await this.userRepository.createApplication(
+      userId,
+      {
+        jobId: data.job_id,
+        status,
+        notes: data.notes,
+      },
+      { title, company, location, jobUrl, salary, source },
+    );
+
+    return this.mapTrackedApplication(app, catalogJob);
+  }
+
+  async updateApplication(
+    userId: string,
+    applicationId: string,
+    data: UpdateApplicationDto,
+  ) {
+    const validStatuses = [
+      'APPLIED',
+      'INTERVIEWING',
+      'OFFERED',
+      'REJECTED',
+      'WITHDRAWN',
+    ];
+    if (data.status && !validStatuses.includes(data.status)) {
+      throw new BadRequestException(
+        `Invalid application status: ${data.status}. Must be one of: ${validStatuses.join(', ')}`,
+      );
+    }
+
+    const updated = await this.userRepository.updateApplication(
+      userId,
+      applicationId,
+      {
+        status: data.status,
+        notes: data.notes,
+        expectedVersion: data.expected_version,
+      },
+    );
+
+    const catalogResult = await this.fetchCatalogJob(updated.jobId);
+    const catalogJob =
+      catalogResult.kind === 'FOUND' ? catalogResult.job : null;
+    return this.mapTrackedApplication(updated, catalogJob);
+  }
+
+  async deleteApplication(userId: string, applicationId: string) {
+    const success = await this.userRepository.deleteApplication(
+      userId,
+      applicationId,
+    );
+    return {
+      success,
+      message: success ? 'Application removed.' : 'Application not found.',
+    };
+  }
+
+  async getApplications(
+    userId: string,
+    options: { status?: string } & PaginationOptionsDto = {},
+  ) {
+    const { items, nextCursor, total } =
+      await this.userRepository.findApplications(userId, options);
+    const mapped = await Promise.all(
+      items.map(async (app) => {
+        const catalogResult = await this.fetchCatalogJob(app.jobId);
+        const catalogJob =
+          catalogResult.kind === 'FOUND' ? catalogResult.job : null;
+        return this.mapTrackedApplication(app, catalogJob);
+      }),
+    );
+
+    return {
+      items: mapped,
+      next_cursor: nextCursor,
+      total_count: total,
+    };
+  }
+
+  async getApplicationById(userId: string, applicationId: string) {
+    const app = await this.userRepository.findApplicationById(
+      userId,
+      applicationId,
+    );
+    if (!app) {
+      throw new NotFoundException({
+        code: 'APPLICATION_NOT_FOUND',
+        message: `Tracked application ${applicationId} was not found.`,
+      });
+    }
+    const catalogResult = await this.fetchCatalogJob(app.jobId);
+    const catalogJob =
+      catalogResult.kind === 'FOUND' ? catalogResult.job : null;
+    return this.mapTrackedApplication(app, catalogJob);
+  }
+
+  private mapTrackedApplication(
+    app: TrackedApplication & { history?: ApplicationHistory[] },
+    liveCatalog?: CatalogJobResponse | null,
+  ) {
+    const isExpired = liveCatalog
+      ? Boolean(
+          liveCatalog.is_expired ||
+          liveCatalog.status === 'EXPIRED' ||
+          (liveCatalog.expires_at &&
+            new Date(liveCatalog.expires_at).getTime() <= Date.now()),
+        )
+      : false;
+
+    return {
+      id: app.id,
+      job_id: app.jobId,
+      status: app.status,
+      notes: app.notes || '',
+      version: app.version,
+      applied_at: app.appliedAt.toISOString(),
+      updated_at: app.updatedAt.toISOString(),
+      job_summary: {
+        id: app.jobId,
+        title: liveCatalog?.title || app.titleSnapshot,
+        company: liveCatalog?.company || app.companySnapshot,
+        location: liveCatalog?.location || app.locationSnapshot || '',
+        remote_eligibility: liveCatalog?.remote_eligibility || 'UNSPECIFIED',
+        job_type: liveCatalog?.job_type || 'UNSPECIFIED',
+        seniority: liveCatalog?.seniority || 'UNSPECIFIED',
+        salary:
+          liveCatalog?.salary && typeof liveCatalog.salary === 'object'
+            ? liveCatalog.salary
+            : undefined,
+        source: liveCatalog?.source || app.sourceSnapshot || 'platform',
+        is_expired: isExpired,
+        is_available: Boolean(
+          liveCatalog && liveCatalog.status === 'ACTIVE' && !isExpired,
+        ),
+      },
+      history: (app.history || []).map((h) => ({
+        id: h.id,
+        from_status: h.fromStatus,
+        to_status: h.toStatus,
+        notes: h.notesSnapshot,
+        changed_at: h.changedAt.toISOString(),
+      })),
+    };
+  }
+
+  // ─── SUPPORT REPORTS & TRIAGE ─────────────────────────────────────────────
+
+  async submitReport(data: CreateReportDto & { userId?: string; ip?: string }) {
+    const validReportTypes = [
+      'EXPIRED_LISTING',
+      'BROKEN_LINK',
+      'INCORRECT_DATA',
+      'SPAM',
+      'OTHER',
+    ];
+    if (!data.report_type || !validReportTypes.includes(data.report_type)) {
+      throw new BadRequestException(
+        `Invalid report_type: ${data.report_type}. Allowed: ${validReportTypes.join(', ')}`,
+      );
+    }
+    if (!data.description || data.description.trim().length < 5) {
+      throw new BadRequestException(
+        'Description must be at least 5 characters long.',
+      );
+    }
+    if (data.description.length > 5000) {
+      throw new BadRequestException(
+        'Description exceeds 5000 characters limit.',
+      );
+    }
+
+    if (data.contact_email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(data.contact_email.trim())) {
+        throw new BadRequestException('Invalid contact_email format.');
+      }
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const randomSuffix = Math.random()
+      .toString(36)
+      .substring(2, 8)
+      .toUpperCase();
+    const referenceNum = `RPT-${todayStr}-${randomSuffix}`;
+
+    const ipSalt = process.env.REPORT_IP_SALT || 'seekers-privacy-salt';
+    const ipHash = data.ip
+      ? crypto
+          .createHash('sha256')
+          .update(`${data.ip}:${ipSalt}`)
+          .digest('hex')
+          .substring(0, 32)
+      : undefined;
+
+    const report = await this.userRepository.createSupportReport({
+      referenceNum,
+      userId: data.userId,
+      jobId: data.job_id,
+      reportType: data.report_type,
+      description: data.description.trim(),
+      contactEmail: data.contact_email ? data.contact_email.trim() : undefined,
+      ipHash,
+    });
+
+    return {
+      report_id: report.id,
+      reference_num: report.referenceNum,
+      status: report.status,
+      message: 'Report received and queued for operator triage.',
+      created_at: report.createdAt.toISOString(),
+    };
+  }
+
+  async getReport(idOrRef: string, userId?: string, isAdmin = false) {
+    const report = await this.userRepository.findReportByIdOrRef(
+      idOrRef,
+      userId,
+      isAdmin,
+    );
+    if (!report) {
+      throw new NotFoundException({
+        code: 'REPORT_NOT_FOUND',
+        message: `Report ${idOrRef} was not found or access is restricted.`,
+      });
+    }
+
+    return {
+      id: report.id,
+      reference_num: report.referenceNum,
+      report_type: report.reportType,
+      description: report.description,
+      status: report.status,
+      operator_notes: isAdmin ? report.operatorNotes : undefined,
+      job_id: report.jobId,
+      created_at: report.createdAt.toISOString(),
+      resolved_at: report.resolvedAt?.toISOString() || null,
+    };
+  }
+
+  async listReportsQueue(
+    options: { status?: string } & PaginationOptionsDto = {},
+  ) {
+    const { items, nextCursor, total } =
+      await this.userRepository.listSupportReports(options);
+    return {
+      items: items.map((r) => ({
+        id: r.id,
+        reference_num: r.referenceNum,
+        user_id: r.userId,
+        job_id: r.jobId,
+        report_type: r.reportType,
+        description: r.description,
+        contact_email: r.contactEmail,
+        status: r.status,
+        operator_notes: r.operatorNotes,
+        created_at: r.createdAt.toISOString(),
+        resolved_at: r.resolvedAt?.toISOString() || null,
+      })),
+      next_cursor: nextCursor,
+      total_count: total,
+    };
+  }
+
+  async triageReport(
+    reportId: string,
+    data: TriageReportDto,
+    operatorId?: string,
+  ) {
+    const validStatuses = ['RECEIVED', 'IN_REVIEW', 'RESOLVED', 'DISMISSED'];
+    if (!data.status || !validStatuses.includes(data.status)) {
+      throw new BadRequestException(
+        `Invalid status: ${data.status}. Must be one of: ${validStatuses.join(', ')}`,
+      );
+    }
+
+    const updated = await this.userRepository.updateSupportReportStatus(
+      reportId,
+      {
+        status: data.status,
+        operatorNotes: data.operator_notes,
+        resolvedBy: operatorId,
+      },
+    );
+
+    return {
+      id: updated.id,
+      reference_num: updated.referenceNum,
+      status: updated.status,
+      operator_notes: updated.operatorNotes,
+      resolved_at: updated.resolvedAt?.toISOString() || null,
+      resolved_by: updated.resolvedBy,
+    };
+  }
+
+  // ─── ALERTS ──────────────────────────────────────────────────────────────
+
+  async createAlert(userId: string, data: CreateAlertDto) {
+    if (!data.query || typeof data.query !== 'string') {
+      throw new BadRequestException('Search query is required for alerts.');
+    }
+    const alert = await this.userRepository.createAlert(userId, data);
+    return {
+      id: alert.id,
+      query: alert.query,
+      location: alert.location,
+      frequency: alert.frequency,
+      active: alert.active,
+      created_at: alert.createdAt.toISOString(),
+    };
+  }
+
+  async listAlerts(userId: string) {
+    const alerts = await this.userRepository.listAlerts(userId);
+    return alerts.map((al) => ({
+      id: al.id,
+      query: al.query,
+      location: al.location,
+      frequency: al.frequency,
+      active: al.active,
+      created_at: al.createdAt.toISOString(),
+    }));
+  }
+
+  async deleteAlert(userId: string, alertId: string) {
+    const success = await this.userRepository.deleteAlert(userId, alertId);
+    return {
+      success,
+      message: success ? 'Alert subscription removed.' : 'Alert not found.',
+    };
+  }
+
+  async toggleAlert(userId: string, alertId: string) {
+    const alert = await this.userRepository.toggleAlertActive(userId, alertId);
+    return {
+      id: alert.id,
+      query: alert.query,
+      location: alert.location,
+      frequency: alert.frequency,
+      active: alert.active,
+      created_at: alert.createdAt.toISOString(),
     };
   }
 

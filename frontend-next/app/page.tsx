@@ -23,25 +23,74 @@ import {
   TrackedApplication,
   JobSummary,
   AlertSubscription,
+  SavedSearchItem,
 } from '../lib/mock-data';
+import { formatSalary } from '../components/JobCard';
 
 type SearchState = 'idle' | 'loading' | 'success' | 'empty' | 'error';
 
+interface ApiSavedJobItem {
+  id?: string;
+  job_id?: string;
+  title: string;
+  company: string;
+  location?: string;
+  remote_eligibility?: string;
+  job_type?: string;
+  seniority?: string;
+  salary?: JobSummary['salary'];
+  skills?: string[];
+  source?: string;
+  saved_at?: string;
+  published_at?: string;
+}
+
+interface ApiTrackedAppItem {
+  id: string;
+  job_id: string;
+  job_summary?: {
+    title?: string;
+    company?: string;
+    location?: string;
+    remote_eligibility?: JobSummary['remote_eligibility'];
+    job_type?: JobSummary['job_type'];
+    seniority?: JobSummary['seniority'];
+    salary?: JobSummary['salary'];
+    skills?: string[];
+    source?: string;
+  };
+  applied_at?: string;
+  status: TrackedApplication['status'];
+  notes?: string;
+  version?: number;
+  history?: TrackedApplication['history'];
+  updated_at?: string;
+}
+
 function CandidatePortalContent() {
   const searchParams = useSearchParams();
-  const { isDemo: isAuthDemo } = useAuth();
+  const { user, token, isDemo: isAuthDemo } = useAuth();
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<ActiveTab>('discover');
 
-  // Candidate Data State (Workspaces)
-  const [savedJobs, setSavedJobs] = useState<JobSummary[]>(INITIAL_SAVED_JOBS);
-  const [applications, setApplications] = useState<TrackedApplication[]>(INITIAL_TRACKED_APPLICATIONS);
-  const [alerts, setAlerts] = useState<AlertSubscription[]>(INITIAL_ALERT_SUBSCRIPTIONS);
-
   // Demo Mode state: explicit toggle override or derived from URL/Auth state
   const [demoOverride, setDemoOverride] = useState<boolean | null>(null);
   const isDemoMode = demoOverride !== null ? demoOverride : (searchParams.get('demo') === 'true' || isAuthDemo);
+
+  // Candidate Data State (Workspaces) - isolate live from synthetic fixtures
+  const [savedJobs, setSavedJobs] = useState<JobSummary[]>(() =>
+    isDemoMode ? INITIAL_SAVED_JOBS : [],
+  );
+  const [applications, setApplications] = useState<TrackedApplication[]>(() =>
+    isDemoMode ? INITIAL_TRACKED_APPLICATIONS : [],
+  );
+  const [alerts, setAlerts] = useState<AlertSubscription[]>(() =>
+    isDemoMode ? INITIAL_ALERT_SUBSCRIPTIONS : [],
+  );
+  const [savedSearches, setSavedSearches] = useState<SavedSearchItem[]>([]);
+  const [isSavingSearch, setIsSavingSearch] = useState(false);
+  const [savedSearchMsg, setSavedSearchMsg] = useState<string | null>(null);
 
   // Search & Filter State from URL
   const [filters, setFilters] = useState<FilterState>({
@@ -208,6 +257,117 @@ function CandidatePortalContent() {
     });
   }, [isDemoMode, filters]);
 
+  // Load authenticated candidate workspace data (Saved Jobs, Applications, Alerts, Searches)
+  useEffect(() => {
+    if (isDemoMode || !user || !token) {
+      return;
+    }
+
+    let isMounted = true;
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    };
+
+    // 1. Saved Jobs
+    fetch('/api/v1/users/saved-jobs', { headers: authHeaders })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.items) {
+          const mapped: JobSummary[] = data.items.map((item: ApiSavedJobItem) => ({
+            id: item.id || item.job_id || '',
+            title: item.title,
+            company: item.company,
+            location: item.location || '',
+            remote_eligibility: (item.remote_eligibility as JobSummary['remote_eligibility']) || 'UNSPECIFIED',
+            job_type: (item.job_type as JobSummary['job_type']) || 'UNSPECIFIED',
+            seniority: (item.seniority as JobSummary['seniority']) || 'UNSPECIFIED',
+            salary: item.salary,
+            skills: item.skills || [],
+            source: item.source || 'platform',
+            published_at: item.saved_at || item.published_at || new Date().toISOString(),
+          }));
+          setSavedJobs(mapped);
+        }
+      })
+      .catch(() => {});
+
+    // 2. Tracked Applications
+    fetch('/api/v1/users/applications', { headers: authHeaders })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.items) {
+          const mapped: TrackedApplication[] = data.items.map((app: ApiTrackedAppItem) => ({
+            id: app.id,
+            job_id: app.job_id,
+            job_summary: {
+              id: app.job_id,
+              title: app.job_summary?.title || 'Job Listing',
+              company: app.job_summary?.company || 'Company',
+              location: app.job_summary?.location || '',
+              remote_eligibility: app.job_summary?.remote_eligibility || 'UNSPECIFIED',
+              job_type: app.job_summary?.job_type || 'UNSPECIFIED',
+              seniority: app.job_summary?.seniority || 'UNSPECIFIED',
+              salary: app.job_summary?.salary,
+              skills: app.job_summary?.skills || [],
+              source: app.job_summary?.source || 'platform',
+              published_at: app.applied_at,
+            },
+            status: app.status,
+            notes: app.notes || '',
+            version: app.version,
+            history: app.history || [],
+            applied_at: app.applied_at,
+            updated_at: app.updated_at,
+          }));
+          setApplications(mapped);
+        }
+      })
+      .catch(() => {});
+
+    // 3. Alerts
+    fetch('/api/v1/users/alerts', { headers: authHeaders })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && Array.isArray(data)) {
+          setAlerts(data);
+        }
+      })
+      .catch(() => {});
+
+    // 4. Saved Searches
+    fetch('/api/v1/users/saved-searches', { headers: authHeaders })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.items) {
+          setSavedSearches(data.items);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isDemoMode, user, token]);
+
+  // Effective candidate workspace collections (strictly unauthenticated/live = empty)
+  const effectiveSavedJobs = useMemo(
+    () => (!isDemoMode && !user ? [] : savedJobs),
+    [isDemoMode, user, savedJobs],
+  );
+  const effectiveApplications = useMemo(
+    () => (!isDemoMode && !user ? [] : applications),
+    [isDemoMode, user, applications],
+  );
+  const effectiveAlerts = useMemo(
+    () => (!isDemoMode && !user ? [] : alerts),
+    [isDemoMode, user, alerts],
+  );
+  const effectiveSavedSearches = useMemo(
+    () => (!isDemoMode && !user ? [] : savedSearches),
+    [isDemoMode, user, savedSearches],
+  );
+
   // Active listings for display
   const displayedJobs = isDemoMode ? demoFilteredJobs : liveJobs;
   const effectiveTotalCount = isDemoMode ? demoFilteredJobs.length : totalCount;
@@ -216,8 +376,8 @@ function CandidatePortalContent() {
     : searchState;
 
   // Saved Jobs Set for fast lookup
-  const savedJobIds = useMemo(() => new Set(savedJobs.map((j) => j.id)), [savedJobs]);
-  const trackedJobIds = useMemo(() => new Set(applications.map((a) => a.job_id)), [applications]);
+  const savedJobIds = useMemo(() => new Set(effectiveSavedJobs.map((j) => j.id)), [effectiveSavedJobs]);
+  const trackedJobIds = useMemo(() => new Set(effectiveApplications.map((a) => a.job_id)), [effectiveApplications]);
 
   // Active filter count
   const activeFilterCount = useMemo(() => {
@@ -357,10 +517,54 @@ function CandidatePortalContent() {
     }
   }, [selectedJob, handleSelectJob]);
 
-  const handleToggleSave = (e: React.MouseEvent, job: JobDetail | JobSummary) => {
+  const handleToggleSave = async (e: React.MouseEvent, job: JobDetail | JobSummary) => {
     e.stopPropagation();
-    if (savedJobIds.has(job.id)) {
+
+    if (!isDemoMode && !user) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    const isAlreadySaved = savedJobIds.has(job.id);
+
+    if (isDemoMode) {
+      if (isAlreadySaved) {
+        setSavedJobs((prev) => prev.filter((j) => j.id !== job.id));
+      } else {
+        const summary: JobSummary = {
+          id: job.id,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          remote_eligibility: job.remote_eligibility,
+          job_type: job.job_type,
+          seniority: job.seniority,
+          salary: job.salary,
+          skills: job.skills,
+          source: job.source,
+          published_at: job.published_at,
+        };
+        setSavedJobs((prev) => [summary, ...prev]);
+      }
+      return;
+    }
+
+    // Live mode
+    if (isAlreadySaved) {
       setSavedJobs((prev) => prev.filter((j) => j.id !== job.id));
+      try {
+        const res = await fetch(`/api/v1/users/saved-jobs/${job.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok && res.status !== 404) {
+          throw new Error('Failed to unsave job');
+        }
+      } catch {
+        // Rollback
+        setSavedJobs((prev) => [job as JobSummary, ...prev]);
+        alert('Failed to unsave job. Please try again.');
+      }
     } else {
       const summary: JobSummary = {
         id: job.id,
@@ -376,11 +580,40 @@ function CandidatePortalContent() {
         published_at: job.published_at,
       };
       setSavedJobs((prev) => [summary, ...prev]);
+      try {
+        const res = await fetch(`/api/v1/users/saved-jobs/${job.id}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salary: job.salary ? formatSalary(job.salary) : undefined,
+            job_url: (job as JobDetail).canonical_url || undefined,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error('Failed to save job');
+        }
+      } catch {
+        // Rollback
+        setSavedJobs((prev) => prev.filter((j) => j.id !== job.id));
+        alert('Failed to save job to server. Please try again.');
+      }
     }
   };
 
-  const handleTrackApplication = (job: JobDetail | JobSummary) => {
+  const handleTrackApplication = async (job: JobDetail | JobSummary) => {
     if (trackedJobIds.has(job.id)) return;
+
+    if (!isDemoMode && !user) {
+      setIsAuthOpen(true);
+      return;
+    }
+
     const summary: JobSummary = {
       id: job.id,
       title: job.title,
@@ -394,55 +627,418 @@ function CandidatePortalContent() {
       source: job.source,
       published_at: job.published_at,
     };
-    const newApp: TrackedApplication = {
-      id: `app_track_${Date.now()}`,
-      job_id: job.id,
-      job_summary: summary,
-      status: 'APPLIED',
-      notes: 'Tracked directly from job discovery.',
-      applied_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    setApplications((prev) => [newApp, ...prev]);
+
+    if (isDemoMode) {
+      const newApp: TrackedApplication = {
+        id: `app_track_${Date.now()}`,
+        job_id: job.id,
+        job_summary: summary,
+        status: 'APPLIED',
+        notes: 'Tracked directly from job discovery.',
+        version: 1,
+        history: [
+          {
+            status: 'APPLIED',
+            notes: 'Tracked directly from job discovery.',
+            changed_at: new Date().toISOString(),
+          },
+        ],
+        applied_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setApplications((prev) => [newApp, ...prev]);
+      return;
+    }
+
+    // Live mode
+    try {
+      const res = await fetch('/api/v1/users/applications', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          job_id: job.id,
+          status: 'APPLIED',
+          notes: 'Tracked directly from job discovery.',
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          salary: job.salary ? formatSalary(job.salary) : undefined,
+          job_url: (job as JobDetail).canonical_url || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || 'Failed to track application');
+      }
+
+      const created = await res.json();
+      const mappedApp: TrackedApplication = {
+        id: created.id,
+        job_id: created.job_id,
+        job_summary: {
+          id: created.job_id,
+          title: created.job_summary?.title || job.title,
+          company: created.job_summary?.company || job.company,
+          location: created.job_summary?.location || job.location,
+          remote_eligibility:
+            created.job_summary?.remote_eligibility || job.remote_eligibility,
+          job_type: created.job_summary?.job_type || job.job_type,
+          seniority: created.job_summary?.seniority || job.seniority,
+          salary: created.job_summary?.salary || job.salary,
+          skills: created.job_summary?.skills || job.skills,
+          source: created.job_summary?.source || job.source,
+          published_at: created.applied_at,
+        },
+        status: created.status,
+        notes: created.notes || '',
+        version: created.version,
+        history: created.history || [],
+        applied_at: created.applied_at,
+        updated_at: created.updated_at,
+      };
+      setApplications((prev) => [mappedApp, ...prev]);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : 'Error tracking application';
+      alert(msg);
+    }
   };
 
-  const handleUpdateAppStatus = (id: string, status: TrackedApplication['status']) => {
-    setApplications((prev) =>
-      prev.map((app) =>
-        app.id === id ? { ...app, status, updated_at: new Date().toISOString() } : app,
-      ),
-    );
+  const handleUpdateAppStatus = async (
+    id: string,
+    status: TrackedApplication['status'],
+    currentVersion?: number,
+  ) => {
+    if (isDemoMode) {
+      setApplications((prev) =>
+        prev.map((app) =>
+          app.id === id
+            ? {
+                ...app,
+                status,
+                version: (app.version || 1) + 1,
+                history: [
+                  ...(app.history || []),
+                  {
+                    status,
+                    notes: `Status changed to ${status}`,
+                    changed_at: new Date().toISOString(),
+                  },
+                ],
+                updated_at: new Date().toISOString(),
+              }
+            : app,
+        ),
+      );
+      return;
+    }
+
+    if (!token) return;
+
+    try {
+      const res = await fetch(`/api/v1/users/applications/${id}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          status,
+          expected_version: currentVersion,
+        }),
+      });
+
+      if (res.status === 409) {
+        alert(
+          'This application record was modified concurrently in another window. Refreshing latest state...',
+        );
+        const refreshRes = await fetch('/api/v1/users/applications', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (refreshRes.ok) {
+          const data = await refreshRes.json();
+          if (data?.items) {
+            setApplications(
+              data.items.map((app: ApiTrackedAppItem) => ({
+                id: app.id,
+                job_id: app.job_id,
+                job_summary: {
+                  id: app.job_id,
+                  title: app.job_summary?.title || 'Job Listing',
+                  company: app.job_summary?.company || 'Company',
+                  location: app.job_summary?.location || '',
+                  remote_eligibility:
+                    app.job_summary?.remote_eligibility || 'UNSPECIFIED',
+                  job_type: app.job_summary?.job_type || 'UNSPECIFIED',
+                  seniority: app.job_summary?.seniority || 'UNSPECIFIED',
+                  salary: app.job_summary?.salary,
+                  skills: app.job_summary?.skills || [],
+                  source: app.job_summary?.source || 'platform',
+                  published_at: app.applied_at,
+                },
+                status: app.status,
+                notes: app.notes || '',
+                version: app.version,
+                history: app.history || [],
+                applied_at: app.applied_at,
+                updated_at: app.updated_at,
+              })),
+            );
+          }
+        }
+        return;
+      }
+
+      if (res.ok) {
+        const updated = await res.json();
+        setApplications((prev) =>
+          prev.map((app) =>
+            app.id === id
+              ? {
+                  ...app,
+                  status: updated.status,
+                  version: updated.version,
+                  history: updated.history || app.history,
+                  updated_at: updated.updated_at,
+                }
+              : app,
+          ),
+        );
+      }
+    } catch {
+      alert('Network error updating application status.');
+    }
   };
 
-  const handleUpdateAppNotes = (id: string, notes: string) => {
-    setApplications((prev) =>
-      prev.map((app) =>
-        app.id === id ? { ...app, notes, updated_at: new Date().toISOString() } : app,
-      ),
-    );
+  const handleUpdateAppNotes = async (
+    id: string,
+    notes: string,
+    currentVersion?: number,
+  ) => {
+    if (isDemoMode) {
+      setApplications((prev) =>
+        prev.map((app) =>
+          app.id === id
+            ? {
+                ...app,
+                notes,
+                version: (app.version || 1) + 1,
+                updated_at: new Date().toISOString(),
+              }
+            : app,
+        ),
+      );
+      return;
+    }
+
+    if (!token) return;
+
+    try {
+      const res = await fetch(`/api/v1/users/applications/${id}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          notes,
+          expected_version: currentVersion,
+        }),
+      });
+
+      if (res.status === 409) {
+        alert(
+          'This application record was modified concurrently. Please refresh.',
+        );
+        return;
+      }
+
+      if (res.ok) {
+        const updated = await res.json();
+        setApplications((prev) =>
+          prev.map((app) =>
+            app.id === id
+              ? {
+                  ...app,
+                  notes: updated.notes,
+                  version: updated.version,
+                  history: updated.history || app.history,
+                  updated_at: updated.updated_at,
+                }
+              : app,
+          ),
+        );
+      }
+    } catch {
+      alert('Network error saving notes.');
+    }
   };
 
-  const handleRemoveApplication = (id: string) => {
+  const handleRemoveApplication = async (id: string) => {
+    const existing = applications.find((a) => a.id === id);
     setApplications((prev) => prev.filter((app) => app.id !== id));
+
+    if (!isDemoMode && token) {
+      try {
+        const res = await fetch(`/api/v1/users/applications/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok && res.status !== 404) {
+          throw new Error('Failed to remove application');
+        }
+      } catch {
+        if (existing) {
+          setApplications((prev) => [existing, ...prev]);
+        }
+        alert('Failed to delete application from server.');
+      }
+    }
   };
 
-  const handleToggleAlertActive = (id: string) => {
+  const handleToggleAlertActive = async (id: string) => {
     setAlerts((prev) =>
       prev.map((a) => (a.id === id ? { ...a, active: !a.active } : a)),
     );
+    if (!isDemoMode && token) {
+      try {
+        await fetch(`/api/v1/users/alerts/${id}/toggle`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // ignore
+      }
+    }
   };
 
-  const handleDeleteAlert = (id: string) => {
+  const handleDeleteAlert = async (id: string) => {
     setAlerts((prev) => prev.filter((a) => a.id !== id));
+    if (!isDemoMode && token) {
+      try {
+        await fetch(`/api/v1/users/alerts/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // ignore
+      }
+    }
   };
 
-  const handleCreateAlert = (newAlertData: Omit<AlertSubscription, 'id' | 'created_at'>) => {
-    const newAlert: AlertSubscription = {
-      ...newAlertData,
-      id: `alert_${Date.now()}`,
-      created_at: new Date().toISOString(),
-    };
-    setAlerts((prev) => [newAlert, ...prev]);
+  const handleCreateAlert = async (
+    newAlertData: Omit<AlertSubscription, 'id' | 'created_at'>,
+  ) => {
+    if (isDemoMode) {
+      const newAlert: AlertSubscription = {
+        ...newAlertData,
+        id: `alert_${Date.now()}`,
+        created_at: new Date().toISOString(),
+      };
+      setAlerts((prev) => [newAlert, ...prev]);
+      return;
+    }
+
+    if (!token) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/v1/users/alerts', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newAlertData),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setAlerts((prev) => [created, ...prev]);
+      }
+    } catch {
+      alert('Failed to create alert.');
+    }
+  };
+
+  const handleSaveCurrentSearch = async () => {
+    if (!isDemoMode && !user) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    const searchName = filters.q
+      ? `${filters.q} (${filters.location || 'All Locations'})`
+      : `${filters.location || 'All Locations'} Jobs`;
+
+    if (isDemoMode) {
+      const demoItem: SavedSearchItem = {
+        id: `search_${Date.now()}`,
+        name: searchName,
+        query: filters.q,
+        location: filters.location,
+        remote_eligibility: filters.remote,
+        seniority: filters.seniority,
+        job_type: filters.jobType,
+        alerts_enabled: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setSavedSearches((prev) => [demoItem, ...prev]);
+      setSavedSearchMsg('Search saved to demo workspace!');
+      setTimeout(() => setSavedSearchMsg(null), 3000);
+      return;
+    }
+
+    setIsSavingSearch(true);
+    try {
+      const res = await fetch('/api/v1/users/saved-searches', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: searchName,
+          query: filters.q || undefined,
+          location: filters.location || undefined,
+          remote_eligibility: filters.remote || undefined,
+          seniority: filters.seniority || undefined,
+          job_type: filters.jobType || undefined,
+          alerts_enabled: false,
+        }),
+      });
+
+      if (res.ok) {
+        const saved = await res.json();
+        setSavedSearches((prev) => [saved, ...prev]);
+        setSavedSearchMsg('Search query saved to your workspace!');
+        setTimeout(() => setSavedSearchMsg(null), 3000);
+      }
+    } catch {
+      alert('Failed to save search.');
+    } finally {
+      setIsSavingSearch(false);
+    }
+  };
+
+  const handleDeleteSavedSearch = async (searchId: string) => {
+    setSavedSearches((prev) => prev.filter((s) => s.id !== searchId));
+    if (!isDemoMode && token) {
+      try {
+        await fetch(`/api/v1/users/saved-searches/${searchId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // ignore
+      }
+    }
   };
 
   return (
@@ -451,9 +1047,9 @@ function CandidatePortalContent() {
       <Navbar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        savedCount={savedJobs.length}
-        applicationsCount={applications.length}
-        alertsCount={alerts.length}
+        savedCount={effectiveSavedJobs.length}
+        applicationsCount={effectiveApplications.length}
+        alertsCount={effectiveAlerts.length}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenFeedback={() => setIsFeedbackOpen(true)}
         onOpenDemoInfo={() => setIsDemoInfoOpen(true)}
@@ -589,7 +1185,19 @@ function CandidatePortalContent() {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={handleSaveCurrentSearch}
+                      disabled={isSavingSearch}
+                      id="save-search-btn"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+                      title="Save this search query to your workspace"
+                    >
+                      ★ {isSavingSearch ? 'Saving...' : 'Save Search'}
+                    </button>
+
                     {/* Mobile Filter Sheet Button (<768px) */}
                     <button
                       type="button"
@@ -612,6 +1220,23 @@ function CandidatePortalContent() {
                     )}
                   </div>
                 </div>
+
+                {savedSearchMsg && (
+                  <div
+                    style={{
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      color: 'var(--seekers-teal-400)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '0.4rem 0.75rem',
+                      fontSize: '0.8125rem',
+                      marginTop: '0.75rem',
+                    }}
+                    id="saved-search-toast"
+                  >
+                    {savedSearchMsg}
+                  </div>
+                )}
               </div>
 
               {/* Desktop Filters Bar (>=768px) */}
@@ -837,14 +1462,102 @@ function CandidatePortalContent() {
                     color: 'var(--seekers-text-primary)',
                   }}
                 >
-                  Saved Roles ({savedJobs.length})
+                  Saved Roles ({effectiveSavedJobs.length})
                 </h1>
                 <p style={{ fontSize: '0.875rem', color: 'var(--seekers-text-secondary)', marginTop: '0.2rem' }}>
                   Bookmarked listings saved for later review and application.
                 </p>
               </div>
 
-              {savedJobs.length === 0 ? (
+              {effectiveSavedSearches.length > 0 && (
+                <div
+                  style={{
+                    backgroundColor: 'var(--seekers-surface-card)',
+                    border: '1px solid var(--seekers-border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                  }}
+                  id="saved-searches-section"
+                >
+                  <h2
+                    style={{
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      color: 'var(--seekers-text-primary)',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    Saved Search Queries ({effectiveSavedSearches.length})
+                  </h2>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {effectiveSavedSearches.map((search) => (
+                      <div
+                        key={search.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          backgroundColor: 'var(--seekers-surface-raised)',
+                          border: '1px solid var(--seekers-border-muted)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '0.35rem 0.65rem',
+                          fontSize: '0.8125rem',
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFilters({
+                              q: search.query || '',
+                              location: search.location || '',
+                              remote: search.remote_eligibility || '',
+                              seniority: search.seniority || '',
+                              jobType: search.job_type || '',
+                              minSalary: 0,
+                              sort: 'recent',
+                            });
+                            setCurrentCursor(null);
+                            setSearchInput(search.query || '');
+                            setActiveTab('discover');
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--seekers-teal-400)',
+                            cursor: 'pointer',
+                            padding: 0,
+                            fontWeight: 500,
+                            textAlign: 'left',
+                          }}
+                          title="Run this search"
+                        >
+                          🔍 {search.name || search.query || 'Custom Search'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSavedSearch(search.id)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--seekers-text-muted)',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            padding: '0 0.15rem',
+                            lineHeight: 1,
+                          }}
+                          aria-label={`Delete saved search ${search.name}`}
+                          title="Delete saved search"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {effectiveSavedJobs.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-icon">★</div>
                   <div className="empty-title">You have no saved jobs</div>
@@ -861,7 +1574,7 @@ function CandidatePortalContent() {
                 </div>
               ) : (
                 <div>
-                  {savedJobs.map((job) => (
+                  {effectiveSavedJobs.map((job) => (
                     <JobCard
                       key={job.id}
                       job={job as JobDetail}
@@ -879,7 +1592,7 @@ function CandidatePortalContent() {
           {/* ─── TAB 3: APPLICATIONS WORKSPACE ──────────────────────────── */}
           {activeTab === 'applications' && (
             <ApplicationsWorkspace
-              applications={applications}
+              applications={effectiveApplications}
               onUpdateStatus={handleUpdateAppStatus}
               onUpdateNotes={handleUpdateAppNotes}
               onRemoveApplication={handleRemoveApplication}
@@ -891,7 +1604,7 @@ function CandidatePortalContent() {
           {/* ─── TAB 4: JOB ALERTS ──────────────────────────────────────── */}
           {activeTab === 'alerts' && (
             <AlertsWorkspace
-              alerts={alerts}
+              alerts={effectiveAlerts}
               onToggleActive={handleToggleAlertActive}
               onDeleteAlert={handleDeleteAlert}
               onCreateAlert={handleCreateAlert}

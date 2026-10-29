@@ -33,6 +33,11 @@ model User {
   exportRequests   AccountExportRequest[]
   resumes          ResumeDocument[]
   parseResults     ResumeParseResult[]
+  savedJobs        SavedJob[]
+  savedSearches    SavedSearch[]
+  applications     TrackedApplication[]
+  supportReports   SupportReport[]
+  alerts           AlertSubscription[]
 
   @@index([role])
 }
@@ -131,4 +136,119 @@ model ResumeParseResult {
 
   @@index([userId, status])
   @@index([documentId])
+}
+
+model SavedJob {
+  id              String   @id @default(uuid())
+  userId          String
+  jobId           String
+  titleSnapshot   String
+  companySnapshot String
+  locationSnapshot String?
+  jobUrlSnapshot  String?
+  salarySnapshot  String?
+  sourceSnapshot  String?
+  statusAtSave    String   @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@index([userId, createdAt])
+}
+
+model SavedSearch {
+  id                String   @id @default(uuid())
+  userId            String
+  name              String
+  query             String?
+  location          String?
+  remoteEligibility String?
+  seniority         String?
+  jobType           String?
+  minSalary         Float?
+  currency          String   @default("BDT")
+  payPeriod         String   @default("MONTHLY")
+  sort              String   @default("date_desc")
+  alertsEnabled     Boolean  @default(false)
+  alertFrequency    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model TrackedApplication {
+  id               String               @id @default(uuid())
+  userId           String
+  jobId            String
+  titleSnapshot    String
+  companySnapshot  String
+  locationSnapshot String?
+  jobUrlSnapshot   String?
+  salarySnapshot   String?
+  sourceSnapshot   String?
+  status           String               @default("APPLIED") // APPLIED, INTERVIEWING, OFFERED, REJECTED, WITHDRAWN
+  notes            String?
+  version          Int                  @default(1)
+  appliedAt        DateTime             @default(now())
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history          ApplicationHistory[]
+
+  @@unique([userId, jobId])
+  @@index([userId, status])
+  @@index([userId, updatedAt])
+}
+
+model ApplicationHistory {
+  id            String             @id @default(uuid())
+  applicationId String
+  userId        String
+  fromStatus    String?
+  toStatus      String
+  notesSnapshot String?
+  changedAt     DateTime           @default(now())
+  application   TrackedApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, changedAt])
+  @@index([userId])
+}
+
+model SupportReport {
+  id            String    @id @default(uuid())
+  referenceNum  String    @unique
+  userId        String?
+  jobId         String?
+  reportType    String    // EXPIRED_LISTING, BROKEN_LINK, INCORRECT_DATA, SPAM, OTHER
+  description   String
+  contactEmail  String?
+  status        String    @default("RECEIVED") // RECEIVED, IN_REVIEW, RESOLVED, DISMISSED
+  operatorNotes String?
+  resolvedAt    DateTime?
+  resolvedBy    String?
+  ipHash        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([referenceNum])
+}
+
+model AlertSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  query     String
+  location  String?
+  frequency String   @default("DAILY") // IMMEDIATE, DAILY, WEEKLY
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
 }

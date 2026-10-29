@@ -58,6 +58,36 @@ describe('UserService', () => {
     deleteActiveResume: jest.fn(),
     markActiveResumeDeleted: jest.fn(),
     findPendingCleanups: jest.fn().mockResolvedValue([]),
+    getComprehensiveUserData: jest.fn().mockResolvedValue({
+      savedJobs: [],
+      savedSearches: [],
+      applications: [],
+      supportReports: [],
+      alerts: [],
+    }),
+    saveJob: jest.fn(),
+    unsaveJob: jest.fn(),
+    findSavedJobs: jest.fn(),
+    createSavedSearch: jest.fn(),
+    findSavedSearches: jest.fn(),
+    findSavedSearchById: jest.fn(),
+    updateSavedSearch: jest.fn(),
+    deleteSavedSearch: jest.fn(),
+    createApplication: jest.fn(),
+    updateApplication: jest.fn(),
+    deleteApplication: jest.fn(),
+    findApplications: jest.fn(),
+    findApplicationById: jest.fn(),
+    getApplicationById: jest.fn(),
+    createSupportReport: jest.fn(),
+    findReportByIdOrRef: jest.fn(),
+    listSupportReports: jest.fn(),
+    triageReport: jest.fn(),
+    findApplicationById: jest.fn(),
+    createAlert: jest.fn(),
+    listAlerts: jest.fn(),
+    deleteAlert: jest.fn(),
+    toggleAlert: jest.fn(),
     updateDocumentCleanupStatus: jest.fn(),
     findActiveResume: jest.fn(),
     findActiveResumeWithLatestParse: jest.fn(),
@@ -413,6 +443,220 @@ describe('UserService', () => {
           'resumes/firebase-uid-123/doc-uuid-1.pdf',
         );
       });
+    });
+  });
+
+  describe('Saved Jobs Workspace', () => {
+    it('saves a job snapshot idempotently', async () => {
+      mockUserRepository.saveJob.mockResolvedValue({
+        id: 'sj-1',
+        userId: 'firebase-uid-123',
+        jobId: 'job-abc',
+        titleSnapshot: 'Backend Engineer',
+        companySnapshot: 'Tech Corp',
+        locationSnapshot: 'Remote',
+        jobUrlSnapshot: 'https://example.com/jobs/1',
+        salarySnapshot: '$100k',
+        createdAt: mockDate,
+      });
+
+      const res = await service.saveJob('firebase-uid-123', 'job-abc', {
+        title: 'Backend Engineer',
+        company: 'Tech Corp',
+        location: 'Remote',
+        job_url: 'https://example.com/jobs/1',
+        salary: '$100k',
+      });
+
+      expect(res.job_id).toBe('job-abc');
+      expect(res.title).toBe('Backend Engineer');
+      expect(mockUserRepository.saveJob).toHaveBeenCalled();
+    });
+
+    it('rejects unsafe javascript URLs in fallback snapshot', async () => {
+      await expect(
+        service.saveJob('firebase-uid-123', 'job-abc', {
+          title: 'Backend Engineer',
+          company: 'Tech Corp',
+          job_url: 'javascript:alert("exploit")',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('rejects saving a job that returns 404 in catalog', async () => {
+      jest
+        .spyOn(service, 'fetchCatalogJob')
+        .mockResolvedValue({ kind: 'NOT_FOUND' });
+      await expect(
+        service.saveJob('firebase-uid-123', 'non-existent-job', {
+          title: 'Phantom Job',
+          company: 'Phantom Corp',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('unsaves a job', async () => {
+      mockUserRepository.unsaveJob.mockResolvedValue(true);
+      const res = await service.unsaveJob('firebase-uid-123', 'job-abc');
+      expect(res.success).toBe(true);
+    });
+
+    it('returns paginated saved jobs with catalog verification', async () => {
+      mockUserRepository.findSavedJobs.mockResolvedValue({
+        items: [
+          {
+            id: 'sj-1',
+            jobId: 'job-abc',
+            titleSnapshot: 'Backend Engineer',
+            companySnapshot: 'Tech Corp',
+            locationSnapshot: 'Remote',
+            jobUrlSnapshot: null,
+            salarySnapshot: null,
+            createdAt: mockDate,
+          },
+        ],
+        nextCursor: null,
+        total: 1,
+      });
+
+      const res = await service.getSavedJobs('firebase-uid-123');
+      expect(res.items.length).toBe(1);
+      expect(res.items[0].id).toBe('job-abc');
+      expect(res.total_count).toBe(1);
+    });
+  });
+
+  describe('Saved Searches', () => {
+    it('creates a saved search query', async () => {
+      mockUserRepository.createSavedSearch.mockResolvedValue({
+        id: 'search-1',
+        userId: 'firebase-uid-123',
+        name: 'Remote Backend',
+        query: 'backend',
+        location: 'Remote',
+        remoteEligibility: 'FULLY_REMOTE',
+        seniority: 'SENIOR',
+        jobType: 'FULL_TIME',
+        minSalary: null,
+        currency: 'BDT',
+        payPeriod: 'MONTHLY',
+        sort: 'date_desc',
+        alertsEnabled: true,
+        alertFrequency: 'DAILY',
+        createdAt: mockDate,
+        updatedAt: mockDate,
+      });
+
+      const res = await service.createSavedSearch('firebase-uid-123', {
+        name: 'Remote Backend',
+        query: 'backend',
+        location: 'Remote',
+        remote_eligibility: 'FULLY_REMOTE',
+        seniority: 'SENIOR',
+        job_type: 'FULL_TIME',
+        alerts_enabled: true,
+        alert_frequency: 'DAILY',
+      });
+
+      expect(res.id).toBe('search-1');
+      expect(res.name).toBe('Remote Backend');
+      expect(res.query).toBe('backend');
+    });
+  });
+
+  describe('Applications Workspace & History', () => {
+    it('tracks an application and creates initial history entry', async () => {
+      mockUserRepository.createApplication.mockResolvedValue({
+        id: 'app-1',
+        userId: 'firebase-uid-123',
+        jobId: 'job-abc',
+        titleSnapshot: 'Backend Engineer',
+        companySnapshot: 'Tech Corp',
+        locationSnapshot: 'Remote',
+        jobUrlSnapshot: null,
+        salarySnapshot: null,
+        status: 'APPLIED',
+        notes: 'Applied via company portal',
+        version: 1,
+        appliedAt: mockDate,
+        updatedAt: mockDate,
+        history: [
+          {
+            id: 'h-1',
+            applicationId: 'app-1',
+            status: 'APPLIED',
+            notes: 'Application tracked',
+            changedAt: mockDate,
+          },
+        ],
+      });
+
+      const res = await service.trackApplication('firebase-uid-123', {
+        job_id: 'job-abc',
+        status: 'APPLIED',
+        notes: 'Applied via company portal',
+        title: 'Backend Engineer',
+        company: 'Tech Corp',
+      });
+
+      expect(res.id).toBe('app-1');
+      expect(res.status).toBe('APPLIED');
+      expect(res.version).toBe(1);
+      expect(res.history.length).toBe(1);
+    });
+
+    it('detects concurrency conflict on stale version update', async () => {
+      mockUserRepository.updateApplication.mockRejectedValue(
+        new (class ConcurrencyConflict extends Error {
+          code = 'CONCURRENCY_CONFLICT';
+        })('Application was modified concurrently'),
+      );
+
+      await expect(
+        service.updateApplication('firebase-uid-123', 'app-1', {
+          status: 'INTERVIEWING',
+          expected_version: 1,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('Reports and Support Triage', () => {
+    it('submits a support report with durable reference', async () => {
+      mockUserRepository.createSupportReport.mockResolvedValue({
+        id: 'rep-uuid-1',
+        referenceNum: 'RPT-20261029-ABCD',
+        userId: 'firebase-uid-123',
+        jobId: 'job-123',
+        reportType: 'BROKEN_LINK',
+        description: 'The apply link goes to a dead domain.',
+        contactEmail: 'user@example.com',
+        ipHash: 'hash123',
+        status: 'OPEN',
+        operatorNotes: null,
+        createdAt: mockDate,
+        updatedAt: mockDate,
+        resolvedAt: null,
+      });
+
+      const res = await service.submitReport({
+        report_type: 'BROKEN_LINK',
+        description: 'The apply link goes to a dead domain.',
+        job_id: 'job-123',
+        contact_email: 'user@example.com',
+        userId: 'firebase-uid-123',
+      });
+
+      expect(res.reference_num).toBe('RPT-20261029-ABCD');
+      expect(res.status).toBe('OPEN');
+    });
+
+    it('rejects foreign candidate reading another users report', async () => {
+      mockUserRepository.findReportByIdOrRef.mockResolvedValue(null);
+
+      await expect(
+        service.getReport('RPT-20261029-ABCD', 'firebase-uid-123', false),
+      ).rejects.toThrow();
     });
   });
 });

@@ -3,8 +3,10 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Param,
+  Query,
   Req,
   Res,
   Body,
@@ -26,6 +28,29 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserService } from './user.service';
 import { validateUpdateProfileInput } from './dto/update-profile.dto';
 import { validateDeleteAccountInput } from './dto/delete-account.dto';
+import type {
+  JobSnapshotInput,
+  CreateSavedSearchDto,
+  UpdateSavedSearchDto,
+  TrackApplicationDto,
+  UpdateApplicationDto,
+  CreateAlertDto,
+} from './dto/workspace.dto';
+
+function parseSafeLimit(
+  limit?: string,
+  defaultLimit = 20,
+  maxLimit = 100,
+): number {
+  if (!limit) return defaultLimit;
+  const parsed = Number(limit);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new BadRequestException(
+      'Query parameter "limit" must be a positive integer.',
+    );
+  }
+  return Math.min(parsed, maxLimit);
+}
 
 @Controller('users')
 export class UserController {
@@ -336,5 +361,310 @@ export class UserController {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');
     return res.send(buffer);
+  }
+
+  // ─── P09 SAVED JOBS ────────────────────────────────────────────────────────
+
+  /**
+   * GET /users/saved-jobs
+   * Lists candidate saved jobs with pagination and live catalog availability.
+   */
+  @Get('saved-jobs')
+  @UseGuards(FirebaseAuthGuard)
+  async getSavedJobs(
+    @Req() request: AuthenticatedRequest,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    const parsedLimit = parseSafeLimit(limit, 20);
+    return this.userService.getSavedJobs(uid, {
+      limit: parsedLimit,
+      cursor,
+    });
+  }
+
+  /**
+   * POST /users/saved-jobs/:jobId
+   * Authenticated save of a canonical job listing.
+   */
+  @Post('saved-jobs/:jobId')
+  @HttpCode(201)
+  @UseGuards(FirebaseAuthGuard)
+  async saveJob(
+    @Req() request: AuthenticatedRequest,
+    @Param('jobId') jobId: string,
+    @Body() body?: JobSnapshotInput,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.saveJob(uid, jobId, body);
+  }
+
+  /**
+   * DELETE /users/saved-jobs/:jobId
+   * Authenticated unsave of a job listing.
+   */
+  @Delete('saved-jobs/:jobId')
+  @HttpCode(204)
+  @UseGuards(FirebaseAuthGuard)
+  async unsaveJob(
+    @Req() request: AuthenticatedRequest,
+    @Param('jobId') jobId: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    await this.userService.unsaveJob(uid, jobId);
+  }
+
+  // ─── P09 SAVED SEARCHES ──────────────────────────────────────────────────
+
+  /**
+   * GET /users/saved-searches
+   * Lists candidate saved searches.
+   */
+  @Get('saved-searches')
+  @UseGuards(FirebaseAuthGuard)
+  async getSavedSearches(
+    @Req() request: AuthenticatedRequest,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    const parsedLimit = parseSafeLimit(limit, 20);
+    return this.userService.getSavedSearches(uid, {
+      limit: parsedLimit,
+      cursor,
+    });
+  }
+
+  /**
+   * POST /users/saved-searches
+   * Creates a saved search with query and filter criteria.
+   */
+  @Post('saved-searches')
+  @HttpCode(201)
+  @UseGuards(FirebaseAuthGuard)
+  async createSavedSearch(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: CreateSavedSearchDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.createSavedSearch(uid, body);
+  }
+
+  /**
+   * PUT /users/saved-searches/:id
+   * Updates an existing saved search.
+   */
+  @Put('saved-searches/:id')
+  @UseGuards(FirebaseAuthGuard)
+  async updateSavedSearch(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: UpdateSavedSearchDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.updateSavedSearch(uid, id, body);
+  }
+
+  /**
+   * DELETE /users/saved-searches/:id
+   * Removes a saved search.
+   */
+  @Delete('saved-searches/:id')
+  @HttpCode(204)
+  @UseGuards(FirebaseAuthGuard)
+  async deleteSavedSearch(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    await this.userService.deleteSavedSearch(uid, id);
+  }
+
+  // ─── P09 TRACKED APPLICATIONS ────────────────────────────────────────────
+
+  /**
+   * GET /users/applications
+   * Lists candidate tracked applications with optional status filter.
+   */
+  @Get('applications')
+  @UseGuards(FirebaseAuthGuard)
+  async getApplications(
+    @Req() request: AuthenticatedRequest,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    const parsedLimit = parseSafeLimit(limit, 50);
+    return this.userService.getApplications(uid, {
+      status,
+      limit: parsedLimit,
+      cursor,
+    });
+  }
+
+  /**
+   * POST /users/applications
+   * Tracks an application with candidate statement of status, notes, and snapshots.
+   */
+  @Post('applications')
+  @HttpCode(201)
+  @UseGuards(FirebaseAuthGuard)
+  async trackApplication(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: TrackApplicationDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.trackApplication(uid, body);
+  }
+
+  /**
+   * GET /users/applications/:id
+   * Retrieves single tracked application detail.
+   */
+  @Get('applications/:id')
+  @UseGuards(FirebaseAuthGuard)
+  async getApplicationById(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.getApplicationById(uid, id);
+  }
+
+  /**
+   * PATCH /users/applications/:id
+   * Updates application status or notes with optimistic concurrency check.
+   */
+  @Patch('applications/:id')
+  @UseGuards(FirebaseAuthGuard)
+  async updateApplication(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: UpdateApplicationDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.updateApplication(uid, id, body);
+  }
+
+  /**
+   * DELETE /users/applications/:id
+   * Removes a tracked application.
+   */
+  @Delete('applications/:id')
+  @HttpCode(204)
+  @UseGuards(FirebaseAuthGuard)
+  async deleteApplication(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    await this.userService.deleteApplication(uid, id);
+  }
+
+  // ─── P09 ALERTS ──────────────────────────────────────────────────────────
+
+  /**
+   * GET /users/alerts
+   * Lists candidate job alert subscriptions.
+   */
+  @Get('alerts')
+  @UseGuards(FirebaseAuthGuard)
+  async listAlerts(@Req() request: AuthenticatedRequest) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.listAlerts(uid);
+  }
+
+  /**
+   * POST /users/alerts
+   * Creates a candidate job alert subscription.
+   */
+  @Post('alerts')
+  @HttpCode(201)
+  @UseGuards(FirebaseAuthGuard)
+  async createAlert(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: CreateAlertDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.createAlert(uid, body);
+  }
+
+  /**
+   * DELETE /users/alerts/:id
+   * Removes a candidate job alert subscription.
+   */
+  @Delete('alerts/:id')
+  @HttpCode(204)
+  @UseGuards(FirebaseAuthGuard)
+  async deleteAlert(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    await this.userService.deleteAlert(uid, id);
+  }
+
+  /**
+   * PATCH /users/alerts/:id/toggle
+   * Toggles alert active/paused state.
+   */
+  @Patch('alerts/:id/toggle')
+  @UseGuards(FirebaseAuthGuard)
+  async toggleAlert(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.toggleAlert(uid, id);
   }
 }

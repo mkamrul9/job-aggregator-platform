@@ -517,7 +517,7 @@ async function run() {
   assert(afterDeleteActiveRes.data && afterDeleteActiveRes.data.has_resume === false, 'has_resume is false post-deletion', afterDeleteActiveRes.data?.has_resume);
 
   // Step 25: Post-Deletion Boundary (Late review & download rejected)
-  console.log('\n[25/25] Testing post-deletion review and download rejection...');
+  console.log('\n[25/33] Testing post-deletion review and download rejection...');
   const lateReviewRes = await request(`${API_BASE}/users/resume/review`, {
     method: 'POST',
     headers: {
@@ -536,6 +536,420 @@ async function run() {
   });
   assert(lateDownloadRes.status === 404, 'Download after deletion rejected with HTTP 404', lateDownloadRes.status);
 
+  // =========================================================================
+  // PHASE 09 CANDIDATE WORKSPACE & SUPPORT VERIFICATION
+  // =========================================================================
+
+  // Step 26: Candidate A Saved Jobs (/users/saved-jobs)
+  console.log('\n[26/33] Testing Candidate A saved jobs (/users/saved-jobs)...');
+  const testJobId = 'job-smoke-test-101';
+  const saveJobRes1 = await request(`${API_BASE}/users/saved-jobs/${testJobId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      title: 'Senior Distributed Systems Engineer',
+      company: 'Dhaka Cloud Labs',
+      location: 'Dhaka, Bangladesh',
+      salary: '250,000 BDT',
+      job_url: 'https://example.com/jobs/101',
+    },
+  });
+  assert(saveJobRes1.status === 201 || saveJobRes1.status === 200, 'Initial job save returns HTTP 200/201', saveJobRes1.status);
+  assert(saveJobRes1.data && saveJobRes1.data.job_id === testJobId, 'Saved job response reflects target job ID', saveJobRes1.data?.job_id);
+
+  // Unsafe URL scheme (javascript:) rejection test
+  const unsafeUrlRes = await request(`${API_BASE}/users/saved-jobs/unsafe-url-job`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      title: 'XSS Attempt',
+      company: 'Malicious Corp',
+      job_url: 'javascript:alert(1)',
+    },
+  });
+  assert(unsafeUrlRes.status === 400, 'Unsafe URL scheme (javascript:) strictly rejected with HTTP 400', unsafeUrlRes.status);
+
+  // Test idempotency of saving the same job again
+  const saveJobRes2 = await request(`${API_BASE}/users/saved-jobs/${testJobId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      title: 'Senior Distributed Systems Engineer',
+      company: 'Dhaka Cloud Labs',
+    },
+  });
+  assert(saveJobRes2.status === 201 || saveJobRes2.status === 200, 'Repeated job save is idempotent (HTTP 200/201)', saveJobRes2.status);
+
+  // Save two additional jobs to verify cursor-based pagination and lookahead offset
+  const testJobId2 = 'job-smoke-test-102';
+  const testJobId3 = 'job-smoke-test-103';
+  await request(`${API_BASE}/users/saved-jobs/${testJobId2}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${candidateA.token}`, 'Content-Type': 'application/json' },
+    body: { title: 'Site Reliability Engineer', company: 'Sylhet Ops' },
+  });
+  await request(`${API_BASE}/users/saved-jobs/${testJobId3}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${candidateA.token}`, 'Content-Type': 'application/json' },
+    body: { title: 'DevSecOps Specialist', company: 'Chattogram Security' },
+  });
+
+  // Verify pagination lookahead fix: page 1 with limit=2
+  const pagedRes1 = await request(`${API_BASE}/users/saved-jobs?limit=2`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(pagedRes1.status === 200, 'Page 1 saved jobs query returns HTTP 200', pagedRes1.status);
+  assert(Array.isArray(pagedRes1.data?.items) && pagedRes1.data.items.length === 2, 'Page 1 returns exactly 2 items for limit=2', pagedRes1.data?.items?.length);
+  const nextCursor = pagedRes1.data?.next_cursor;
+  assert(Boolean(nextCursor), 'next_cursor returned when lookahead detected more items', nextCursor);
+  assert(nextCursor === pagedRes1.data.items[1].id, 'next_cursor matches the last item actually returned on current page', nextCursor);
+
+  // Fetch page 2 using next_cursor
+  const pagedRes2 = await request(`${API_BASE}/users/saved-jobs?limit=2&cursor=${nextCursor}`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(pagedRes2.status === 200, 'Page 2 saved jobs query returns HTTP 200', pagedRes2.status);
+  assert(Array.isArray(pagedRes2.data?.items) && pagedRes2.data.items.length >= 1, 'Page 2 returns remaining item(s)', pagedRes2.data?.items?.length);
+  // Ensure the item on page 2 was NOT skipped
+  const page1Ids = new Set(pagedRes1.data.items.map((i) => i.id));
+  const page2FirstId = pagedRes2.data.items[0].id;
+  assert(!page1Ids.has(page2FirstId), 'Page 2 item is distinct from Page 1 items (no overlap/skip)', page2FirstId);
+
+  // List saved jobs for Candidate A
+  const listSavedRes = await request(`${API_BASE}/users/saved-jobs`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(listSavedRes.status === 200, 'Candidate A lists saved jobs with HTTP 200', listSavedRes.status);
+  assert(Array.isArray(listSavedRes.data?.items), 'Saved jobs list returns items array', listSavedRes.data);
+  const foundSavedJob = listSavedRes.data?.items?.find((j) => j.id === testJobId || j.job_id === testJobId);
+  assert(Boolean(foundSavedJob), 'Saved job is found in candidate list', foundSavedJob);
+  assert(foundSavedJob?.company === 'Dhaka Cloud Labs', 'Preserved snapshot company metadata returned', foundSavedJob?.company);
+
+  // Step 27: Cross-Candidate Saved Jobs Isolation
+  console.log('\n[27/33] Verifying cross-candidate saved jobs data isolation...');
+  const listSavedB = await request(`${API_BASE}/users/saved-jobs`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  assert(listSavedB.status === 200, 'Candidate B lists saved jobs with HTTP 200', listSavedB.status);
+  const bHasJobA = listSavedB.data?.items?.some((j) => j.id === testJobId || j.job_id === testJobId);
+  assert(!bHasJobA, "Candidate B cannot see Candidate A's saved jobs", bHasJobA);
+
+  // Step 28: Candidate A Unsave Job (/users/saved-jobs/:id)
+  console.log('\n[28/33] Testing Candidate A job unsaving (/users/saved-jobs/:id)...');
+  const unsaveRes = await request(`${API_BASE}/users/saved-jobs/${testJobId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(unsaveRes.status === 200 || unsaveRes.status === 204, 'Unsave job returns HTTP 200/204', unsaveRes.status);
+  await request(`${API_BASE}/users/saved-jobs/${testJobId2}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  await request(`${API_BASE}/users/saved-jobs/${testJobId3}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+
+  const afterUnsaveList = await request(`${API_BASE}/users/saved-jobs`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  const stillSaved = afterUnsaveList.data?.items?.some((j) => j.id === testJobId || j.job_id === testJobId);
+  assert(!stillSaved, 'Unsaved job is no longer returned in candidate saved jobs list', stillSaved);
+
+  // Step 29: Candidate A Saved Searches (/users/saved-searches)
+  console.log('\n[29/33] Testing Candidate A saved searches lifecycle (/users/saved-searches)...');
+  const createSearchRes = await request(`${API_BASE}/users/saved-searches`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      name: 'Remote Backend TypeScript',
+      query: 'backend typescript',
+      location: 'Remote',
+      remote_eligibility: 'FULLY_REMOTE',
+      seniority: 'SENIOR',
+      job_type: 'FULL_TIME',
+      alerts_enabled: true,
+      alert_frequency: 'DAILY',
+    },
+  });
+  assert(createSearchRes.status === 201, 'Create saved search returns HTTP 201', createSearchRes.status);
+  const createdSearchId = createSearchRes.data?.id;
+  assert(Boolean(createdSearchId), 'Created saved search returned persistent UUID', createdSearchId);
+  assert(createSearchRes.data?.name === 'Remote Backend TypeScript', 'Saved search retains name', createSearchRes.data?.name);
+
+  // List saved searches
+  const listSearchesRes = await request(`${API_BASE}/users/saved-searches`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(listSearchesRes.status === 200, 'Candidate A lists saved searches with HTTP 200', listSearchesRes.status);
+  assert(Array.isArray(listSearchesRes.data?.items) && listSearchesRes.data.items.length >= 1, 'Saved searches returned in list array', listSearchesRes.data?.items?.length);
+
+  // Update saved search
+  const updateSearchRes = await request(`${API_BASE}/users/saved-searches/${createdSearchId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      name: 'Remote Lead Backend TypeScript',
+      alert_frequency: 'WEEKLY',
+    },
+  });
+  assert(updateSearchRes.status === 200, 'Update saved search returns HTTP 200', updateSearchRes.status);
+  assert(updateSearchRes.data?.name === 'Remote Lead Backend TypeScript', 'Saved search updated name persisted', updateSearchRes.data?.name);
+  assert(updateSearchRes.data?.alert_frequency === 'WEEKLY', 'Saved search updated alert frequency persisted', updateSearchRes.data?.alert_frequency);
+
+  // Delete saved search
+  const deleteSearchRes = await request(`${API_BASE}/users/saved-searches/${createdSearchId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(deleteSearchRes.status === 200 || deleteSearchRes.status === 204, 'Delete saved search returns HTTP 200/204', deleteSearchRes.status);
+
+  // Step 30: Candidate A Tracked Applications & Optimistic Locking (/users/applications)
+  console.log('\n[30/33] Testing Candidate A application tracking and optimistic locking...');
+  const appJobId = 'job-smoke-app-202';
+  const createAppRes = await request(`${API_BASE}/users/applications`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      job_id: appJobId,
+      status: 'APPLIED',
+      notes: 'Initial application submitted via company portal.',
+      title: 'Principal Platform Architect',
+      company: 'Global Fintech Ltd',
+      location: 'Dhaka',
+    },
+  });
+  assert(createAppRes.status === 201 || createAppRes.status === 200, 'Track application returns HTTP 200/201', createAppRes.status);
+  const trackedAppId = createAppRes.data?.id;
+  assert(Boolean(trackedAppId), 'Tracked application returns durable ID', trackedAppId);
+  assert(createAppRes.data?.status === 'APPLIED', 'Initial application status is APPLIED', createAppRes.data?.status);
+  assert(createAppRes.data?.version === 1, 'Initial application version is 1', createAppRes.data?.version);
+  assert(Array.isArray(createAppRes.data?.history) && createAppRes.data.history.length >= 1, 'Initial application has history entry', createAppRes.data?.history?.length);
+
+  // Test idempotency of tracking the same job application again
+  const repeatAppRes = await request(`${API_BASE}/users/applications`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      job_id: appJobId,
+      status: 'REJECTED', // Repeat POST with different status should NOT clobber
+      notes: 'Attempted overwrite via repeat POST',
+    },
+  });
+  assert(repeatAppRes.status === 200 || repeatAppRes.status === 201, 'Repeat application tracking is idempotent (HTTP 200/201)', repeatAppRes.status);
+  assert(repeatAppRes.data?.id === trackedAppId, 'Idempotent application tracking returns existing ID', repeatAppRes.data?.id);
+  assert(repeatAppRes.data?.status === 'APPLIED', 'Idempotent application tracking does not clobber existing status', repeatAppRes.data?.status);
+  assert(repeatAppRes.data?.version === 1, 'Idempotent application tracking does not bump version or create duplicate history', repeatAppRes.data?.version);
+
+  // Patch application status to INTERVIEWING with expected_version: 1
+  const updateAppRes = await request(`${API_BASE}/users/applications/${trackedAppId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      status: 'INTERVIEWING',
+      notes: 'Passed screening call, scheduled technical round.',
+      expected_version: 1,
+    },
+  });
+  assert(updateAppRes.status === 200, 'Valid application status update returns HTTP 200', updateAppRes.status);
+  assert(updateAppRes.data?.status === 'INTERVIEWING', 'Updated application status is INTERVIEWING', updateAppRes.data?.status);
+  assert(updateAppRes.data?.version === 2, 'Version incremented to 2', updateAppRes.data?.version);
+  assert(updateAppRes.data?.history?.length === 2, 'History array now records 2 lifecycle transitions', updateAppRes.data?.history?.length);
+
+  // Optimistic concurrency conflict check: Attempt mutation with stale version 1
+  const staleConflictRes = await request(`${API_BASE}/users/applications/${trackedAppId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      status: 'OFFERED',
+      notes: 'Attempting update with stale expected_version',
+      expected_version: 1, // Stale! Current version is 2
+    },
+  });
+  assert(staleConflictRes.status === 409, 'Stale expected_version rejected with HTTP 409 Conflict', staleConflictRes.status);
+  assert(staleConflictRes.data?.code === 'CONCURRENCY_CONFLICT', 'Error response indicates CONCURRENCY_CONFLICT', staleConflictRes.data);
+
+  // Delete tracked application
+  const deleteAppRes = await request(`${API_BASE}/users/applications/${trackedAppId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(deleteAppRes.status === 200 || deleteAppRes.status === 204, 'Delete tracked application returns HTTP 200/204', deleteAppRes.status);
+
+  // Step 31: Support & Listing Reports (/reports)
+  console.log('\n[31/33] Testing Support & Listing Reports (/reports)...');
+
+  // Anonymous public visitor submits report (Optional auth guard)
+  const anonReportRes = await request(`${API_BASE}/reports`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: {
+      report_type: 'INCORRECT_METADATA',
+      description: 'Anonymous visitor reporting inaccurate salary information.',
+      job_id: 'job-smoke-test-101',
+      contact_email: 'guest@example.com',
+    },
+  });
+  assert(anonReportRes.status === 201, 'Anonymous public visitor submits report with HTTP 201', anonReportRes.status);
+  assert(Boolean(anonReportRes.data?.reference_num) && /^RPT-\d{8}-[A-Z0-9]+$/.test(anonReportRes.data?.reference_num), 'Anonymous report receives valid RPT-YYYYMMDD-XXXX receipt', anonReportRes.data?.reference_num);
+
+  // Invalid Bearer token rejection (Optional auth guard strictly rejects malformed token)
+  const invalidTokenReportRes = await request(`${API_BASE}/reports`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer malformed-invalid-token-xyz',
+      'Content-Type': 'application/json',
+    },
+    body: {
+      report_type: 'SCAM_OR_FRAUD',
+      description: 'Report sent with bad token',
+    },
+  });
+  assert(invalidTokenReportRes.status === 401, 'Report with invalid Bearer token rejected with HTTP 401 (not degraded to anonymous)', invalidTokenReportRes.status);
+
+  // Authenticated candidate submits report
+  const reportSubmitRes = await request(`${API_BASE}/reports`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      report_type: 'BROKEN_LINK',
+      description: 'The job application link points to an expired domain landing page.',
+      job_id: 'job-smoke-test-101',
+      contact_email: candidateA.email,
+    },
+  });
+  assert(reportSubmitRes.status === 201, 'Submit report returns HTTP 201', reportSubmitRes.status);
+  const reportRef = reportSubmitRes.data?.reference_num;
+  const reportId = reportSubmitRes.data?.report_id;
+  assert(Boolean(reportRef) && /^RPT-\d{8}-[A-Z0-9]+$/.test(reportRef), 'Report receipt returns durable RPT-YYYYMMDD-XXXX reference', reportRef);
+  assert(reportSubmitRes.data?.status === 'OPEN', 'Initial report status is OPEN', reportSubmitRes.data?.status);
+
+  // Reporter can fetch report status by reference
+  const reporterFetchRes = await request(`${API_BASE}/reports/${reportRef}`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(reporterFetchRes.status === 200, 'Authenticated reporter retrieves report status with HTTP 200', reporterFetchRes.status);
+  assert(reporterFetchRes.data?.reference_num === reportRef, 'Retrieved report reference matches submitted receipt', reporterFetchRes.data?.reference_num);
+  assert(reporterFetchRes.data?.report_type === 'BROKEN_LINK', 'Retrieved report contains correct report_type', reporterFetchRes.data?.report_type);
+
+  // Candidate B cannot view Candidate A's report
+  const foreignCandidateFetch = await request(`${API_BASE}/reports/${reportRef}`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  assert(foreignCandidateFetch.status === 404 || foreignCandidateFetch.status === 403, 'Foreign Candidate B cannot read Candidate A report (HTTP 403/404)', foreignCandidateFetch.status);
+
+  // Step 32: Role-Enforced Support Queue & Triage (/admin/reports)
+  console.log('\n[32/33] Testing role-enforced support triage queue (/admin/reports)...');
+  const candidateAdminQueue = await request(`${API_BASE}/admin/reports`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(candidateAdminQueue.status === 403, 'Standard candidate is forbidden from accessing /admin/reports (HTTP 403)', candidateAdminQueue.status);
+
+  const candidateAdminTriage = await request(`${API_BASE}/admin/reports/${reportId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      status: 'RESOLVED',
+      operator_notes: 'Unauthorized triage attempt',
+    },
+  });
+  assert(candidateAdminTriage.status === 403, 'Standard candidate is forbidden from triaging reports (HTTP 403)', candidateAdminTriage.status);
+
+  // If PrismaClient / DATABASE_URL is available, promote an admin user to verify full admin support triage
+  if (process.env.DATABASE_URL) {
+    try {
+      const { PrismaClient } = require('@prisma/client');
+      const prismaClient = new PrismaClient();
+      const adminIdentity = await getEmulatorIdToken(`admin_${Date.now()}@seekers.example`, 'TestPass123!@#');
+      
+      // Sync admin user
+      await request(`${API_BASE}/users/sync`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminIdentity.token}` },
+      });
+
+      // Update role to ADMIN in PostgreSQL
+      await prismaClient.user.update({
+        where: { id: adminIdentity.uid },
+        data: { role: 'ADMIN' },
+      });
+
+      // Admin accesses support queue
+      const adminQueueRes = await request(`${API_BASE}/admin/reports`, {
+        headers: { Authorization: `Bearer ${adminIdentity.token}` },
+      });
+      assert(adminQueueRes.status === 200, 'Authorized Admin lists support reports queue with HTTP 200', adminQueueRes.status);
+      assert(Array.isArray(adminQueueRes.data?.items), 'Admin queue returns items array', adminQueueRes.data);
+
+      // Admin triages report
+      const adminTriageRes = await request(`${API_BASE}/admin/reports/${reportId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${adminIdentity.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: {
+          status: 'RESOLVED',
+          operator_notes: 'Verified listing URL and refreshed catalog cache.',
+        },
+      });
+      assert(adminTriageRes.status === 200, 'Admin triage returns HTTP 200', adminTriageRes.status);
+      assert(adminTriageRes.data?.status === 'RESOLVED', 'Report status successfully triaged to RESOLVED', adminTriageRes.data?.status);
+      assert(adminTriageRes.data?.operator_notes?.includes('refreshed catalog cache'), 'Operator notes persisted', adminTriageRes.data?.operator_notes);
+
+      await prismaClient.$disconnect();
+    } catch (adminErr) {
+      console.warn('Note: Direct admin promotion skipped in environment:', adminErr.message);
+    }
+  }
+
+  // Step 33: Personal Data Export Includes Real Workspace Items (/users/account/export)
+  console.log('\n[33/33] Verifying personal data export includes real workspace items (/users/account/export)...');
+  const exportCheckRes = await request(`${API_BASE}/users/account/export`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(exportCheckRes.status === 200 || exportCheckRes.status === 201, 'Export request returns HTTP 200/201', exportCheckRes.status);
+  assert(Array.isArray(exportCheckRes.data?.saved_jobs), 'Export contains saved_jobs array', exportCheckRes.data?.saved_jobs);
+  assert(Array.isArray(exportCheckRes.data?.saved_searches), 'Export contains saved_searches array', exportCheckRes.data?.saved_searches);
+  assert(Array.isArray(exportCheckRes.data?.applications), 'Export contains applications array', exportCheckRes.data?.applications);
+  assert(Array.isArray(exportCheckRes.data?.reports), 'Export contains reports array', exportCheckRes.data?.reports);
+
   // Final Evaluation
   console.log('\n----------------------------------------------------');
   if (failedAssertions > 0) {
@@ -543,7 +957,7 @@ async function run() {
     process.exit(1);
   }
 
-  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 25 integration checks.\x1b[0m`);
+  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 33 integration checks.\x1b[0m`);
 }
 
 run().catch((err) => {

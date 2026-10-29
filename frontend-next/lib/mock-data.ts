@@ -35,13 +35,37 @@ export interface JobDetail extends JobSummary {
   qualifications?: string[];
 }
 
+export interface ApplicationHistoryEntry {
+  id?: string;
+  status: string;
+  notes?: string | null;
+  changed_at: string;
+}
+
 export interface TrackedApplication {
   id: string;
   job_id: string;
   job_summary: JobSummary;
   status: 'APPLIED' | 'INTERVIEWING' | 'OFFERED' | 'REJECTED' | 'WITHDRAWN';
   notes: string;
+  version?: number;
+  history?: ApplicationHistoryEntry[];
   applied_at: string;
+  updated_at: string;
+}
+
+export interface SavedSearchItem {
+  id: string;
+  name: string;
+  query?: string;
+  location?: string;
+  remote_eligibility?: string;
+  seniority?: string;
+  job_type?: string;
+  min_salary?: number;
+  alerts_enabled: boolean;
+  alert_frequency?: string;
+  created_at: string;
   updated_at: string;
 }
 

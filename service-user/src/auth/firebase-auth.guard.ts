@@ -87,3 +87,66 @@ export class FirebaseAuthGuard implements CanActivate {
     }
   }
 }
+
+/**
+ * Optional Firebase Auth Guard.
+ * If no Authorization header is present, allows request as anonymous (request.user undefined).
+ * If Authorization header is present, strictly validates Bearer token:
+ * - valid token: populates request.user and allows request
+ * - invalid/expired token: throws 401 Unauthorized (does not silently degrade to anonymous)
+ */
+@Injectable()
+export class OptionalFirebaseAuthGuard implements CanActivate {
+  private readonly logger = new Logger(OptionalFirebaseAuthGuard.name);
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const authHeader = request.headers.authorization;
+
+    if (!authHeader) {
+      // Anonymous request allowed under public policy
+      return true;
+    }
+
+    if (typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException({
+        code: 'INVALID_AUTHORIZATION_HEADER',
+        message: 'Authorization header must use Bearer scheme.',
+      });
+    }
+
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      throw new UnauthorizedException({
+        code: 'EMPTY_BEARER_TOKEN',
+        message: 'Bearer token value cannot be empty.',
+      });
+    }
+
+    try {
+      const auth = getFirebaseAuth();
+      const decodedToken = await auth.verifyIdToken(token, true);
+      request.user = decodedToken;
+      return true;
+    } catch (err: unknown) {
+      const firebaseError = err as { code?: string; message?: string };
+      const code = firebaseError.code || 'INVALID_TOKEN';
+
+      if (code === 'auth/id-token-expired') {
+        throw new UnauthorizedException({
+          code: 'TOKEN_EXPIRED',
+          message:
+            'Authentication session expired. Please refresh your session.',
+        });
+      }
+
+      this.logger.debug(
+        `Optional auth verification failed: ${firebaseError.message || code}`,
+      );
+      throw new UnauthorizedException({
+        code: 'INVALID_AUTHENTICATION_TOKEN',
+        message: 'Invalid or forged authentication token.',
+      });
+    }
+  }
+}

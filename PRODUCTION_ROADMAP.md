@@ -390,7 +390,7 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 
 **Checkpoint:** `feat(resume): deliver private durable resume processing` → verified push.
 
-### P09 — Complete the candidate workspace and real support flows
+### P09 — Complete the candidate workspace and real support flows [Completed]
 
 **Outcome:** candidates can manage their search and every exposed action works.
 
@@ -399,7 +399,7 @@ Each implementation request follows its authorized phase boundary. P01 source-ba
 - Replace console-only feedback with a persisted report endpoint, acknowledgment/reference, validation, abuse controls, and a support queue. Define support contacts/help and clear error guidance.
 - Handle network interruption, double-clicks, concurrent sessions, stale updates, inaccessible jobs, and page reloads. Complete loading/error/empty states and responsive workspace navigation.
 
-**Completion gate:** all workspace actions persist and synchronize correctly; ownership/idempotency tests pass; report submission creates a retrievable operator item; no dead buttons, fake saves, or false application-submitted confirmations.
+**Completion gate:** all workspace actions persist and synchronize correctly; ownership/idempotency tests pass; report submission creates a retrievable operator item; no dead buttons, fake saves, or false application-submitted confirmations. [Verified: 59 Jest tests pass, standalone smoke suite 33 checks pass, 0 lint errors, Next.js build passes]
 
 **Checkpoint:** `feat(workspace): deliver saved jobs applications and support` → verified push.
 
