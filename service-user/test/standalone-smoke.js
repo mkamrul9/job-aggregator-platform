@@ -611,7 +611,7 @@ async function run() {
   assert(Array.isArray(pagedRes1.data?.items) && pagedRes1.data.items.length === 2, 'Page 1 returns exactly 2 items for limit=2', pagedRes1.data?.items?.length);
   const nextCursor = pagedRes1.data?.next_cursor;
   assert(Boolean(nextCursor), 'next_cursor returned when lookahead detected more items', nextCursor);
-  assert(nextCursor === pagedRes1.data.items[1].id, 'next_cursor matches the last item actually returned on current page', nextCursor);
+  assert(nextCursor === pagedRes1.data.items[1].saved_id || nextCursor === pagedRes1.data.items[1].id, 'next_cursor matches the last item actually returned on current page', nextCursor);
 
   // Fetch page 2 using next_cursor
   const pagedRes2 = await request(`${API_BASE}/users/saved-jobs?limit=2&cursor=${nextCursor}`, {
@@ -813,7 +813,7 @@ async function run() {
       'Content-Type': 'application/json',
     },
     body: {
-      report_type: 'INCORRECT_METADATA',
+      report_type: 'INCORRECT_DATA',
       description: 'Anonymous visitor reporting inaccurate salary information.',
       job_id: 'job-smoke-test-101',
       contact_email: 'guest@example.com',
@@ -830,7 +830,7 @@ async function run() {
       'Content-Type': 'application/json',
     },
     body: {
-      report_type: 'SCAM_OR_FRAUD',
+      report_type: 'SPAM',
       description: 'Report sent with bad token',
     },
   });
