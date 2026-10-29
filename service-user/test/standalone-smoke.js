@@ -854,7 +854,7 @@ async function run() {
   const reportRef = reportSubmitRes.data?.reference_num;
   const reportId = reportSubmitRes.data?.report_id;
   assert(Boolean(reportRef) && /^RPT-\d{8}-[A-Z0-9]+$/.test(reportRef), 'Report receipt returns durable RPT-YYYYMMDD-XXXX reference', reportRef);
-  assert(reportSubmitRes.data?.status === 'OPEN', 'Initial report status is OPEN', reportSubmitRes.data?.status);
+  assert(reportSubmitRes.data?.status === 'RECEIVED', 'Initial report status is RECEIVED', reportSubmitRes.data?.status);
 
   // Reporter can fetch report status by reference
   const reporterFetchRes = await request(`${API_BASE}/reports/${reportRef}`, {

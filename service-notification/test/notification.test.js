@@ -1,11 +1,16 @@
 // service-notification/test/notification.test.js
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
 const {
   createNotificationApp,
   processJobNotification,
+  register,
 } = require('../index');
+
+after(() => {
+  register.clear();
+});
 
 describe('service-notification unit tests', () => {
   describe('HTTP endpoints', () => {
