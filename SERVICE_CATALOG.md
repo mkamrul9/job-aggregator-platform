@@ -25,7 +25,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
-| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (11/11); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, and gRPC verified |
+| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (16/16); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, threadpool offloading, and gRPC verified |
 | `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Production build passes; standalone operations console with live simulation adapter verified |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
 | `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 | ESLint passes (0 errors); tsc & Jest pass (42/42 across 6 suites); P08 resume storage & lifecycle verified |
@@ -97,20 +97,20 @@ All platform services interact through versioned machine-readable contracts loca
   - Runtime Protobuf Artifacts: `service-resume/resume_pb2.py`, `service-resume/resume_pb2_grpc.py`
   - Protobuf Source: `contracts/protobuf/resume/v1/resume.proto`
 - **Commands & Verification:**
-  - Test: `pytest test_main.py` — `[Verified]` (all 11 unit tests pass cleanly covering extraction, aliases, encrypted rejection, scanned rejection, and gRPC)
+  - Test: `pytest test_main.py` — `[Verified]` (all 16 unit tests pass cleanly covering extraction, technical Go disambiguation, 51-page truncation honesty, aliases, encrypted rejection, scanned rejection, raw path mode rejection, service token auth, and gRPC)
   - Local Run (HTTP): `uvicorn main:app --host 0.0.0.0 --port 8000 --reload` — `[Verified]`
   - Local Run (gRPC): `python grpc_server.py` — `[Verified]`
 - **Required Infrastructure:**
   - Standalone mode: None required (stateless Python process, zero external databases/queues).
   - Integrated mode: gRPC consumer (`service-user`).
-- **Current Verification Status:** All 11 pytest unit tests pass cleanly. `pypdf` extraction eliminates PyPDF2 deprecation warnings. Standalone responsive UI (`GET /`, `GET /demo`), real synthetic sample PDF generation (`GET /sample-resume.pdf`), structured JSON download, and gRPC byte-buffer extraction verified. Docker packaging builds cleanly in multi-stage CI.
+- **Current Verification Status:** All 16 pytest unit tests pass cleanly. `pypdf` extraction eliminates PyPDF2 deprecation warnings. Standalone responsive UI (`GET /`, `GET /demo`), real synthetic sample PDF generation (`GET /sample-resume.pdf`), structured JSON download, threadpool event-loop offloading, and gRPC byte-buffer extraction verified. Docker packaging builds cleanly in multi-stage CI.
 - **Completed in Phase P08:**
   - Dedicated Python-served HTML/CSS upload and interactive results presentation screen (`GET /`, `GET /demo`) enabling standalone recruiter evaluation without Node/Next.js/React.
   - Pure Python in-memory synthetic PDF generator and `/sample-resume.pdf` endpoint providing real PDF extraction without precomputed mock skills.
   - Structured JSON download and Swagger (`/docs`) / ReDoc (`/redoc`) OpenAPI documentation.
-  - gRPC `ResumeParser.ParseResume` and REST `POST /parse` with in-memory byte buffer support (`content_bytes`) and opaque `document_id`.
-  - Canonical skill taxonomy with spaCy `PhraseMatcher` and comprehensive multi-token alias dictionary (`SKILL_ALIASES`).
-  - Structured rejection of encrypted PDFs (`ENCRYPTED_PDF`) and scanned image/empty PDFs (`SCANNED_PDF_NO_TEXT`).
+  - gRPC `ResumeParser.ParseResume` and REST `POST /parse` with in-memory byte buffer support (`content_bytes`), 16MB max message size limits, service token authorization (`RESUME_SERVICE_TOKEN`), and opaque `document_id`.
+  - Canonical skill taxonomy with spaCy `PhraseMatcher`, contextual Go disambiguation, and comprehensive multi-token alias dictionary (`SKILL_ALIASES`).
+  - Structured rejection of encrypted PDFs (`ENCRYPTED_PDF`), scanned image/empty PDFs (`SCANNED_PDF_NO_TEXT`), and 50+ page multi-page bounds (`PAGE_LIMIT_EXCEEDED`).
 - **Intended Deployment Boundary:**
   - Docker container: `service-resume/Dockerfile`
   - Ports: `8000` (HTTP/REST), `50051` (gRPC)
@@ -210,20 +210,21 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 42 Jest unit tests across 6 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (20 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 44 Jest unit tests across 6 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (25 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
 - **Completed in Phases P05 & P08:**
   - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
   - Persistent candidate profile read & update (`GET/PUT /users/profile`).
   - Scheduled account deletion with 30-day grace period and idempotency (`POST /users/account/delete`).
   - Personal data export request tracking (`POST /users/account/export`).
   - Role-based server-side authorization enforcement (`RolesGuard` with `@Roles('ADMIN')`).
-  - P08 Account-owned private resume storage (`StorageService`) with `%PDF` magic bytes validation, 10MB bounds, SHA256 checksums, and strict directory traversal prevention.
-  - P08 Asynchronous parsing lifecycle (`ResumeDocument`, `ResumeParseResult`), worker dispatch, lease management, and polling status endpoint (`GET /users/resume/status/:parseId`).
+  - P08 Account-owned private resume storage (`StorageService`) with `%PDF` magic bytes validation, 10MB bounds, SHA256 checksums, strict containment with separator, and safe key grammar to prevent directory traversal and sibling escapes.
+  - P08 Asynchronous parsing lifecycle (`ResumeDocument`, `ResumeParseResult`), durable worker dispatch with lease fencing (`fenceToken`), recovery loop, and polling status endpoint (`GET /users/resume/status/:parseId`).
+  - P08 Active resume query endpoint (`GET /users/resume`) for state hydration and UI synchronization.
   - P08 Candidate review checklist endpoint (`POST /users/resume/review`) allowing selective skill application to profile without silent clobbering.
-  - P08 Candidate resume deletion (`DELETE /users/resume`) and authorized stream download (`GET /users/resume/download`).
-  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099 and PostgreSQL, extended to 20 verification steps.
+  - P08 Candidate resume deletion (`DELETE /users/resume`) with atomic superseding tombstones and authorized stream download (`GET /users/resume/download`).
+  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099, PostgreSQL, and real Python gRPC server, extended to 25 verification steps.
   - Negative error handling regression suite (`npm run test:smoke:negative`) ensuring no false-positive test reporting.
-  - Automated CI integration job running database migrations and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
+  - Automated CI integration job running database migrations, Python gRPC extractor, and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
 - **Intended Deployment Boundary:**
   - Container: `service-user/Dockerfile`
   - Ports: `3000` (internal) / `3002` (host)

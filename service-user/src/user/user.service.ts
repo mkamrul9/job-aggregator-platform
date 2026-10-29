@@ -8,9 +8,13 @@ import {
   BadRequestException,
   ServiceUnavailableException,
   Logger,
+  OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import type { ClientGrpc } from '@nestjs/microservices';
 import { lastValueFrom, Observable } from 'rxjs';
+import { timeout } from 'rxjs/operators';
+import { Metadata } from '@grpc/grpc-js';
 import { UserRepository } from './user.repository';
 import { StorageService } from '../storage/storage.service';
 import {
@@ -37,7 +41,10 @@ interface ParseResponse {
 }
 
 interface ResumeParserService {
-  parseResume(data: ParseRequest): Observable<ParseResponse>;
+  parseResume(
+    data: ParseRequest,
+    metadata?: Metadata,
+  ): Observable<ParseResponse>;
 }
 
 export interface ResumeUploadResult {
@@ -55,15 +62,40 @@ export interface ResumeParseStatusResponse {
 }
 
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(UserService.name);
   private resumeService: ResumeParserService | null = null;
+  private workerLoopTimer: NodeJS.Timeout | null = null;
+  private readonly workerId = `worker-${process.pid}-${randomUUID().slice(0, 6)}`;
+  private isShuttingDown = false;
 
   constructor(
     private readonly userRepository: UserRepository,
     private readonly storageService: StorageService,
     @Optional() @Inject('RESUME_PACKAGE') private client?: ClientGrpc,
   ) {}
+
+  onModuleInit() {
+    this.startWorkerLoop();
+  }
+
+  onModuleDestroy() {
+    this.isShuttingDown = true;
+    if (this.workerLoopTimer) {
+      clearInterval(this.workerLoopTimer);
+      this.workerLoopTimer = null;
+    }
+  }
+
+  private startWorkerLoop() {
+    this.workerLoopTimer = setInterval(() => {
+      if (this.isShuttingDown) return;
+      void this.processNextParseTask().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(`Worker poll iteration error: ${msg}`);
+      });
+    }, 2000);
+  }
 
   private getResumeService(): ResumeParserService | null {
     if (!this.resumeService && this.client) {
@@ -218,7 +250,7 @@ export class UserService {
 
   /**
    * Accepts a PDF resume upload, validates signature and 10MB bounds,
-   * stores to private object storage, creates durable records, and starts async parsing.
+   * stores to private object storage, creates durable records, and triggers worker.
    */
   async uploadResume(
     userId: string,
@@ -241,13 +273,14 @@ export class UserService {
     // 1. Validate magic bytes (%PDF) and 10MB ceiling
     this.storageService.validatePdfBuffer(buffer);
 
-    // 2. Compute checksum and generate opaque identifiers
+    // 2. Compute checksum and generate opaque identifiers with safe user ID segment
     const checksumSha256 = this.storageService.computeChecksumSha256(buffer);
     const documentId = randomUUID();
     const parseId = randomUUID();
-    const storageKey = `resumes/${userId}/${documentId}.pdf`;
+    const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageKey = `resumes/${safeUserId}/${documentId}.pdf`;
 
-    // 3. Persist to isolated private object storage
+    // 3. Persist to isolated private object storage atomically
     await this.storageService.putObject(storageKey, buffer);
 
     // 4. Sanitize display filename
@@ -255,37 +288,25 @@ export class UserService {
       .basename(file.originalname || 'resume.pdf')
       .replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    // 5. Persist durable ResumeDocument and ResumeParseResult records
-    await this.userRepository.createResumeDocument({
-      id: documentId,
+    // 5. Atomically supersede prior active documents and create new ResumeDocument + ParseResult
+    await this.userRepository.createResumeDocumentAtomic({
+      documentId,
+      parseId,
       userId,
       storageKey,
       fileName: safeFileName,
       fileSizeBytes: buffer.length,
       checksumSha256,
-      status: 'UPLOADED',
+      mimeType: 'application/pdf',
     });
 
-    await this.userRepository.createParseResult({
-      id: parseId,
-      documentId,
-      userId,
-      status: 'QUEUED',
-    });
+    // 6. Update candidate profile pointer
+    await this.userRepository.updateProfileResumeUrl(userId, storageKey);
 
-    // 6. Update candidate profile resumeUrl pointer
-    await this.userRepository.updateProfile(userId, {});
-
-    // 7. Dispatch asynchronous parsing worker
-    this.dispatchParseWorker(
-      parseId,
-      documentId,
-      userId,
-      buffer,
-      storageKey,
-    ).catch((err: unknown) => {
+    // 7. Trigger worker immediately for responsive execution
+    this.processNextParseTask().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Async worker failed for parse ${parseId}: ${msg}`);
+      this.logger.debug(`Immediate worker trigger: ${msg}`);
     });
 
     return {
@@ -296,71 +317,136 @@ export class UserService {
   }
 
   /**
-   * Internal asynchronous worker that claims the parse task and invokes the gRPC parser.
+   * Persistent worker loop processor: claims next task, reads from durable storage,
+   * calls gRPC with deadline, and performs fenced completion without clobbering profile skills.
    */
-  private async dispatchParseWorker(
-    parseId: string,
-    documentId: string,
-    userId: string,
-    buffer: Buffer,
-    storageKey: string,
-  ): Promise<void> {
-    await this.userRepository.updateParseResult(parseId, {
-      status: 'PROCESSING',
-      claimedBy: 'worker-primary',
-      claimedUntil: new Date(Date.now() + 60000), // 60s lease
-    });
+  async processNextParseTask(): Promise<boolean> {
+    const task = await this.userRepository.claimNextPendingParseTask(
+      this.workerId,
+      60000,
+    );
+    if (!task) return false;
 
+    // 1. Read input bytes from durable private storage
+    const buffer = await this.storageService.getObject(
+      task.document.storageKey,
+    );
+    if (!buffer) {
+      await this.userRepository.completeParseTaskFenced(
+        task.id,
+        task.fenceToken,
+        this.workerId,
+        {
+          success: false,
+          errorCode: 'STORAGE_OBJECT_NOT_FOUND',
+          errorMessage: 'Resume file could not be read from private storage.',
+        },
+      );
+      return true;
+    }
+
+    // 2. Resolve Python gRPC parser
     const parser = this.getResumeService();
     if (!parser) {
-      await this.userRepository.updateParseResult(parseId, {
-        status: 'FAILED',
-        errorCode: 'PARSER_UNAVAILABLE',
-        errorMessage: 'Python gRPC Resume Extractor service is not connected.',
-      });
-      await this.userRepository.updateResumeStatus(documentId, 'FAILED');
-      return;
+      await this.userRepository.completeParseTaskFenced(
+        task.id,
+        task.fenceToken,
+        this.workerId,
+        {
+          success: false,
+          errorCode: 'PARSER_UNAVAILABLE',
+          errorMessage:
+            'Python gRPC Resume Extractor service is not connected.',
+        },
+      );
+      return true;
     }
 
+    // 3. Invoke gRPC with finite deadline and service auth metadata
     try {
-      const grpcResponse = parser.parseResume({
-        documentId: storageKey,
-        contentBytes: buffer,
-        candidateId: userId,
-      });
-
-      const result = await lastValueFrom(grpcResponse);
-
-      if (result.success) {
-        await this.userRepository.updateParseResult(parseId, {
-          status: 'COMPLETED',
-          extractedSkills: result.skills || [],
-          processingTimeMs: result.processingTimeMs || 0,
-        });
-
-        await this.userRepository.updateResumeStatus(documentId, 'PARSED');
-        await this.userRepository.updateSkills(userId, result.skills || []);
-      } else {
-        await this.userRepository.updateParseResult(parseId, {
-          status: 'FAILED',
-          errorCode: result.errorCode || 'PARSE_FAILED',
-          errorMessage: result.errorMessage || 'Resume could not be parsed.',
-          processingTimeMs: result.processingTimeMs || 0,
-        });
-
-        await this.userRepository.updateResumeStatus(documentId, 'FAILED');
+      const metadata = new Metadata();
+      if (process.env.RESUME_SERVICE_TOKEN) {
+        metadata.add('x-service-auth', process.env.RESUME_SERVICE_TOKEN);
       }
+
+      const response$ = parser
+        .parseResume(
+          {
+            documentId: task.document.storageKey,
+            contentBytes: buffer,
+            candidateId: task.userId,
+          },
+          metadata,
+        )
+        .pipe(timeout(10000)); // 10-second total RPC deadline
+
+      const result = await lastValueFrom(response$);
+
+      await this.userRepository.completeParseTaskFenced(
+        task.id,
+        task.fenceToken,
+        this.workerId,
+        {
+          success: Boolean(result.success),
+          extractedSkills: result.skills || [],
+          errorCode: result.errorCode || undefined,
+          errorMessage: result.errorMessage || undefined,
+          processingTimeMs: result.processingTimeMs || 0,
+        },
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Error calling ResumeParser gRPC: ${msg}`);
-      await this.userRepository.updateParseResult(parseId, {
-        status: 'FAILED',
-        errorCode: 'RPC_COMMUNICATION_ERROR',
-        errorMessage:
-          'Internal communication error with resume extractor service.',
-      });
-      await this.userRepository.updateResumeStatus(documentId, 'FAILED');
+      this.logger.error(`Error executing ResumeParser gRPC: ${msg}`);
+      await this.userRepository.completeParseTaskFenced(
+        task.id,
+        task.fenceToken,
+        this.workerId,
+        {
+          success: false,
+          errorCode: 'RPC_COMMUNICATION_ERROR',
+          errorMessage: `Communication error with extractor service: ${msg}`,
+        },
+      );
     }
+
+    return true;
+  }
+
+  /**
+   * Retrieves active resume document and latest parse information for candidate UI hydration.
+   */
+  async getActiveResume(userId: string) {
+    const { document, latestParse } =
+      await this.userRepository.findActiveResumeWithLatestParse(userId);
+
+    if (!document) {
+      return {
+        has_resume: false,
+        document: null,
+        latest_parse: null,
+      };
+    }
+
+    return {
+      has_resume: true,
+      document: {
+        id: document.id,
+        file_name: document.fileName,
+        file_size_bytes: document.fileSizeBytes,
+        status: document.status,
+        created_at: document.createdAt.toISOString(),
+      },
+      latest_parse: latestParse
+        ? {
+            id: latestParse.id,
+            status: latestParse.status,
+            extracted_skills: latestParse.extractedSkills,
+            reviewed_skills: latestParse.reviewedSkills,
+            reviewed_at: latestParse.reviewedAt?.toISOString() || null,
+            error_code: latestParse.errorCode || null,
+          }
+        : null,
+    };
   }
 
   /**
@@ -395,21 +481,6 @@ export class UserService {
     parseId: string,
     selectedSkills: string[],
   ): Promise<UserProfileResponseDto> {
-    const parseResult = await this.userRepository.findParseResultById(parseId);
-    if (!parseResult || parseResult.userId !== userId) {
-      throw new NotFoundException({
-        code: 'PARSE_TASK_NOT_FOUND',
-        message: `Resume parse task ${parseId} was not found for this candidate.`,
-      });
-    }
-
-    if (parseResult.status !== 'COMPLETED') {
-      throw new BadRequestException({
-        code: 'PARSE_TASK_INCOMPLETE',
-        message: `Cannot review skills: task is currently in ${parseResult.status} state.`,
-      });
-    }
-
     const updatedUser = await this.userRepository.applyReviewedSkills(
       userId,
       parseId,
@@ -420,14 +491,46 @@ export class UserService {
   }
 
   /**
-   * Deletes the active candidate resume and associated storage object.
+   * Deletes the candidate resume with durable object storage cleanup and tombstones.
    */
   async deleteResume(userId: string): Promise<{ message: string }> {
-    const doc = await this.userRepository.deleteActiveResume(userId);
-    if (doc) {
-      await this.storageService.deleteObject(doc.storageKey);
+    const deletedDocs =
+      await this.userRepository.markActiveResumeDeleted(userId);
+    const pendingCleanups =
+      await this.userRepository.findPendingCleanups(userId);
+
+    const docsToClean = Array.from(
+      new Map(
+        [...deletedDocs, ...pendingCleanups].map((d) => [d.id, d]),
+      ).values(),
+    );
+
+    let allSucceeded = true;
+    for (const doc of docsToClean) {
+      try {
+        await this.storageService.deleteObject(doc.storageKey);
+        await this.userRepository.updateDocumentCleanupStatus(
+          doc.id,
+          'CLEANED',
+        );
+      } catch (err: unknown) {
+        allSucceeded = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Storage cleanup failed for document ${doc.id}: ${msg}`,
+        );
+        await this.userRepository.updateDocumentCleanupStatus(
+          doc.id,
+          'CLEANUP_FAILED',
+        );
+      }
     }
-    return { message: 'Resume document deleted successfully' };
+
+    return {
+      message: allSucceeded
+        ? 'Resume document deleted successfully'
+        : 'Resume marked deleted; storage cleanup scheduled.',
+    };
   }
 
   /**

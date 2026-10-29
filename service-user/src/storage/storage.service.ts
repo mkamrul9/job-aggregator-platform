@@ -19,23 +19,71 @@ export class StorageService {
         path.join(process.cwd(), 'data', 'storage'),
     );
     try {
-      fs.mkdirSync(this.storageRoot, { recursive: true });
-    } catch {
-      // Root exists or read-only volume
+      if (!fs.existsSync(this.storageRoot)) {
+        fs.mkdirSync(this.storageRoot, { recursive: true });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to initialize private storage root at ${this.storageRoot}: ${msg}`,
+      );
     }
   }
 
   /**
-   * Resolves a key within the isolated storage root, rejecting path traversal attempts.
+   * Resolves a key within the isolated storage root, rejecting path traversal and sibling escapes.
    */
-  private resolveSafePath(key: string): string {
+  resolveSafePath(key: string): string {
+    if (!key || typeof key !== 'string') {
+      throw new BadRequestException('Storage key must be a non-empty string');
+    }
+
+    // 1. Enforce strict key grammar (alphanumeric, underscores, hyphens, dots, slashes)
+    if (!/^[a-zA-Z0-9_\-./]+$/.test(key)) {
+      throw new BadRequestException(
+        'Invalid storage key: illegal characters detected',
+      );
+    }
+
+    // 2. Reject path segment traversal ('..' or '.')
+    const segments = key.split(/[/\\]/);
+    if (segments.some((seg) => seg === '..' || seg === '.')) {
+      throw new BadRequestException(
+        'Invalid storage key: directory traversal segments not permitted',
+      );
+    }
+
+    // 3. Reject absolute keys
+    if (path.isAbsolute(key) || /^[a-zA-Z]:/.test(key)) {
+      throw new BadRequestException(
+        'Invalid storage key: absolute paths not permitted',
+      );
+    }
+
     const sanitizedKey = key.replace(/\\/g, '/').replace(/^\/+/, '');
     const resolved = path.resolve(this.storageRoot, sanitizedKey);
-    if (!resolved.startsWith(this.storageRoot)) {
+
+    // 4. Strict directory containment checking separator boundary to prevent sibling-prefix escape
+    const rootWithSep = this.storageRoot.endsWith(path.sep)
+      ? this.storageRoot
+      : this.storageRoot + path.sep;
+
+    if (resolved !== this.storageRoot && !resolved.startsWith(rootWithSep)) {
       throw new BadRequestException(
         'Invalid storage key: path traversal detected',
       );
     }
+
+    // 5. If file exists, verify realpath does not escape root (symlink defense)
+    if (fs.existsSync(resolved)) {
+      const real = fs.realpathSync(resolved);
+      if (real !== this.storageRoot && !real.startsWith(rootWithSep)) {
+        throw new BadRequestException(
+          'Invalid storage key: symlink traversal detected',
+        );
+      }
+    }
+
     return resolved;
   }
 

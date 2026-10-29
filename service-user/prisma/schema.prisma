@@ -95,6 +95,9 @@ model ResumeDocument {
   checksumSha256 String
   mimeType       String              @default("application/pdf")
   status         String              @default("UPLOADED") // UPLOADED, PROCESSING, PARSED, FAILED, DELETED, SUPERSEDED
+  isActive       Boolean             @default(true)
+  cleanupStatus  String              @default("CLEANED") // CLEANED, CLEANUP_PENDING, CLEANUP_FAILED
+  deletedAt      DateTime?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -116,8 +119,11 @@ model ResumeParseResult {
   errorMessage     String?
   processingTimeMs Int?
   attemptCount     Int             @default(0)
+  maxAttempts      Int             @default(3)
+  fenceToken       Int             @default(0)
   claimedBy        String?
   claimedUntil     DateTime?
+  nextAttemptAt    DateTime?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   document         ResumeDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)

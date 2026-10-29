@@ -1,11 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from fastapi.responses import HTMLResponse
+from starlette.concurrency import run_in_threadpool
 from pypdf import PdfReader, PdfWriter
 import spacy
 from spacy.matcher import PhraseMatcher
 import io
 import json
 import time
+import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 app = FastAPI(
     title="Seekers Resume Parsing & NLP Service",
@@ -19,14 +22,16 @@ matcher = PhraseMatcher(nlp.vocab, attr="LOWER")
 
 TECH_SKILLS = [
     "React", "Angular", "Vue", "Next.js", "Node.js", "NestJS", "TypeScript", "JavaScript",
-    "Python", "FastAPI", "Django", "Flask", "Go", "Golang", "Java", "Spring Boot",
+    "Python", "FastAPI", "Django", "Flask", "Go", "Java", "Spring Boot",
     "Docker", "Kubernetes", "PostgreSQL", "MongoDB", "Kafka", "Redis", "Microservices",
     "AWS", "Terraform", "CI/CD", "Linux", "gRPC", "GraphQL", "TailwindCSS"
 ]
 
 CANONICAL_ALIASES = {
     "golang": "Go",
-    "go": "Go",
+    "go language": "Go",
+    "go lang": "Go",
+    "go programming": "Go",
     "js": "JavaScript",
     "javascript": "JavaScript",
     "ts": "TypeScript",
@@ -68,7 +73,9 @@ CANONICAL_ALIASES = {
 }
 
 for skill in TECH_SKILLS:
-    CANONICAL_ALIASES[skill.lower()] = skill
+    # Exclude ambiguous plain English word "go" from generic lowercase phrase matching
+    if skill.lower() != "go":
+        CANONICAL_ALIASES[skill.lower()] = skill
 
 patterns = [nlp.make_doc(term) for term in CANONICAL_ALIASES.keys()]
 matcher.add("SKILLS", patterns)
@@ -100,7 +107,7 @@ def generate_sample_pdf_bytes(title: str, text: str) -> bytes:
     return header + obj1 + obj2 + obj3 + obj4 + obj5 + xref.encode("latin-1") + trailer.encode("latin-1")
 
 def extract_skills_from_text(text: str) -> list[str]:
-    """Tokenizes text with spaCy and extracts canonical technology skills."""
+    """Tokenizes text with spaCy and extracts canonical technology skills without false positives."""
     if not text:
         return []
     doc = nlp(text)
@@ -110,10 +117,15 @@ def extract_skills_from_text(text: str) -> list[str]:
         span = doc[start:end]
         canonical_skill = CANONICAL_ALIASES.get(span.text.lower(), span.text)
         extracted_skills.add(canonical_skill)
+
+    # Disambiguate Go programming language:
+    # Match "Go" if written capitalized and in technical context (skills list or adjacent to tech keywords)
+    if re.search(r'(?:\bSkills?\b[^\n]*\bGo\b)|(?:\bGo\s*[,/|]\s*(?:Python|Java|Rust|TypeScript|Docker|React|C\+\+|Node|Postgres|FastAPI))|(?:\b(?:Python|Java|Rust|TypeScript|Docker|React|C\+\+|Node|Postgres|FastAPI)\s*[,/|]\s*Go\b)', text):
+        extracted_skills.add("Go")
+
     return sorted(list(extracted_skills))
 
-def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50) -> dict:
-    """Unified PDF text extraction and skill analysis with strict safety boundaries."""
+def _do_extract_skills(pdf_bytes: bytes, max_pages: int = 50) -> dict:
     start_time = time.time()
 
     # 1. Signature check
@@ -147,9 +159,12 @@ def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50) -> dict
                 "skills": []
             }
 
-        # 4. Bounded page text extraction
+        total_pages = len(reader.pages)
         pages_to_process = reader.pages[:max_pages]
+        processed_pages = len(pages_to_process)
         extracted_pages = []
+
+        # 4. Bounded page text extraction
         for page in pages_to_process:
             try:
                 page_text = page.extract_text() or ""
@@ -159,24 +174,41 @@ def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50) -> dict
                 continue
 
         raw_text = " ".join(extracted_pages).strip()
+        elapsed_ms = max(1, int((time.time() - start_time) * 1000))
 
-        # 5. Scanned PDF / empty text check
+        # 5. Text extraction & page limit evaluation
         if not raw_text:
+            if total_pages > max_pages:
+                # Do NOT mislabel truncated multi-page documents as SCANNED
+                return {
+                    "success": False,
+                    "error_code": "PAGE_LIMIT_EXCEEDED",
+                    "error_message": f"Document has {total_pages} pages exceeding supported {max_pages}-page ceiling, with no selectable text found in the first {max_pages} pages.",
+                    "total_pages": total_pages,
+                    "pages_processed": processed_pages,
+                    "skills": [],
+                    "processing_time_ms": elapsed_ms
+                }
             return {
                 "success": False,
                 "error_code": "SCANNED_PDF_NO_TEXT",
                 "error_message": "No selectable text layer found. Scanned documents require OCR, which is disabled under the $0 budget profile.",
-                "skills": []
+                "total_pages": total_pages,
+                "pages_processed": processed_pages,
+                "skills": [],
+                "processing_time_ms": elapsed_ms
             }
 
         # 6. Skill extraction
         skills = extract_skills_from_text(raw_text)
-        elapsed_ms = max(1, int((time.time() - start_time) * 1000))
 
         return {
             "success": True,
             "skills": skills,
-            "page_count": len(reader.pages),
+            "total_pages": total_pages,
+            "pages_processed": processed_pages,
+            "page_count": total_pages,
+            "partial_extraction": total_pages > max_pages,
             "character_count": len(raw_text),
             "processing_time_ms": elapsed_ms
         }
@@ -189,6 +221,22 @@ def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50) -> dict
             "error_message": f"Malformed PDF structure: {str(e)}",
             "skills": [],
             "processing_time_ms": elapsed_ms
+        }
+
+_executor = ThreadPoolExecutor(max_workers=4)
+
+def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50, timeout_seconds: float = 10.0) -> dict:
+    """Unified PDF text extraction and skill analysis with strict timeout and safety boundaries."""
+    future = _executor.submit(_do_extract_skills, pdf_bytes, max_pages)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        return {
+            "success": False,
+            "error_code": "PROCESSING_TIMEOUT",
+            "error_message": f"Resume processing exceeded total execution deadline ({timeout_seconds}s).",
+            "skills": [],
+            "processing_time_ms": int(timeout_seconds * 1000)
         }
 
 @app.get("/health")
@@ -232,22 +280,26 @@ async def parse_resume(file: UploadFile = File(...)):
         if len(chunk) > 10 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File size exceeds maximum 10MB limit.")
 
-        outcome = extract_skills_from_pdf_bytes(chunk)
+        outcome = await run_in_threadpool(extract_skills_from_pdf_bytes, chunk)
 
         if not outcome["success"]:
             code = outcome.get("error_code")
             msg = outcome.get("error_message")
             if code == "INVALID_PDF_SIGNATURE":
                 raise HTTPException(status_code=400, detail=f"{code}: {msg}")
-            elif code in ("ENCRYPTED_PDF", "SCANNED_PDF_NO_TEXT", "MALFORMED_PDF"):
+            elif code in ("ENCRYPTED_PDF", "SCANNED_PDF_NO_TEXT", "MALFORMED_PDF", "PAGE_LIMIT_EXCEEDED"):
                 raise HTTPException(status_code=422, detail=f"{code}: {msg}")
+            elif code == "PROCESSING_TIMEOUT":
+                raise HTTPException(status_code=504, detail=f"{code}: {msg}")
             else:
                 raise HTTPException(status_code=500, detail=f"Error processing NLP: {msg}")
 
         return {
             "filename": file.filename,
             "status": "success",
-            "page_count": outcome["page_count"],
+            "page_count": outcome.get("total_pages", outcome.get("page_count", 1)),
+            "pages_processed": outcome.get("pages_processed", outcome.get("page_count", 1)),
+            "partial_extraction": outcome.get("partial_extraction", False),
             "character_count": outcome["character_count"],
             "processing_time_ms": outcome["processing_time_ms"],
             "extracted_skills": outcome["skills"]
@@ -652,11 +704,12 @@ DEMO_HTML = """<!DOCTYPE html>
 
     function downloadJsonResults() {
       if (!extractedResult) return;
+      const safeName = (extractedResult.filename || 'resume').replace(/[^a-zA-Z0-9_-]/g, '_');
       const blob = new Blob([JSON.stringify(extractedResult, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = "extracted-skills-" + (extractedResult.parse_id) + ".json";
+      a.download = "extracted-skills-" + safeName + ".json";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

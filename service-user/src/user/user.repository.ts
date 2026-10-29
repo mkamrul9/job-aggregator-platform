@@ -1,4 +1,9 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import {
   User,
   Profile,
@@ -163,6 +168,16 @@ export class UserRepository {
     return updatedUser;
   }
 
+  async updateProfileResumeUrl(
+    userId: string,
+    resumeUrl: string | null,
+  ): Promise<void> {
+    await this.prisma.profile.updateMany({
+      where: { userId },
+      data: { resumeUrl },
+    });
+  }
+
   async createExportRequest(userId: string): Promise<AccountExportRequest> {
     return this.prisma.accountExportRequest.create({
       data: {
@@ -275,36 +290,74 @@ export class UserRepository {
 
   // ─── P08 OWNED RESUME DOCUMENT & PARSE LIFECYCLE ───────────────────────────
 
-  async createResumeDocument(data: {
-    id?: string;
+  /**
+   * Atomically supersedes prior active documents and creates the new document and parse result.
+   */
+  async createResumeDocumentAtomic(data: {
+    documentId: string;
+    parseId: string;
     userId: string;
     storageKey: string;
     fileName: string;
     fileSizeBytes: number;
     checksumSha256: string;
     mimeType?: string;
-    status?: string;
-  }): Promise<ResumeDocument> {
-    // Supersede older active documents for this candidate
-    await this.prisma.resumeDocument.updateMany({
-      where: {
-        userId: data.userId,
-        status: { in: ['UPLOADED', 'PROCESSING', 'PARSED'] },
-      },
-      data: { status: 'SUPERSEDED' },
-    });
+  }): Promise<{ document: ResumeDocument; parseResult: ResumeParseResult }> {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Mark existing active documents as SUPERSEDED and inactive
+      await tx.resumeDocument.updateMany({
+        where: {
+          userId: data.userId,
+          status: { in: ['UPLOADED', 'PROCESSING', 'PARSED'] },
+        },
+        data: {
+          status: 'SUPERSEDED',
+          isActive: false,
+        },
+      });
 
-    return this.prisma.resumeDocument.create({
-      data: {
-        id: data.id,
-        userId: data.userId,
-        storageKey: data.storageKey,
-        fileName: data.fileName,
-        fileSizeBytes: data.fileSizeBytes,
-        checksumSha256: data.checksumSha256,
-        mimeType: data.mimeType || 'application/pdf',
-        status: data.status || 'UPLOADED',
-      },
+      // 2. Cancel in-flight parse tasks for superseded documents
+      await tx.resumeParseResult.updateMany({
+        where: {
+          userId: data.userId,
+          status: { in: ['QUEUED', 'PROCESSING'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          claimedUntil: null,
+        },
+      });
+
+      // 3. Create the new authoritative ResumeDocument
+      const document = await tx.resumeDocument.create({
+        data: {
+          id: data.documentId,
+          userId: data.userId,
+          storageKey: data.storageKey,
+          fileName: data.fileName,
+          fileSizeBytes: data.fileSizeBytes,
+          checksumSha256: data.checksumSha256,
+          mimeType: data.mimeType || 'application/pdf',
+          status: 'UPLOADED',
+          isActive: true,
+          cleanupStatus: 'CLEANED',
+        },
+      });
+
+      // 4. Create the queued ResumeParseResult
+      const parseResult = await tx.resumeParseResult.create({
+        data: {
+          id: data.parseId,
+          documentId: data.documentId,
+          userId: data.userId,
+          status: 'QUEUED',
+          attemptCount: 0,
+          maxAttempts: 3,
+          fenceToken: 0,
+        },
+      });
+
+      return { document, parseResult };
     });
   }
 
@@ -312,10 +365,28 @@ export class UserRepository {
     return this.prisma.resumeDocument.findFirst({
       where: {
         userId,
+        isActive: true,
         status: { in: ['UPLOADED', 'PROCESSING', 'PARSED'] },
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findActiveResumeWithLatestParse(userId: string): Promise<{
+    document: ResumeDocument | null;
+    latestParse: ResumeParseResult | null;
+  }> {
+    const document = await this.findActiveResume(userId);
+    if (!document) {
+      return { document: null, latestParse: null };
+    }
+
+    const latestParse = await this.prisma.resumeParseResult.findFirst({
+      where: { documentId: document.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return { document, latestParse };
   }
 
   async findResumeById(id: string): Promise<ResumeDocument | null> {
@@ -324,29 +395,134 @@ export class UserRepository {
     });
   }
 
-  async updateResumeStatus(
-    id: string,
-    status: string,
-  ): Promise<ResumeDocument> {
-    return this.prisma.resumeDocument.update({
-      where: { id },
-      data: { status },
+  /**
+   * Safely and atomically claims the next available queued or expired task.
+   */
+  async claimNextPendingParseTask(
+    workerId: string,
+    leaseDurationMs: number = 60000,
+  ): Promise<(ResumeParseResult & { document: ResumeDocument }) | null> {
+    const now = new Date();
+    const leaseExpiry = new Date(now.getTime() + leaseDurationMs);
+
+    return this.prisma.$transaction(async (tx) => {
+      const candidate = await tx.resumeParseResult.findFirst({
+        where: {
+          OR: [
+            { status: 'QUEUED' },
+            { status: 'PROCESSING', claimedUntil: { lt: now } },
+          ],
+          document: {
+            status: { notIn: ['DELETED', 'SUPERSEDED'] },
+            isActive: true,
+          },
+          attemptCount: { lt: 3 },
+        },
+        include: { document: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (!candidate) return null;
+
+      const updated = await tx.resumeParseResult.update({
+        where: { id: candidate.id },
+        data: {
+          status: 'PROCESSING',
+          claimedBy: workerId,
+          claimedUntil: leaseExpiry,
+          attemptCount: { increment: 1 },
+          fenceToken: { increment: 1 },
+        },
+        include: { document: true },
+      });
+
+      return updated;
     });
   }
 
-  async createParseResult(data: {
-    id?: string;
-    documentId: string;
-    userId: string;
-    status?: string;
-  }): Promise<ResumeParseResult> {
-    return this.prisma.resumeParseResult.create({
-      data: {
-        id: data.id,
-        documentId: data.documentId,
-        userId: data.userId,
-        status: data.status || 'QUEUED',
-      },
+  /**
+   * Completes a parse task with atomic fencing and document active state validation.
+   */
+  async completeParseTaskFenced(
+    parseId: string,
+    fenceToken: number,
+    workerId: string,
+    data: {
+      success: boolean;
+      extractedSkills?: string[];
+      errorCode?: string;
+      errorMessage?: string;
+      processingTimeMs?: number;
+    },
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const parse = await tx.resumeParseResult.findUnique({
+        where: { id: parseId },
+        include: { document: true },
+      });
+
+      if (!parse) return false;
+
+      // Lease fencing check
+      if (parse.fenceToken !== fenceToken || parse.claimedBy !== workerId) {
+        return false;
+      }
+
+      // If document was DELETED or SUPERSEDED while processing, cancel parse and do not update document/profile!
+      if (
+        parse.document.status === 'DELETED' ||
+        parse.document.status === 'SUPERSEDED' ||
+        !parse.document.isActive
+      ) {
+        await tx.resumeParseResult.update({
+          where: { id: parseId },
+          data: {
+            status: 'CANCELLED',
+            claimedUntil: null,
+          },
+        });
+        return false;
+      }
+
+      if (data.success) {
+        await tx.resumeParseResult.update({
+          where: { id: parseId },
+          data: {
+            status: 'COMPLETED',
+            extractedSkills: data.extractedSkills || [],
+            processingTimeMs: data.processingTimeMs || 0,
+            claimedUntil: null,
+            errorCode: null,
+            errorMessage: null,
+          },
+        });
+
+        await tx.resumeDocument.update({
+          where: { id: parse.documentId },
+          data: { status: 'PARSED' },
+        });
+
+        // NOTE: Profile skills are explicitly NOT clobbered here.
+        // They remain staging-only until candidate review!
+        return true;
+      } else {
+        await tx.resumeParseResult.update({
+          where: { id: parseId },
+          data: {
+            status: 'FAILED',
+            errorCode: data.errorCode || 'PARSE_FAILED',
+            errorMessage: data.errorMessage || 'Parsing failed',
+            processingTimeMs: data.processingTimeMs || 0,
+            claimedUntil: null,
+          },
+        });
+
+        await tx.resumeDocument.update({
+          where: { id: parse.documentId },
+          data: { status: 'FAILED' },
+        });
+        return true;
+      }
     });
   }
 
@@ -380,73 +556,157 @@ export class UserRepository {
     });
   }
 
+  /**
+   * Applies candidate-selected skills in a transaction after validating document active state.
+   */
   async applyReviewedSkills(
     userId: string,
     parseId: string,
     selectedSkills: string[],
   ): Promise<UserWithProfile> {
-    // 1. Fetch current profile
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId },
+    return this.prisma.$transaction(async (tx) => {
+      const parseResult = await tx.resumeParseResult.findUnique({
+        where: { id: parseId },
+        include: { document: true },
+      });
+
+      if (!parseResult || parseResult.userId !== userId) {
+        throw new NotFoundException({
+          code: 'PARSE_TASK_NOT_FOUND',
+          message: `Resume parse task ${parseId} was not found for this candidate.`,
+        });
+      }
+
+      // Check document state: cannot review deleted or superseded documents
+      if (
+        parseResult.document.status === 'DELETED' ||
+        parseResult.document.status === 'SUPERSEDED' ||
+        !parseResult.document.isActive
+      ) {
+        throw new BadRequestException({
+          code: 'DOCUMENT_UNAVAILABLE',
+          message:
+            'Cannot review skills: associated resume document has been deleted or superseded.',
+        });
+      }
+
+      if (parseResult.status !== 'COMPLETED') {
+        throw new BadRequestException({
+          code: 'PARSE_TASK_INCOMPLETE',
+          message: `Cannot review skills: task is currently in ${parseResult.status} state.`,
+        });
+      }
+
+      // Sanitize and validate selected skills
+      const validSkills = (selectedSkills || [])
+        .filter(
+          (s): s is string =>
+            typeof s === 'string' && s.trim().length > 0 && s.length <= 100,
+        )
+        .map((s) => s.trim())
+        .slice(0, 50);
+
+      const profile = await tx.profile.findUnique({
+        where: { userId },
+      });
+
+      const currentSkills = profile?.skills || [];
+      const mergedSkills = Array.from(
+        new Set([...currentSkills, ...validSkills]),
+      );
+
+      await tx.profile.update({
+        where: { userId },
+        data: {
+          skills: mergedSkills,
+          extractedSkills: validSkills,
+        },
+      });
+
+      await tx.resumeParseResult.update({
+        where: { id: parseId },
+        data: {
+          reviewedSkills: validSkills,
+          reviewedAt: new Date(),
+        },
+      });
+
+      const updatedUser = await tx.user.findUnique({
+        where: { id: userId },
+        include: { profile: true },
+      });
+
+      if (!updatedUser) {
+        throw new Error(`User ${userId} not found after skill review`);
+      }
+      return updatedUser;
     });
-
-    const currentSkills = profile?.skills || [];
-    // Union preserving existing manual skills and appending newly accepted skills
-    const mergedSkills = Array.from(
-      new Set([...currentSkills, ...selectedSkills]),
-    );
-
-    // 2. Update profile skills
-    await this.prisma.profile.update({
-      where: { userId },
-      data: {
-        skills: mergedSkills,
-        extractedSkills: selectedSkills,
-      },
-    });
-
-    // 3. Mark parse result reviewed
-    await this.prisma.resumeParseResult.update({
-      where: { id: parseId },
-      data: {
-        reviewedSkills: selectedSkills,
-        reviewedAt: new Date(),
-      },
-    });
-
-    const updatedUser = await this.findById(userId);
-    if (!updatedUser) {
-      throw new Error(`User ${userId} not found after skill review`);
-    }
-    return updatedUser;
   }
 
-  async deleteActiveResume(userId: string): Promise<ResumeDocument | null> {
-    const activeDoc = await this.findActiveResume(userId);
-    if (activeDoc) {
-      await this.prisma.resumeDocument.update({
-        where: { id: activeDoc.id },
-        data: { status: 'DELETED' },
-      });
-      // Cancel any pending parse results
-      await this.prisma.resumeParseResult.updateMany({
+  /**
+   * Marks active resume and in-flight tasks as DELETED with CLEANUP_PENDING status.
+   */
+  async markActiveResumeDeleted(userId: string): Promise<ResumeDocument[]> {
+    return this.prisma.$transaction(async (tx) => {
+      const activeDocs = await tx.resumeDocument.findMany({
         where: {
-          documentId: activeDoc.id,
-          status: { in: ['QUEUED', 'PROCESSING'] },
+          userId,
+          status: { in: ['UPLOADED', 'PROCESSING', 'PARSED', 'FAILED'] },
         },
-        data: { status: 'CANCELLED' },
       });
-    }
 
-    // Clean up profile resumeUrl and extractedSkills
-    await this.prisma.profile.updateMany({
-      where: { userId },
-      data: {
-        resumeUrl: null,
-        extractedSkills: [],
+      if (activeDocs.length > 0) {
+        const docIds = activeDocs.map((d) => d.id);
+        await tx.resumeDocument.updateMany({
+          where: { id: { in: docIds } },
+          data: {
+            status: 'DELETED',
+            isActive: false,
+            deletedAt: new Date(),
+            cleanupStatus: 'CLEANUP_PENDING',
+          },
+        });
+
+        await tx.resumeParseResult.updateMany({
+          where: {
+            documentId: { in: docIds },
+            status: { in: ['QUEUED', 'PROCESSING'] },
+          },
+          data: {
+            status: 'CANCELLED',
+            claimedUntil: null,
+          },
+        });
+      }
+
+      await tx.profile.updateMany({
+        where: { userId },
+        data: {
+          resumeUrl: null,
+          extractedSkills: [],
+        },
+      });
+
+      return activeDocs;
+    });
+  }
+
+  async updateDocumentCleanupStatus(
+    documentId: string,
+    status: string,
+  ): Promise<void> {
+    await this.prisma.resumeDocument.update({
+      where: { id: documentId },
+      data: { cleanupStatus: status },
+    });
+  }
+
+  async findPendingCleanups(userId?: string): Promise<ResumeDocument[]> {
+    return this.prisma.resumeDocument.findMany({
+      where: {
+        cleanupStatus: 'CLEANUP_PENDING',
+        ...(userId ? { userId } : {}),
       },
     });
-
-    return activeDoc;
   }
 }

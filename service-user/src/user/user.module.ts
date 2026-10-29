@@ -32,6 +32,10 @@ const hasProto = existsSync(resolvedProtoPath);
               package: 'resume',
               protoPath: resolvedProtoPath,
               url: process.env.RESUME_GRPC_URL || 'localhost:50051',
+              channelOptions: {
+                'grpc.max_receive_message_length': 16 * 1024 * 1024,
+                'grpc.max_send_message_length': 16 * 1024 * 1024,
+              },
             },
           },
         ]),

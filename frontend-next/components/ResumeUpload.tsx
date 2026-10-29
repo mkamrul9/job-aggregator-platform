@@ -14,30 +14,38 @@ export default function ResumeUpload() {
   const [dragActive, setDragActive] = useState(false);
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pollCountRef = useRef(0);
+  const isPollingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const cleanupPolling = useCallback(() => {
-    if (pollingTimerRef.current) {
-      clearInterval(pollingTimerRef.current);
-      pollingTimerRef.current = null;
+    isPollingRef.current = false;
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
   }, []);
-
-  useEffect(() => {
-    return () => cleanupPolling();
-  }, [cleanupPolling]);
 
   const pollParseStatus = useCallback(
     (targetParseId: string, authToken: string) => {
       cleanupPolling();
       pollCountRef.current = 0;
+      isPollingRef.current = true;
 
-      pollingTimerRef.current = setInterval(async () => {
+      const runPollStep = async () => {
+        if (!isPollingRef.current) return;
         pollCountRef.current += 1;
 
-        // Bounded polling ceiling: 25 attempts x 1.5s = 37.5s max
-        if (pollCountRef.current > 25) {
+        // Bounded polling ceiling: 30 attempts x 1.5s = 45s max
+        if (pollCountRef.current > 30) {
           cleanupPolling();
           setStage('ERROR');
           setError('Resume extraction timed out. Please try uploading again.');
@@ -45,44 +53,136 @@ export default function ResumeUpload() {
         }
 
         try {
+          const controller = new AbortController();
+          abortControllerRef.current = controller;
+
           const res = await fetch(`/api/v1/users/resume/status/${targetParseId}`, {
             headers: { Authorization: `Bearer ${authToken}` },
+            signal: controller.signal,
           });
+
+          if (!isPollingRef.current) return;
 
           if (!res.ok) {
             if (res.status === 404) {
               cleanupPolling();
               setStage('ERROR');
               setError('Resume parse task not found or unauthorized.');
+              return;
             }
+          } else {
+            const data = await res.json();
+            if (!isPollingRef.current) return;
+
+            if (data.status === 'COMPLETED') {
+              cleanupPolling();
+              const skills: string[] = data.extracted_skills || [];
+              setExtractedSkills(skills);
+              setSelectedSkills(new Set(skills));
+              setStage('REVIEW');
+              return;
+            } else if (data.status === 'FAILED') {
+              cleanupPolling();
+              setStage('ERROR');
+              if (data.error_code === 'SCANNED_PDF_NO_TEXT') {
+                setError(
+                  'No selectable text layer found in document. Scanned PDFs are not supported under standard parsing.',
+                );
+              } else if (data.error_code === 'ENCRYPTED_PDF') {
+                setError(
+                  'The PDF file is password protected. Please upload an unencrypted document.',
+                );
+              } else if (data.error_code === 'PAGE_LIMIT_EXCEEDED') {
+                setError(
+                  'Document exceeds supported page limit with no selectable text found in initial pages.',
+                );
+              } else {
+                setError(
+                  data.error_message || 'Resume parsing could not be completed.',
+                );
+              }
+              return;
+            } else if (data.status === 'CANCELLED') {
+              cleanupPolling();
+              setStage('ERROR');
+              setError('Resume parsing task was superseded or cancelled.');
+              return;
+            }
+          }
+        } catch (err: unknown) {
+          if (err instanceof DOMException && err.name === 'AbortError') {
             return;
           }
-
-          const data = await res.json();
-          if (data.status === 'COMPLETED') {
-            cleanupPolling();
-            const skills: string[] = data.extracted_skills || [];
-            setExtractedSkills(skills);
-            setSelectedSkills(new Set(skills)); // Select all by default for candidate convenience
-            setStage('REVIEW');
-          } else if (data.status === 'FAILED') {
-            cleanupPolling();
-            setStage('ERROR');
-            if (data.error_code === 'SCANNED_PDF_NO_TEXT') {
-              setError('No selectable text layer found in document. Scanned PDFs are not supported under standard parsing.');
-            } else if (data.error_code === 'ENCRYPTED_PDF') {
-              setError('The PDF file is password protected. Please upload an unencrypted document.');
-            } else {
-              setError(data.error_message || 'Resume parsing could not be completed.');
-            }
-          }
-        } catch {
-          // Network hiccup: keep polling until timeout
+          // Network hiccup: keep polling sequentially
         }
-      }, 1500);
+
+        if (isPollingRef.current) {
+          pollTimerRef.current = setTimeout(runPollStep, 1500);
+        }
+      };
+
+      runPollStep();
     },
     [cleanupPolling],
   );
+
+  // Hydrate active resume state on load / account switch
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function checkActiveResume() {
+      if (isDemo || !user) return;
+      try {
+        const authToken = token || (await user.getIdToken());
+        const res = await fetch('/api/v1/users/resume', {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok || isCancelled) return;
+
+        const data = await res.json();
+        if (isCancelled) return;
+
+        if (data.has_resume && data.document) {
+          setActiveFileName(data.document.file_name);
+          if (data.latest_parse) {
+            setParseId(data.latest_parse.id);
+            if (data.latest_parse.status === 'COMPLETED') {
+              const reviewed: string[] = data.latest_parse.reviewed_skills || [];
+              const extracted: string[] = data.latest_parse.extracted_skills || [];
+              setExtractedSkills(extracted);
+              if (reviewed.length > 0) {
+                setSelectedSkills(new Set(reviewed));
+                setStage('SUCCESS');
+              } else {
+                setSelectedSkills(new Set(extracted));
+                setStage('REVIEW');
+              }
+            } else if (
+              data.latest_parse.status === 'QUEUED' ||
+              data.latest_parse.status === 'PROCESSING'
+            ) {
+              setStage('PROCESSING');
+              pollParseStatus(data.latest_parse.id, authToken);
+            }
+          } else {
+            setStage('SUCCESS');
+          }
+        }
+      } catch {
+        // Leave in default IDLE stage if check fails
+      }
+    }
+
+    checkActiveResume();
+
+    return () => {
+      isCancelled = true;
+      cleanupPolling();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [user, token, isDemo, pollParseStatus, cleanupPolling]);
 
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -101,7 +201,7 @@ export default function ResumeUpload() {
     }
 
     if (candidateFile.size > 10 * 1024 * 1024) {
-      setError('File size exceeds the maximum 10MB limit.');
+      setError('File exceeds maximum 10MB limit.');
       return;
     }
 
@@ -112,24 +212,28 @@ export default function ResumeUpload() {
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) {
-      setError('Please select a PDF resume file.');
+      setError('Please select a PDF resume file to upload.');
       return;
     }
 
     setError(null);
     setStage('UPLOADING');
 
-    // Portfolio Demonstration Mode Fallback
+    // Synthetic demo path
     if (isDemo || !user) {
       setTimeout(() => {
-        setStage('REVIEW');
-        const demoSkills = ['Go', 'Python', 'FastAPI', 'React', 'Docker', 'Kubernetes', 'PostgreSQL'];
-        setExtractedSkills(demoSkills);
-        setSelectedSkills(new Set(demoSkills));
-      }, 1200);
+        setStage('PROCESSING');
+        setTimeout(() => {
+          const demoExtracted = ['React', 'TypeScript', 'Next.js', 'Node.js', 'PostgreSQL', 'Docker', 'TailwindCSS'];
+          setExtractedSkills(demoExtracted);
+          setSelectedSkills(new Set(demoExtracted));
+          setStage('REVIEW');
+        }, 1200);
+      }, 600);
       return;
     }
 
+    // Authenticated API flow
     try {
       const authToken = token || (await user.getIdToken());
       const formData = new FormData();
@@ -144,9 +248,6 @@ export default function ResumeUpload() {
       });
 
       if (!response.ok) {
-        if (response.status === 413) {
-          throw new Error('File exceeds the 10MB upload ceiling.');
-        }
         const errJson = await response.json().catch(() => ({}));
         throw new Error(errJson.message || `Upload failed with HTTP ${response.status}`);
       }
@@ -156,7 +257,7 @@ export default function ResumeUpload() {
       setParseId(newParseId);
       setStage('PROCESSING');
 
-      // Start polling for async extraction results
+      // Start sequential polling for async extraction results
       pollParseStatus(newParseId, authToken);
     } catch (err: unknown) {
       setStage('ERROR');
@@ -227,25 +328,71 @@ export default function ResumeUpload() {
   const handleDeleteResume = async () => {
     if (!confirm('Are you sure you want to remove your resume document?')) return;
 
+    setError(null);
+    setDeleting(true);
+
     if (!isDemo && user) {
       try {
         const authToken = token || (await user.getIdToken());
-        await fetch('/api/v1/users/resume', {
+        const response = await fetch('/api/v1/users/resume', {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${authToken}` },
         });
+
+        if (!response.ok) {
+          const errJson = await response.json().catch(() => ({}));
+          throw new Error(errJson.message || `Removal failed with HTTP ${response.status}`);
+        }
+
         await retrySync();
-      } catch {
-        // Silently clear local UI
+      } catch (err: unknown) {
+        setDeleting(false);
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to remove resume: ${msg}`);
+        return;
       }
     }
 
+    setDeleting(false);
     setStage('IDLE');
     setFile(null);
     setActiveFileName(null);
     setParseId(null);
     setExtractedSkills([]);
     setSelectedSkills(new Set());
+  };
+
+  const handleDownloadResume = async () => {
+    if (isDemo || !user) return;
+    setError(null);
+    setDownloading(true);
+
+    try {
+      const authToken = token || (await user.getIdToken());
+      const res = await fetch('/api/v1/users/resume/download', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || `Download failed with HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = activeFileName || 'resume.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Download error: ${msg}`);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -264,7 +411,7 @@ export default function ResumeUpload() {
           <span style={{ fontSize: '1.25rem' }}>📄</span>
           <div>
             <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--seekers-text-primary)' }}>
-              Candidate Resume & NLP Skill Extraction
+              Candidate Resume &amp; NLP Skill Extraction
             </h3>
             <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}>
               Upload your digital text-layer PDF (max 10MB). Extracted skills are staged for candidate review before profile enrichment.
@@ -272,22 +419,41 @@ export default function ResumeUpload() {
           </div>
         </div>
 
-        {stage === 'SUCCESS' && (
-          <button
-            type="button"
-            onClick={handleDeleteResume}
-            style={{
-              background: 'transparent',
-              border: '1px solid var(--seekers-border-subtle)',
-              borderRadius: 'var(--radius-xs)',
-              padding: '0.35rem 0.65rem',
-              color: 'var(--seekers-danger)',
-              fontSize: '0.75rem',
-              cursor: 'pointer',
-            }}
-          >
-            Remove Resume
-          </button>
+        {activeFileName && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={handleDownloadResume}
+              disabled={downloading}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--seekers-border-subtle)',
+                borderRadius: 'var(--radius-xs)',
+                padding: '0.35rem 0.65rem',
+                color: 'var(--seekers-amber-400)',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+              }}
+            >
+              {downloading ? 'Downloading...' : 'Download PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteResume}
+              disabled={deleting}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--seekers-border-subtle)',
+                borderRadius: 'var(--radius-xs)',
+                padding: '0.35rem 0.65rem',
+                color: 'var(--seekers-danger)',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+              }}
+            >
+              {deleting ? 'Removing...' : 'Remove Resume'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -320,71 +486,85 @@ export default function ResumeUpload() {
               borderRadius: 'var(--radius-sm)',
               padding: '1.75rem 1rem',
               textAlign: 'center',
-              backgroundColor: dragActive ? 'rgba(245, 158, 11, 0.05)' : 'var(--seekers-bg-elevated)',
+              backgroundColor: dragActive ? 'var(--seekers-amber-dim)' : 'var(--seekers-bg-elevated)',
               cursor: 'pointer',
               display: 'block',
-              transition: 'all 150ms ease',
+              transition: 'border-color 0.2s, background-color 0.2s',
             }}
           >
             <input
               type="file"
-              accept="application/pdf"
-              onChange={(e) => validateAndSetFile(e.target.files?.[0])}
+              accept=".pdf,application/pdf"
               style={{ display: 'none' }}
-              id="candidate-resume-file-input"
+              onChange={(e) => validateAndSetFile(e.target.files?.[0])}
             />
-            <div style={{ fontSize: '1.75rem', marginBottom: '0.25rem', color: 'var(--seekers-amber-400)' }}>📎</div>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--seekers-text-primary)' }}>
-              {file ? file.name : 'Choose a PDF resume or drop it here'}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)', marginTop: '0.25rem' }}>
-              {file ? `${(file.size / 1024).toFixed(1)} KB · Ready to upload` : 'Digital PDF only • 10MB limit'}
-            </div>
+            <div style={{ fontSize: '1.75rem', marginBottom: '0.35rem' }}>📂</div>
+            <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--seekers-text-primary)' }}>
+              {file ? file.name : 'Click to select or drag and drop your PDF resume'}
+            </p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)', marginTop: '0.2rem' }}>
+              Text-layer digital PDF only • Maximum 10MB
+            </p>
           </label>
 
-          <button
-            type="submit"
-            disabled={!file}
-            className="btn-amber"
-            style={{ alignSelf: 'flex-start', minHeight: '38px', padding: '0 1.25rem' }}
-            id="candidate-resume-upload-btn"
-          >
-            Upload & Extract Skills
-          </button>
+          {file && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: 'var(--seekers-bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--seekers-border-subtle)' }}>
+              <span style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-secondary)' }}>
+                Selected: <strong>{file.name}</strong> ({(file.size / 1024 / 1024).toFixed(2)} MB)
+              </span>
+              <button
+                type="submit"
+                className="btn-amber"
+                style={{ minHeight: '36px', padding: '0 1rem', fontSize: '0.8125rem' }}
+              >
+                Upload &amp; Extract Skills
+              </button>
+            </div>
+          )}
         </form>
       )}
 
-      {/* Stage: UPLOADING / PROCESSING */}
-      {(stage === 'UPLOADING' || stage === 'PROCESSING') && (
-        <div style={{ padding: '2rem 1rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem', animation: 'spin 1.5s linear infinite' }}>⚙️</div>
-          <div style={{ fontWeight: 600, color: 'var(--seekers-text-primary)', marginBottom: '0.25rem' }}>
-            {stage === 'UPLOADING' ? 'Uploading PDF to private storage...' : 'Extracting skills with spaCy NLP parser...'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}>
-            {activeFileName} • Bounded background processing
-          </div>
+      {/* Stage: UPLOADING */}
+      {stage === 'UPLOADING' && (
+        <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: '3px solid var(--seekers-amber-500)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--seekers-text-primary)' }}>
+            Uploading resume securely to private storage...
+          </p>
         </div>
       )}
 
-      {/* Stage: REVIEW (Extracted Skills Checklist) */}
+      {/* Stage: PROCESSING */}
+      {stage === 'PROCESSING' && (
+        <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+          <div style={{ display: 'inline-block', width: '28px', height: '28px', border: '3px solid var(--seekers-amber-500)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', fontWeight: 600, color: 'var(--seekers-text-primary)' }}>
+            Extracting technical skills with spaCy NLP...
+          </p>
+          <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)', marginTop: '0.25rem' }}>
+            Document ID: {activeFileName} • Polling extraction results asynchronously
+          </p>
+        </div>
+      )}
+
+      {/* Stage: REVIEW */}
       {stage === 'REVIEW' && (
         <div>
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--seekers-text-primary)', marginBottom: '0.25rem' }}>
-              Review Extracted Skills ({extractedSkills.length})
-            </div>
-            <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-secondary)' }}>
-              Select the skills you want to add to your candidate profile. Unchecked skills will not be applied, and your existing manually entered skills are preserved.
+          <div style={{ marginBottom: '0.75rem' }}>
+            <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--seekers-text-primary)' }}>
+              Extracted Skills Staging Area
+            </h4>
+            <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-muted)' }}>
+              Select the skills you want added to your persistent candidate profile. Skills are only merged upon confirmation.
             </p>
           </div>
 
           {extractedSkills.length === 0 ? (
             <p style={{ fontSize: '0.8125rem', color: 'var(--seekers-text-muted)', fontStyle: 'italic', marginBottom: '1rem' }}>
-              No matching technical skills were identified in this document.
+              No canonical technical skills were detected in this document.
             </p>
           ) : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '1rem' }}>
               {extractedSkills.map((skill) => {
                 const isSelected = selectedSkills.has(skill);
                 return (
@@ -393,20 +573,21 @@ export default function ResumeUpload() {
                     type="button"
                     onClick={() => handleToggleSkill(skill)}
                     style={{
-                      display: 'inline-flex',
+                      display: 'flex',
                       alignItems: 'center',
                       gap: '0.35rem',
                       padding: '0.35rem 0.65rem',
-                      borderRadius: 'var(--radius-xs)',
+                      borderRadius: 'var(--radius-pill)',
                       fontSize: '0.8125rem',
-                      cursor: 'pointer',
-                      border: `1px solid ${isSelected ? 'var(--seekers-amber-500)' : 'var(--seekers-border-subtle)'}`,
-                      backgroundColor: isSelected ? 'rgba(245, 158, 11, 0.15)' : 'var(--seekers-bg-elevated)',
+                      fontWeight: isSelected ? 600 : 400,
+                      backgroundColor: isSelected ? 'var(--seekers-amber-dim)' : 'var(--seekers-bg-elevated)',
+                      border: `1px solid ${isSelected ? 'var(--seekers-amber-500)' : 'var(--seekers-border-medium)'}`,
                       color: isSelected ? 'var(--seekers-amber-400)' : 'var(--seekers-text-secondary)',
-                      transition: 'all 120ms ease',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
                     }}
                   >
-                    <span>{isSelected ? '✓' : '+'}</span>
+                    <span>{isSelected ? '☑' : '☐'}</span>
                     <span>{skill}</span>
                   </button>
                 );
@@ -441,19 +622,30 @@ export default function ResumeUpload() {
         <div style={{ padding: '1rem', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
             <span style={{ color: 'var(--seekers-success)', fontWeight: 700 }}>✓</span>
-            <strong style={{ color: '#86efac', fontSize: '0.875rem' }}>Skills Applied Successfully</strong>
+            <strong style={{ color: '#86efac', fontSize: '0.875rem' }}>Resume Active &amp; Skills Enriched</strong>
           </div>
           <p style={{ fontSize: '0.75rem', color: 'var(--seekers-text-secondary)', marginBottom: '0.75rem' }}>
-            Your reviewed skills have been saved to your profile and will be used to personalize job recommendations.
+            Active Document: <strong>{activeFileName || 'resume.pdf'}</strong>. Your reviewed skills have been merged into your profile.
           </p>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setStage('IDLE')}
-            style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem', minHeight: '32px' }}
-          >
-            Upload New Version
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleDownloadResume}
+              disabled={downloading}
+              style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem', minHeight: '32px' }}
+            >
+              {downloading ? 'Downloading...' : 'Download Resume'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setStage('IDLE')}
+              style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem', minHeight: '32px' }}
+            >
+              Upload New Version
+            </button>
+          </div>
         </div>
       )}
 

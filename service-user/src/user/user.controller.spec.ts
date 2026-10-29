@@ -28,6 +28,7 @@ describe('UserController', () => {
     exportUserData: jest.fn(),
     requestAccountDeletion: jest.fn(),
     getAccountStatus: jest.fn(),
+    getActiveResume: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -200,6 +201,22 @@ describe('UserController', () => {
       const res = await controller.getAccountStatus(req);
       expect(res.has_pending_deletion).toBe(true);
       expect(mockUserService.getAccountStatus).toHaveBeenCalledWith(
+        'candidate-99',
+      );
+    });
+  });
+
+  describe('GET /users/resume', () => {
+    it('should return active resume information for candidate', async () => {
+      const req = createMockRequest({ uid: 'candidate-99' });
+      mockUserService.getActiveResume.mockResolvedValue({
+        has_resume: true,
+        document: { id: 'doc-1' },
+      });
+
+      const res = await controller.getActiveResume(req);
+      expect(res.has_resume).toBe(true);
+      expect(mockUserService.getActiveResume).toHaveBeenCalledWith(
         'candidate-99',
       );
     });

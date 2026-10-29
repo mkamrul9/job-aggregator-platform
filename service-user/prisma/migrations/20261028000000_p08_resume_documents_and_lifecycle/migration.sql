@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS "ResumeDocument" (
     "checksumSha256" TEXT NOT NULL,
     "mimeType" TEXT NOT NULL DEFAULT 'application/pdf',
     "status" TEXT NOT NULL DEFAULT 'UPLOADED',
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "cleanupStatus" TEXT NOT NULL DEFAULT 'CLEANED',
+    "deletedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -34,8 +37,11 @@ CREATE TABLE IF NOT EXISTS "ResumeParseResult" (
     "errorMessage" TEXT,
     "processingTimeMs" INTEGER,
     "attemptCount" INTEGER NOT NULL DEFAULT 0,
+    "maxAttempts" INTEGER NOT NULL DEFAULT 3,
+    "fenceToken" INTEGER NOT NULL DEFAULT 0,
     "claimedBy" TEXT,
     "claimedUntil" TIMESTAMP(3),
+    "nextAttemptAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -46,3 +52,12 @@ CREATE TABLE IF NOT EXISTS "ResumeParseResult" (
 
 CREATE INDEX IF NOT EXISTS "ResumeParseResult_userId_status_idx" ON "ResumeParseResult"("userId", "status");
 CREATE INDEX IF NOT EXISTS "ResumeParseResult_documentId_idx" ON "ResumeParseResult"("documentId");
+
+-- Idempotent schema alignment for pre-existing tables
+ALTER TABLE "ResumeDocument" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "ResumeDocument" ADD COLUMN IF NOT EXISTS "cleanupStatus" TEXT NOT NULL DEFAULT 'CLEANED';
+ALTER TABLE "ResumeDocument" ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMP(3);
+
+ALTER TABLE "ResumeParseResult" ADD COLUMN IF NOT EXISTS "maxAttempts" INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE "ResumeParseResult" ADD COLUMN IF NOT EXISTS "fenceToken" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "ResumeParseResult" ADD COLUMN IF NOT EXISTS "nextAttemptAt" TIMESTAMP(3);

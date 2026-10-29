@@ -152,10 +152,10 @@ export class UserController {
   }
 
   /**
-   * GET /users/account-status or /users/account/status
+   * GET /users/account-status
    * Returns current account lifecycle status, pending deletions, and exports.
    */
-  @Get(['account-status', 'account/status'])
+  @Get('account-status')
   @UseGuards(FirebaseAuthGuard)
   async getAccountStatus(@Req() request: AuthenticatedRequest) {
     const uid = request.user?.uid;
@@ -281,6 +281,21 @@ export class UserController {
       body.parse_id,
       body.selected_skills,
     );
+  }
+
+  /**
+   * GET /users/resume
+   * Retrieves active resume document and latest parse info for candidate UI hydration.
+   */
+  @Get('resume')
+  @UseGuards(FirebaseAuthGuard)
+  async getActiveResume(@Req() request: AuthenticatedRequest) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+
+    return this.userService.getActiveResume(uid);
   }
 
   /**

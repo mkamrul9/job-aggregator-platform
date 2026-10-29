@@ -376,9 +376,9 @@ async function run() {
   assert(Array.isArray(statusRes.data && statusRes.data.recent_exports) && statusRes.data.recent_exports.length >= 1, 'Status reflects at least 1 recorded recent export', statusRes.data && statusRes.data.recent_exports);
 
   // Step 17: P08 Multipart Resume Upload (/users/resume/upload)
-  console.log('\n[17/20] Testing multipart PDF resume upload (/users/resume/upload)...');
+  console.log('\n[17/25] Testing multipart PDF resume upload (/users/resume/upload)...');
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-  const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n5 0 obj\n<< /Length 75 >>\nstream\nBT /F1 12 Tf 72 720 Td (Candidate CV skilled in Python, Go, and Kubernetes.) Tj ET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000224 00000 n \n0000000293 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n420\n%%EOF\n';
+  const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n5 0 obj\n<< /Length 85 >>\nstream\nBT /F1 12 Tf 72 720 Td (Candidate CV. Skills: Python, Docker, Kubernetes, and FastAPI.) Tj ET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000224 00000 n \n0000000293 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n430\n%%EOF\n';
 
   const multipartPrefix = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="candidate_resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`;
   const multipartSuffix = `\r\n--${boundary}--\r\n`;
@@ -402,30 +402,139 @@ async function run() {
   assert(uploadRes.data && uploadRes.data.status === 'QUEUED', 'Initial parse status is QUEUED', uploadRes.data && uploadRes.data.status);
   const parseId = uploadRes.data ? uploadRes.data.parse_id : 'none';
 
-  // Step 18: P08 Resume Parse Status Query (/users/resume/status/:parseId)
-  console.log('\n[18/20] Testing resume status query for owning candidate...');
-  const resumeStatusRes = await request(`${API_BASE}/users/resume/status/${parseId}`, {
+  // Step 18: Poll for Asynchronous Extraction Lifecycle
+  console.log('\n[18/25] Polling for parse worker completion or terminal status...');
+  let latestStatus = 'QUEUED';
+  let pollData = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    const pollRes = await request(`${API_BASE}/users/resume/status/${parseId}`, {
+      headers: { Authorization: `Bearer ${candidateA.token}` },
+    });
+    if (pollRes.status === 200 && pollRes.data) {
+      pollData = pollRes.data;
+      latestStatus = pollRes.data.status;
+      if (latestStatus === 'COMPLETED' || latestStatus === 'FAILED') {
+        break;
+      }
+    }
+  }
+
+  assert(pollData && pollData.parse_id === parseId, 'Status response matches parse_id', pollData && pollData.parse_id);
+  assert(latestStatus === 'COMPLETED' || latestStatus === 'QUEUED' || latestStatus === 'PROCESSING', 'Parse worker reached valid state', latestStatus);
+
+  // Step 19: Active Resume Metadata Query (/users/resume)
+  console.log('\n[19/25] Testing candidate active resume metadata query (/users/resume)...');
+  const activeResumeRes = await request(`${API_BASE}/users/resume`, {
     headers: { Authorization: `Bearer ${candidateA.token}` },
   });
-  assert(resumeStatusRes.status === 200, 'Resume status returns HTTP 200', resumeStatusRes.status);
-  assert(resumeStatusRes.data && resumeStatusRes.data.parse_id === parseId, 'Status response matches parse_id', resumeStatusRes.data && resumeStatusRes.data.parse_id);
-  assert(resumeStatusRes.data && (resumeStatusRes.data.status === 'QUEUED' || resumeStatusRes.data.status === 'PROCESSING' || resumeStatusRes.data.status === 'COMPLETED' || resumeStatusRes.data.status === 'FAILED'), 'Parse status is a valid lifecycle state', resumeStatusRes.data && resumeStatusRes.data.status);
+  assert(activeResumeRes.status === 200, 'Active resume query returns HTTP 200', activeResumeRes.status);
+  assert(activeResumeRes.data && activeResumeRes.data.has_resume === true, 'Active resume confirmed present', activeResumeRes.data && activeResumeRes.data.has_resume);
+  assert(activeResumeRes.data && activeResumeRes.data.document && activeResumeRes.data.document.file_name === 'candidate_resume.pdf', 'Document file name preserved', activeResumeRes.data?.document?.file_name);
 
-  // Step 19: Cross-Candidate Ownership Protection on Resume Status
-  console.log('\n[19/20] Testing cross-candidate status boundary (Candidate B accesses Candidate A parseId)...');
+  // Step 20: Candidate Resume Download (/users/resume/download)
+  console.log('\n[20/25] Testing authorized candidate resume download (/users/resume/download)...');
+  const downloadRes = await request(`${API_BASE}/users/resume/download`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(downloadRes.status === 200, 'Resume download returns HTTP 200', downloadRes.status);
+  assert(typeof downloadRes.data === 'string' && downloadRes.data.startsWith('%PDF'), 'Downloaded content starts with %PDF magic header', downloadRes.data?.substring(0, 5));
+
+  // Step 21: Candidate Skill Review Staging (/users/resume/review)
+  console.log('\n[21/25] Testing candidate skill review and explicit profile staging (/users/resume/review)...');
+  // If extractor completed, review Python; if still queued, test with simulated review
+  if (latestStatus === 'COMPLETED') {
+    const reviewRes = await request(`${API_BASE}/users/resume/review`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${candidateA.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: {
+        parse_id: parseId,
+        selected_skills: ['Python', 'Docker'],
+      },
+    });
+    assert(reviewRes.status === 200, 'Skill review returns HTTP 200', reviewRes.status);
+    assert(Array.isArray(reviewRes.data?.skills) && reviewRes.data.skills.includes('Python'), 'Profile contains newly reviewed Python skill', reviewRes.data?.skills);
+    assert(reviewRes.data?.skills.includes('TypeScript'), 'Candidate manual skills (TypeScript) were not clobbered', reviewRes.data?.skills);
+  } else {
+    // Parser offline: assert review rejects incomplete task with 400
+    const incompleteReviewRes = await request(`${API_BASE}/users/resume/review`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${candidateA.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: {
+        parse_id: parseId,
+        selected_skills: ['Python'],
+      },
+    });
+    assert(incompleteReviewRes.status === 400, 'Review of incomplete parse task rejected with HTTP 400', incompleteReviewRes.status);
+  }
+
+  // Step 22: Cross-Candidate Ownership Boundaries (Review and Download)
+  console.log('\n[22/25] Testing cross-candidate boundaries on review, status, and download...');
+  const crossReviewRes = await request(`${API_BASE}/users/resume/review`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateB.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      parse_id: parseId,
+      selected_skills: ['Go'],
+    },
+  });
+  assert(crossReviewRes.status === 404, 'Candidate B cannot review Candidate A parse task (HTTP 404)', crossReviewRes.status);
+
+  const crossDownloadRes = await request(`${API_BASE}/users/resume/download`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  assert(crossDownloadRes.status === 404, 'Candidate B with no resume receives HTTP 404 on download', crossDownloadRes.status);
+
   const crossStatusRes = await request(`${API_BASE}/users/resume/status/${parseId}`, {
     headers: { Authorization: `Bearer ${candidateB.token}` },
   });
   assert(crossStatusRes.status === 404, 'Candidate B cannot access Candidate A parse status (HTTP 404)', crossStatusRes.status);
 
-  // Step 20: Candidate Resume Deletion (/users/resume)
-  console.log('\n[20/20] Testing candidate resume deletion (/users/resume)...');
+  // Step 23: Candidate Resume Deletion (/users/resume)
+  console.log('\n[23/25] Testing candidate resume deletion (/users/resume)...');
   const deleteResumeRes = await request(`${API_BASE}/users/resume`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${candidateA.token}` },
   });
   assert(deleteResumeRes.status === 200, 'Resume deletion returns HTTP 200', deleteResumeRes.status);
   assert(deleteResumeRes.data && typeof deleteResumeRes.data.message === 'string', 'Deletion response contains confirmation message', deleteResumeRes.data && deleteResumeRes.data.message);
+
+  // Step 24: Post-Deletion Active Resume State (/users/resume)
+  console.log('\n[24/25] Verifying active resume is no longer present after deletion...');
+  const afterDeleteActiveRes = await request(`${API_BASE}/users/resume`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(afterDeleteActiveRes.status === 200, 'Active resume query after deletion returns HTTP 200', afterDeleteActiveRes.status);
+  assert(afterDeleteActiveRes.data && afterDeleteActiveRes.data.has_resume === false, 'has_resume is false post-deletion', afterDeleteActiveRes.data?.has_resume);
+
+  // Step 25: Post-Deletion Boundary (Late review & download rejected)
+  console.log('\n[25/25] Testing post-deletion review and download rejection...');
+  const lateReviewRes = await request(`${API_BASE}/users/resume/review`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      parse_id: parseId,
+      selected_skills: ['Python'],
+    },
+  });
+  assert(lateReviewRes.status === 400 || lateReviewRes.status === 404, 'Review of deleted document rejected with HTTP 400/404', lateReviewRes.status);
+
+  const lateDownloadRes = await request(`${API_BASE}/users/resume/download`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(lateDownloadRes.status === 404, 'Download after deletion rejected with HTTP 404', lateDownloadRes.status);
 
   // Final Evaluation
   console.log('\n----------------------------------------------------');
@@ -434,7 +543,7 @@ async function run() {
     process.exit(1);
   }
 
-  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 20 integration checks.\x1b[0m`);
+  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 25 integration checks.\x1b[0m`);
 }
 
 run().catch((err) => {

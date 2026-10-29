@@ -293,6 +293,60 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   /users/resume:
+    get:
+      summary: Get Active Resume Information
+      description: Retrieves metadata for the candidate's active resume document and latest parse task.
+      operationId: getActiveResume
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active resume document and parse state retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  has_resume:
+                    type: boolean
+                  document:
+                    type: object
+                    nullable: true
+                    properties:
+                      id:
+                        type: string
+                      file_name:
+                        type: string
+                      file_size_bytes:
+                        type: integer
+                      status:
+                        type: string
+                      created_at:
+                        type: string
+                  latest_parse:
+                    type: object
+                    nullable: true
+                    properties:
+                      id:
+                        type: string
+                      status:
+                        type: string
+                      extracted_skills:
+                        type: array
+                        items:
+                          type: string
+                      reviewed_skills:
+                        type: array
+                        items:
+                          type: string
+                      reviewed_at:
+                        type: string
+                        nullable: true
+                      error_code:
+                        type: string
+                        nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     delete:
       summary: Delete Active Resume
       description: Deletes active resume document and removes object from private storage.

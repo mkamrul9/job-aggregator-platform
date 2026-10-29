@@ -63,6 +63,21 @@ describe('StorageService', () => {
       await expect(service.deleteObject('../../danger')).rejects.toThrow(
         BadRequestException,
       );
+
+      // Sibling prefix escape check
+      await expect(
+        service.putObject('../test-storage-sibling/evil.pdf', validPdf),
+      ).rejects.toThrow(BadRequestException);
+
+      // Illegal character rejection
+      await expect(
+        service.putObject('resumes/user/evil$file.pdf', validPdf),
+      ).rejects.toThrow(BadRequestException);
+
+      // Absolute path rejection
+      await expect(service.putObject('/etc/shadow', validPdf)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('persists, reads, and deletes private storage object atomically', async () => {

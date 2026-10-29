@@ -8,13 +8,32 @@ import time
 # Unified extraction core from main.py
 from main import extract_skills_from_pdf_bytes, extract_skills_from_text
 
+MAX_MESSAGE_LENGTH = 16 * 1024 * 1024  # 16 MB
+
 class ResumeParserServicer(resume_pb2_grpc.ResumeParserServicer):
     def ParseResume(self, request, context):
         start_time = time.time()
-        print(f"Received gRPC request for candidate: {request.candidate_id}, document: {request.document_id}")
+        byte_len = len(request.content_bytes) if request.content_bytes else 0
+        print(f"Received gRPC ParseResume request (payload bytes: {byte_len})")
+
+        # 1. Enforce service authentication if configured
+        expected_token = os.getenv("RESUME_SERVICE_TOKEN")
+        if expected_token:
+            metadata = dict(context.invocation_metadata()) if context else {}
+            auth_header = metadata.get("x-service-auth") or metadata.get("authorization")
+            if not auth_header or (auth_header != expected_token and auth_header != f"Bearer {expected_token}"):
+                if context:
+                    context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid or missing service credentials")
+                return resume_pb2.ParseResponse(
+                    success=False,
+                    skills=[],
+                    error_code="UNAUTHENTICATED",
+                    error_message="Service authentication required.",
+                    processing_time_ms=1
+                )
 
         try:
-            # 1. Preferred secure path: inline content_bytes
+            # 2. Preferred secure path: inline content_bytes
             if request.content_bytes and len(request.content_bytes) > 0:
                 outcome = extract_skills_from_pdf_bytes(request.content_bytes)
                 elapsed_ms = max(1, int((time.time() - start_time) * 1000))
@@ -33,10 +52,19 @@ class ResumeParserServicer(resume_pb2_grpc.ResumeParserServicer):
                         processing_time_ms=elapsed_ms
                     )
 
-            # 2. Backward compatibility path: local file_path
+            # 3. Disallow arbitrary local file_path in integrated / production mode
             if request.file_path:
+                if os.getenv("ALLOW_LOCAL_FILE_PATH") != "true":
+                    elapsed_ms = max(1, int((time.time() - start_time) * 1000))
+                    return resume_pb2.ParseResponse(
+                        success=False,
+                        skills=[],
+                        error_code="FORBIDDEN_INPUT_MODE",
+                        error_message="Raw file_path access is forbidden. Pass content_bytes directly.",
+                        processing_time_ms=elapsed_ms
+                    )
+
                 if not os.path.exists(request.file_path):
-                    print(f"File not found: {request.file_path}")
                     elapsed_ms = max(1, int((time.time() - start_time) * 1000))
                     return resume_pb2.ParseResponse(
                         success=False,
@@ -60,7 +88,7 @@ class ResumeParserServicer(resume_pb2_grpc.ResumeParserServicer):
                     processing_time_ms=elapsed_ms
                 )
 
-            # 3. Neither provided
+            # 4. Neither provided
             elapsed_ms = max(1, int((time.time() - start_time) * 1000))
             return resume_pb2.ParseResponse(
                 success=False,
@@ -72,7 +100,6 @@ class ResumeParserServicer(resume_pb2_grpc.ResumeParserServicer):
 
         except Exception as e:
             elapsed_ms = max(1, int((time.time() - start_time) * 1000))
-            print(f"Error in gRPC ParseResume: {e}")
             return resume_pb2.ParseResponse(
                 success=False,
                 skills=[],
@@ -82,10 +109,15 @@ class ResumeParserServicer(resume_pb2_grpc.ResumeParserServicer):
             )
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    options = [
+        ('grpc.max_receive_message_length', MAX_MESSAGE_LENGTH),
+        ('grpc.max_send_message_length', MAX_MESSAGE_LENGTH),
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=options)
     resume_pb2_grpc.add_ResumeParserServicer_to_server(ResumeParserServicer(), server)
-    server.add_insecure_port('[::]:50051')
-    print("gRPC Server running on port 50051")
+    port = os.getenv("PORT", "50051")
+    server.add_insecure_port(f'[::]:{port}')
+    print(f"gRPC Server running on port {port} (max message limit: {MAX_MESSAGE_LENGTH} bytes)")
     server.start()
     server.wait_for_termination()
 

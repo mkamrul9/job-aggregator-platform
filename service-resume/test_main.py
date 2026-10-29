@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from main import app, generate_sample_pdf_bytes, extract_skills_from_pdf_bytes
+from main import app, generate_sample_pdf_bytes, extract_skills_from_pdf_bytes, extract_skills_from_text
 from grpc_server import ResumeParserServicer
 import resume_pb2
 import io
@@ -139,4 +139,43 @@ def test_grpc_servicer_scanned_rejection():
     res = servicer.ParseResume(req, None)
     assert res.success is False
     assert res.error_code == "SCANNED_PDF_NO_TEXT"
+
+def test_skill_extraction_no_false_positive_go():
+    text = "I go to work every day and go to the gym, then go home."
+    skills = extract_skills_from_text(text)
+    assert "Go" not in skills
+
+def test_skill_extraction_technical_go():
+    text = "Backend Engineer with 5 years experience in Go, Python, and Docker."
+    skills = extract_skills_from_text(text)
+    assert "Go" in skills
+
+def test_page_limit_exceeded_not_labeled_as_scanned():
+    writer = PdfWriter()
+    for _ in range(51):
+        writer.add_blank_page(width=612, height=792)
+    stream = io.BytesIO()
+    writer.write(stream)
+    outcome = extract_skills_from_pdf_bytes(stream.getvalue(), max_pages=50)
+    assert outcome["success"] is False
+    assert outcome["error_code"] == "PAGE_LIMIT_EXCEEDED"
+    assert outcome["error_code"] != "SCANNED_PDF_NO_TEXT"
+
+def test_grpc_servicer_rejects_raw_file_path():
+    servicer = ResumeParserServicer()
+    req = resume_pb2.ParseRequest(
+        file_path="/etc/passwd"
+    )
+    res = servicer.ParseResume(req, None)
+    assert res.success is False
+    assert res.error_code == "FORBIDDEN_INPUT_MODE"
+
+def test_grpc_servicer_enforces_auth_token(monkeypatch):
+    monkeypatch.setenv("RESUME_SERVICE_TOKEN", "super-secret-service-token")
+    servicer = ResumeParserServicer()
+    pdf_bytes = generate_sample_pdf_bytes("Candidate CV", "Python, React")
+    req = resume_pb2.ParseRequest(content_bytes=pdf_bytes)
+    res = servicer.ParseResume(req, None)
+    assert res.success is False
+    assert res.error_code == "UNAUTHENTICATED"
     assert len(res.skills) == 0

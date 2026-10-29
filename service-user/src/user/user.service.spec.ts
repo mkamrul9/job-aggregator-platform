@@ -43,19 +43,27 @@ describe('UserService', () => {
     upsertUser: jest.fn(),
     findById: jest.fn(),
     updateProfile: jest.fn(),
+    updateProfileResumeUrl: jest.fn(),
     createExportRequest: jest.fn(),
     createDeletionRequest: jest.fn(),
     getAccountStatus: jest.fn(),
     updateSkills: jest.fn(),
     createResumeDocument: jest.fn(),
+    createResumeDocumentAtomic: jest.fn(),
     createParseResult: jest.fn(),
     findParseResultById: jest.fn(),
     updateParseResult: jest.fn(),
     updateResumeStatus: jest.fn(),
     applyReviewedSkills: jest.fn(),
     deleteActiveResume: jest.fn(),
+    markActiveResumeDeleted: jest.fn(),
+    findPendingCleanups: jest.fn().mockResolvedValue([]),
+    updateDocumentCleanupStatus: jest.fn(),
     findActiveResume: jest.fn(),
+    findActiveResumeWithLatestParse: jest.fn(),
     findResumeById: jest.fn(),
+    claimNextPendingParseTask: jest.fn(),
+    completeParseTaskFenced: jest.fn(),
   };
 
   const mockClientGrpc = {
@@ -259,17 +267,19 @@ describe('UserService', () => {
 
     describe('uploadResume', () => {
       it('accepts valid PDF, stores to private storage, creates DB records, and returns 202 payload', async () => {
-        mockUserRepository.createResumeDocument.mockResolvedValue({
-          id: 'doc-uuid-1',
-          userId: 'firebase-uid-123',
-          storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
-          fileName: 'candidate_cv.pdf',
-        });
-        mockUserRepository.createParseResult.mockResolvedValue({
-          id: 'parse-uuid-1',
-          documentId: 'doc-uuid-1',
-          userId: 'firebase-uid-123',
-          status: 'QUEUED',
+        mockUserRepository.createResumeDocumentAtomic.mockResolvedValue({
+          document: {
+            id: 'doc-uuid-1',
+            userId: 'firebase-uid-123',
+            storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
+            fileName: 'candidate_cv.pdf',
+          },
+          parseResult: {
+            id: 'parse-uuid-1',
+            documentId: 'doc-uuid-1',
+            userId: 'firebase-uid-123',
+            status: 'QUEUED',
+          },
         });
         mockUserRepository.updateProfile.mockResolvedValue(mockUserWithProfile);
 
@@ -280,8 +290,9 @@ describe('UserService', () => {
         expect(res.message).toContain('accepted for asynchronous processing');
         expect(mockStorageService.validatePdfBuffer).toHaveBeenCalled();
         expect(mockStorageService.putObject).toHaveBeenCalled();
-        expect(mockUserRepository.createResumeDocument).toHaveBeenCalled();
-        expect(mockUserRepository.createParseResult).toHaveBeenCalled();
+        expect(
+          mockUserRepository.createResumeDocumentAtomic,
+        ).toHaveBeenCalled();
       });
     });
 
@@ -328,14 +339,6 @@ describe('UserService', () => {
 
     describe('reviewParseSkills', () => {
       it('merges accepted skills into profile without clobbering existing manual skills', async () => {
-        mockUserRepository.findParseResultById.mockResolvedValue({
-          id: 'parse-uuid-1',
-          userId: 'firebase-uid-123',
-          documentId: 'doc-uuid-1',
-          status: 'COMPLETED',
-          extractedSkills: ['Python', 'Docker'],
-        });
-
         const updatedWithSkills = {
           ...mockUserWithProfile,
           profile: {
@@ -361,33 +364,49 @@ describe('UserService', () => {
           ['Python'],
         );
       });
+    });
 
-      it('rejects review if parse task is still PROCESSING', async () => {
-        mockUserRepository.findParseResultById.mockResolvedValue({
-          id: 'parse-uuid-1',
-          userId: 'firebase-uid-123',
-          status: 'PROCESSING',
+    describe('getActiveResume', () => {
+      it('returns active resume and latest parse state', async () => {
+        mockUserRepository.findActiveResumeWithLatestParse.mockResolvedValue({
+          document: {
+            id: 'doc-uuid-1',
+            fileName: 'resume.pdf',
+            fileSizeBytes: 1024,
+            status: 'PARSED',
+            createdAt: mockDate,
+          },
+          latestParse: {
+            id: 'parse-1',
+            status: 'COMPLETED',
+            extractedSkills: ['React'],
+            reviewedSkills: ['React'],
+            reviewedAt: mockDate,
+            errorCode: null,
+          },
         });
 
-        await expect(
-          service.reviewParseSkills('firebase-uid-123', 'parse-uuid-1', [
-            'Python',
-          ]),
-        ).rejects.toThrow();
+        const res = await service.getActiveResume('firebase-uid-123');
+        expect(res.has_resume).toBe(true);
+        expect(res.document?.file_name).toBe('resume.pdf');
+        expect(res.latest_parse?.status).toBe('COMPLETED');
       });
     });
 
     describe('deleteResume', () => {
       it('deletes active resume document and removes object from storage', async () => {
-        mockUserRepository.deleteActiveResume.mockResolvedValue({
-          id: 'doc-uuid-1',
-          storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
-        });
+        mockUserRepository.markActiveResumeDeleted.mockResolvedValue([
+          {
+            id: 'doc-uuid-1',
+            storageKey: 'resumes/firebase-uid-123/doc-uuid-1.pdf',
+          },
+        ]);
+        mockUserRepository.findPendingCleanups.mockResolvedValue([]);
 
         const res = await service.deleteResume('firebase-uid-123');
 
         expect(res.message).toBe('Resume document deleted successfully');
-        expect(mockUserRepository.deleteActiveResume).toHaveBeenCalledWith(
+        expect(mockUserRepository.markActiveResumeDeleted).toHaveBeenCalledWith(
           'firebase-uid-123',
         );
         expect(mockStorageService.deleteObject).toHaveBeenCalledWith(
