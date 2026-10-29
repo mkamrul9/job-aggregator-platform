@@ -260,6 +260,7 @@ export class UserController {
    * Applies candidate-reviewed skills to persistent candidate profile without clobbering unselected skills.
    */
   @Post('resume/review')
+  @HttpCode(200)
   @UseGuards(FirebaseAuthGuard)
   async reviewResumeSkills(
     @Req() request: AuthenticatedRequest,

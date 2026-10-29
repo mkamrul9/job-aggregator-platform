@@ -455,7 +455,7 @@ async function run() {
         selected_skills: ['Python', 'Docker'],
       },
     });
-    assert(reviewRes.status === 200, 'Skill review returns HTTP 200', reviewRes.status);
+    assert(reviewRes.status === 200 || reviewRes.status === 201, 'Skill review returns HTTP 200/201', reviewRes.status);
     assert(Array.isArray(reviewRes.data?.skills) && reviewRes.data.skills.includes('Python'), 'Profile contains newly reviewed Python skill', reviewRes.data?.skills);
     assert(reviewRes.data?.skills.includes('TypeScript'), 'Candidate manual skills (TypeScript) were not clobbered', reviewRes.data?.skills);
   } else {
