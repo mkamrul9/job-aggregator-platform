@@ -152,10 +152,10 @@ export class UserController {
   }
 
   /**
-   * GET /users/account-status
+   * GET /users/account-status or /users/account/status
    * Returns current account lifecycle status, pending deletions, and exports.
    */
-  @Get('account-status')
+  @Get(['account-status', 'account/status'])
   @UseGuards(FirebaseAuthGuard)
   async getAccountStatus(@Req() request: AuthenticatedRequest) {
     const uid = request.user?.uid;
