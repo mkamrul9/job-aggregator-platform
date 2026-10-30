@@ -119,6 +119,10 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.debug(`Worker poll iteration error: ${msg}`);
       });
+      void this.processDueAccountDeletions().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(`Purge worker poll iteration error: ${msg}`);
+      });
     }, 2000);
   }
 
@@ -201,12 +205,14 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     const exportRecord = await this.userRepository.createExportRequest(userId);
     const comprehensive =
       await this.userRepository.getComprehensiveUserData(userId);
+    const archiveUrl = `/users/account/export/${exportRecord.id}/download`;
 
-    return {
+    const exportResult = {
       user_id: user.id,
       exported_at: new Date().toISOString(),
       request_id: exportRecord.id,
       status: exportRecord.status,
+      archive_url: archiveUrl,
       profile: mapToUserProfileResponse(user, user.profile),
       saved_jobs: comprehensive.savedJobs.map((j) => ({
         id: j.id,
@@ -262,10 +268,130 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         created_at: f.createdAt.toISOString(),
       })),
     };
+
+    try {
+      const buffer = Buffer.from(
+        JSON.stringify(exportResult, null, 2),
+        'utf-8',
+      );
+      await this.storageService.putObject(
+        `exports/${userId}/export-${exportRecord.id}.json`,
+        buffer,
+        { skipPdfCheck: true },
+      );
+      await this.userRepository.updateExportRequest(exportRecord.id, {
+        archiveUrl,
+        completedAt: new Date(),
+        status: 'READY',
+      });
+    } catch (storageErr) {
+      this.logger.warn(
+        `Could not persist export archive to storage: ${storageErr}`,
+      );
+    }
+
+    return exportResult;
   }
 
   async requestAccountExport(userId: string) {
     return this.exportUserData(userId);
+  }
+
+  async downloadExportArchive(
+    userId: string,
+    exportId: string,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const exportRecord = await this.userRepository.findExportRequestById(
+      userId,
+      exportId,
+    );
+    if (!exportRecord) {
+      throw new NotFoundException({
+        code: 'EXPORT_NOT_FOUND',
+        message: `Export request ${exportId} not found for this candidate.`,
+      });
+    }
+
+    const key = `exports/${userId}/export-${exportId}.json`;
+    let buffer = await this.storageService.getObject(key);
+    if (!buffer) {
+      const comprehensive = await this.exportUserData(userId);
+      buffer = Buffer.from(JSON.stringify(comprehensive, null, 2), 'utf-8');
+    }
+
+    return {
+      buffer,
+      fileName: `seekers-export-${userId}-${exportId}.json`,
+    };
+  }
+
+  async cancelAccountDeletion(userId: string): Promise<{
+    success: boolean;
+    message: string;
+    request_id: string;
+    status: string;
+  }> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'Cannot cancel deletion: candidate account not found.',
+      });
+    }
+
+    const cancelledRecord =
+      await this.userRepository.cancelAccountDeletion(userId);
+    return {
+      success: true,
+      message:
+        'Account deletion request cancelled successfully. Your account remains active.',
+      request_id: cancelledRecord.id,
+      status: cancelledRecord.status,
+    };
+  }
+
+  async processDueAccountDeletions(
+    referenceTime: Date = new Date(),
+  ): Promise<number> {
+    const dueRequests = await this.userRepository.findDueAccountDeletions(
+      referenceTime,
+      10,
+    );
+    let purgedCount = 0;
+
+    for (const req of dueRequests) {
+      const claimed = await this.userRepository.markAccountDeletionProcessing(
+        req.id,
+      );
+      if (!claimed) continue;
+
+      try {
+        const { userId, resumeStorageKeys } =
+          await this.userRepository.purgeAccount(req.userId);
+
+        for (const storageKey of resumeStorageKeys) {
+          try {
+            await this.storageService.deleteObject(storageKey);
+          } catch (storageErr) {
+            this.logger.warn(
+              `Failed to delete resume object ${storageKey} during purge: ${storageErr}`,
+            );
+          }
+        }
+
+        this.recommendationsCache.delete(userId);
+        this.logger.log(
+          `[PurgeWorker] Successfully purged candidate account ${userId} and associated private files.`,
+        );
+        purgedCount++;
+      } catch (purgeErr) {
+        this.logger.error(
+          `[PurgeWorker] Failed to purge candidate account ${req.userId}: ${purgeErr}`,
+        );
+      }
+    }
+
+    return purgedCount;
   }
 
   async requestAccountDeletion(

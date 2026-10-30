@@ -17,7 +17,7 @@
   </div>
 
   <!-- Status Notification Banner -->
-  <div *ngIf="statusMessage"
+  <div *ngIf="statusMessage" aria-live="polite"
        class="p-3 rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] text-xs text-[var(--seekers-success)] flex items-center justify-between">
     <span>{{ statusMessage }}</span>
     <button (click)="statusMessage = ''" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
@@ -65,12 +65,12 @@
       <table class="w-full text-left text-xs">
         <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
           <tr>
-            <th class="py-2.5 px-3 font-semibold">Listing & Employer</th>
-            <th class="py-2.5 px-3 font-semibold">Location</th>
-            <th class="py-2.5 px-3 font-semibold">Source & Clicks</th>
-            <th class="py-2.5 px-3 font-semibold">Ingestion Time</th>
-            <th class="py-2.5 px-3 font-semibold">Status</th>
-            <th class="py-2.5 px-3 font-semibold text-right">Moderation Actions</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold">Listing & Employer</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold">Location</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold">Source & Clicks</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold">Ingestion Time</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold">Status</th>
+            <th scope="col" class="py-2.5 px-3 font-semibold text-right">Moderation Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
@@ -187,12 +187,14 @@
   <div *ngIf="selectedJobForInspection"
        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
        role="dialog"
-       aria-modal="true">
+       aria-modal="true"
+       aria-labelledby="inspection-dialog-title"
+       (keydown.escape)="closeInspection()">
     <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
       
       <div class="px-5 py-4 border-b border-[var(--seekers-border-subtle)] flex items-center justify-between">
         <div>
-          <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+          <h3 id="inspection-dialog-title" class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
             Canonical Job Provenance & Deduplication
           </h3>
           <p class="text-[11px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
@@ -251,11 +253,13 @@
   <div *ngIf="selectedJobForAction"
        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
        role="dialog"
-       aria-modal="true">
+       aria-modal="true"
+       aria-labelledby="moderation-dialog-title"
+       (keydown.escape)="closeActionModal()">
     <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
       
       <div class="flex items-center justify-between border-b border-[var(--seekers-border-subtle)] pb-3">
-        <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+        <h3 id="moderation-dialog-title" class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
           Confirm Moderation Action: {{ selectedJobForAction.action }}
         </h3>
         <button (click)="closeActionModal()" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>

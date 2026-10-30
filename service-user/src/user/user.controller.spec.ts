@@ -16,6 +16,7 @@ jest.mock('firebase-admin/auth', () => ({
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import type { AuthenticatedRequest } from '../auth/firebase-auth.guard';
+import type { Response } from 'express';
 import { PrismaService } from '../prisma.service';
 
 describe('UserController', () => {
@@ -28,6 +29,8 @@ describe('UserController', () => {
     exportUserData: jest.fn(),
     requestAccountDeletion: jest.fn(),
     getAccountStatus: jest.fn(),
+    cancelAccountDeletion: jest.fn(),
+    downloadExportArchive: jest.fn(),
     getActiveResume: jest.fn(),
     getRecommendations: jest.fn(),
     submitRecommendationFeedback: jest.fn(),
@@ -207,6 +210,51 @@ describe('UserController', () => {
       expect(mockUserService.getAccountStatus).toHaveBeenCalledWith(
         'candidate-99',
       );
+    });
+  });
+
+  describe('POST /users/account/cancel-deletion', () => {
+    it('cancels pending deletion for authenticated candidate', async () => {
+      const req = createMockRequest({ uid: 'candidate-99' });
+      mockUserService.cancelAccountDeletion.mockResolvedValue({
+        success: true,
+        message: 'Account deletion cancelled successfully.',
+        status: 'CANCELLED',
+      });
+
+      const res = await controller.cancelAccountDeletion(req);
+      expect(res.success).toBe(true);
+      expect(res.status).toBe('CANCELLED');
+      expect(mockUserService.cancelAccountDeletion).toHaveBeenCalledWith(
+        'candidate-99',
+      );
+    });
+  });
+
+  describe('GET /users/account/export/:id/download', () => {
+    it('sets attachment headers and streams export buffer', async () => {
+      const req = createMockRequest({ uid: 'candidate-99' });
+      const setHeaderMock = jest.fn();
+      const sendMock = jest.fn();
+      const mockRes = {
+        setHeader: setHeaderMock,
+        send: sendMock,
+      } as unknown as Response;
+      mockUserService.downloadExportArchive.mockResolvedValue({
+        buffer: Buffer.from('{"profile":{}}', 'utf-8'),
+        fileName: 'seekers-export-candidate-99-exp-1.json',
+      });
+
+      await controller.downloadExport(req, 'exp-1', mockRes);
+      expect(setHeaderMock).toHaveBeenCalledWith(
+        'Content-Type',
+        'application/json',
+      );
+      expect(setHeaderMock).toHaveBeenCalledWith(
+        'Content-Disposition',
+        'attachment; filename="seekers-export-candidate-99-exp-1.json"',
+      );
+      expect(sendMock).toHaveBeenCalled();
     });
   });
 

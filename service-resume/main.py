@@ -446,6 +446,13 @@ DEMO_HTML = """<!DOCTYPE html>
 </head>
 <body>
 
+  <a href="#main-content"
+     style="position: absolute; left: -9999px; top: 1rem; z-index: 999; padding: 0.5rem 1rem; background: var(--amber-500); color: #090d16; font-weight: 700; border-radius: 4px; text-decoration: none;"
+     onfocus="this.style.left='1rem'"
+     onblur="this.style.left='-9999px'">
+    Skip to main content
+  </a>
+
   <header>
     <div class="brand-wrap">
       <div class="brand-logo">S</div>
@@ -463,7 +470,7 @@ DEMO_HTML = """<!DOCTYPE html>
     </div>
   </header>
 
-  <main>
+  <main id="main-content" tabindex="-1">
 
     <!-- Privacy Notice -->
     <div class="alert-box alert-info">
@@ -483,7 +490,7 @@ DEMO_HTML = """<!DOCTYPE html>
 
       <!-- Dropzone -->
       <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
-        <input type="file" id="file-input" accept="application/pdf" style="display: none;" onchange="handleFileSelected(event)">
+        <input type="file" id="file-input" aria-label="Upload PDF resume document" accept="application/pdf" style="display: none;" onchange="handleFileSelected(event)">
         <div style="font-size: 2.25rem; margin-bottom: 0.5rem; color: var(--amber-400);">📄</div>
         <div style="font-weight: 600; font-size: 1rem; color: var(--text-primary); margin-bottom: 0.25rem;" id="dropzone-label">
           Choose a PDF resume or drop it here

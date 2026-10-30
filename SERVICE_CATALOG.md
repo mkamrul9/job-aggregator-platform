@@ -206,13 +206,15 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 84 Jest unit tests across 9 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (39 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`, `20261029000000_p09_candidate_workspace_and_support`, `20261030000000_p10_recommendations_and_feedback`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
-- **Completed in Phases P05, P08, P09 & P10:**
+- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 112 Jest unit tests across 10 suites (including dedicated `p13-qualification.spec.ts`), negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`, `20261029000000_p09_candidate_workspace_and_support`, `20261030000000_p10_recommendations_and_feedback`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Completed in Phases P05, P08, P09, P10 & P13:**
   - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
   - Persistent candidate profile read & update (`GET/PUT /users/profile`).
   - Scheduled account deletion with 30-day grace period and idempotency (`POST /users/account/delete`).
-  - Personal data export request tracking (`POST /users/account/export`).
-  - Role-based server-side authorization enforcement (`RolesGuard` with `@Roles('ADMIN')`).
+  - P13 Account Deletion Cancellation (`POST /users/account/cancel-deletion`): Cancels active pending deletion during 30-day grace period, restoring status to active.
+  - P13 Asynchronous Account Erasure Purge Worker: Identifies due deletion requests, removes physical resume files from private object storage, and cascades deletion of user records and all related rows from PostgreSQL.
+  - P13 Portable Data Export & Secure Download (`POST /users/account/export` and `GET /users/account/export/:id/download`): Packages complete personal data, persists archive to private storage, and streams download with strict owner-only authorization (preventing foreign-tenant snooping).
+  - Role-based server-side authorization enforcement (`RolesGuard` with `@Roles('ADMIN')`, `OPERATOR`, `READ_ONLY`).
   - P08 Account-owned private resume storage (`StorageService`) with `%PDF` magic bytes validation, 10MB bounds, SHA256 checksums, strict containment with separator, and safe key grammar to prevent directory traversal and sibling escapes.
   - P08 Asynchronous parsing lifecycle (`ResumeDocument`, `ResumeParseResult`), durable worker dispatch with lease fencing (`fenceToken`), recovery loop, and polling status endpoint (`GET /users/resume/status/:parseId`).
   - P08 Active resume query endpoint (`GET /users/resume`) for state hydration and UI synchronization.
@@ -367,9 +369,12 @@ All platform services interact through versioned machine-readable contracts loca
 
 ---
 
-## 5. Security & Secret Hygiene Baseline
+## 5. Security, Privacy & Accessibility Baseline (P13 Qualified)
 
 1. **Remote Repository URL:** Configured with clean, credential-free URL (`https://github.com/mkamrul9/job-aggregator-platform.git`) using Git Credential Manager (`manager`). No credentials embedded in Git configuration.
 2. **Environment Files:** All `.env` and `.env.*` files are untracked and ignored via root and service-level `.gitignore` files.
-3. **Configuration Examples:** Tracked examples contain variables actually consumed by a current service or SDK. The root Compose file currently uses hardcoded values, and Angular/Python apps do not load `.env`; their unused draft examples stay local. A reference file is not proof of an environment loader or an enforced security limit.
+3. **Configuration Examples:** Tracked examples contain variables actually consumed by a current service or SDK. Production modes fail closed on missing or default secrets (`ADMIN_KEY`, `AUTH_SECRET`).
 4. **Local Secrets:** Kept strictly local (e.g. `.secrets`, `docs/token_cmd.txt` are gitignored).
+5. **P13 Privacy & Data Retention:** Complete asynchronous account erasure with 30-day grace period, cancellation before grace expiration, controllable reference clock purge worker (deleting database rows and physical private storage files), and portable personal data export with owner-only streaming download.
+6. **P13 Storage Hardening & SSRF Defense:** Storage keys enforce strict grammar rejecting path traversal, absolute paths, and sibling directory escapes. Resumes validate `%PDF` magic bytes and 10MB bounds. Outbound destination URLs reject loopback, RFC 1918 private subnets, AWS metadata (`169.254.169.254`), ULA IPv6, single-label intranets, and user:pass credentials. JSON-LD serialization escapes script tags (`\u003c/script\u003e`).
+7. **P13 Accessibility Target (WCAG 2.2 AA):** Semantic landmarks (`<header role="banner">`, `<main id="main-content">`, `<nav aria-label="...">`, `<footer role="contentinfo">`), skip to content links across Next.js candidate app, Angular admin, and Python standalone UI, accessible names on all inputs and icon buttons, modal dialog attributes (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`, `Escape` key close), table header scopes (`scope="col"`), and status announcements (`aria-live="polite"`).

@@ -195,6 +195,29 @@ export class UserRepository {
     });
   }
 
+  async findExportRequestById(
+    userId: string,
+    exportId: string,
+  ): Promise<AccountExportRequest | null> {
+    return this.prisma.accountExportRequest.findFirst({
+      where: { id: exportId, userId },
+    });
+  }
+
+  async updateExportRequest(
+    exportId: string,
+    data: {
+      status?: string;
+      archiveUrl?: string;
+      completedAt?: Date;
+    },
+  ): Promise<AccountExportRequest> {
+    return this.prisma.accountExportRequest.update({
+      where: { id: exportId },
+      data,
+    });
+  }
+
   async createDeletionRequest(
     userId: string,
     idempotencyKey?: string,
@@ -228,8 +251,10 @@ export class UserRepository {
       return existingPending;
     }
 
-    // 3. Create new deletion request with 30-day grace period
-    const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
+    // 3. Create new deletion request with configurable (default 30-day) grace period
+    const gracePeriodMs = process.env.DELETION_GRACE_PERIOD_MS
+      ? parseInt(process.env.DELETION_GRACE_PERIOD_MS, 10)
+      : 30 * 24 * 60 * 60 * 1000;
     const scheduledFor = new Date(Date.now() + gracePeriodMs);
 
     try {
@@ -262,6 +287,74 @@ export class UserRepository {
       }
       throw error;
     }
+  }
+
+  async cancelAccountDeletion(userId: string): Promise<AccountDeletionRequest> {
+    const existingPending = await this.prisma.accountDeletionRequest.findFirst({
+      where: {
+        userId,
+        status: 'PENDING',
+      },
+      orderBy: { requestedAt: 'desc' },
+    });
+
+    if (!existingPending) {
+      throw new NotFoundException({
+        code: 'NO_PENDING_DELETION',
+        message: 'No pending account deletion request found to cancel.',
+      });
+    }
+
+    return this.prisma.accountDeletionRequest.update({
+      where: { id: existingPending.id },
+      data: { status: 'CANCELLED' },
+    });
+  }
+
+  async findDueAccountDeletions(
+    referenceTime: Date = new Date(),
+    limit = 10,
+  ): Promise<AccountDeletionRequest[]> {
+    return this.prisma.accountDeletionRequest.findMany({
+      where: {
+        status: 'PENDING',
+        scheduledFor: { lte: referenceTime },
+      },
+      orderBy: { scheduledFor: 'asc' },
+      take: limit,
+    });
+  }
+
+  async markAccountDeletionProcessing(
+    id: string,
+  ): Promise<AccountDeletionRequest | null> {
+    try {
+      return await this.prisma.accountDeletionRequest.update({
+        where: { id, status: 'PENDING' },
+        data: { status: 'PROCESSING' },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async purgeAccount(userId: string): Promise<{
+    userId: string;
+    resumeStorageKeys: string[];
+  }> {
+    // Collect all resume documents for private object storage deletion
+    const resumes = await this.prisma.resumeDocument.findMany({
+      where: { userId },
+      select: { storageKey: true },
+    });
+    const resumeStorageKeys = resumes.map((r) => r.storageKey);
+
+    // Atomically delete the user; foreign keys will cascade-delete all child records
+    await this.prisma.user.delete({
+      where: { id: userId },
+    });
+
+    return { userId, resumeStorageKeys };
   }
 
   async getAccountStatus(userId: string): Promise<{

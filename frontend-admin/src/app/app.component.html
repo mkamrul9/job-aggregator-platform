@@ -1,5 +1,11 @@
 <div class="flex flex-col h-screen w-full overflow-hidden bg-[var(--seekers-bg-base)] text-[var(--seekers-text-primary)]">
   
+  <!-- Skip to Content for Accessibility -->
+  <a href="#admin-main"
+     class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-3 focus:py-2 focus:bg-amber-500 focus:text-slate-950 focus:font-semibold focus:rounded focus:outline-none focus:ring-2 focus:ring-amber-400">
+    Skip to main content
+  </a>
+
   <!-- Global Top Header -->
   <app-header (mobileMenuToggle)="toggleMobileDrawer()"></app-header>
 
@@ -13,7 +19,8 @@
     <div *ngIf="mobileDrawerOpen"
          class="md:hidden fixed inset-0 z-40 flex"
          role="dialog"
-         aria-modal="true">
+         aria-modal="true"
+         aria-label="Mobile Navigation Drawer">
       <div (click)="closeMobileDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm"></div>
       <div class="relative flex-1 flex flex-col max-w-xs w-full bg-[var(--seekers-bg-elevated)] z-50">
         <app-sidebar [mobileOpen]="true" (closeDrawer)="closeMobileDrawer()"></app-sidebar>
@@ -21,7 +28,7 @@
     </div>
 
     <!-- Main Content View -->
-    <main class="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6 bg-[var(--seekers-bg-base)]">
+    <main id="admin-main" tabindex="-1" class="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6 bg-[var(--seekers-bg-base)]">
       <router-outlet></router-outlet>
     </main>
 

@@ -8,7 +8,15 @@ describe('UserRepository', () => {
     accountDeletionRequest: {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
+      findMany: jest.Mock;
       create: jest.Mock;
+      update: jest.Mock;
+    };
+    resumeDocument: {
+      findMany: jest.Mock;
+    };
+    user: {
+      delete: jest.Mock;
     };
   };
 
@@ -22,7 +30,15 @@ describe('UserRepository', () => {
       accountDeletionRequest: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
+        findMany: jest.fn(),
         create: jest.fn(),
+        update: jest.fn(),
+      },
+      resumeDocument: {
+        findMany: jest.fn(),
+      },
+      user: {
+        delete: jest.fn(),
       },
     };
 
@@ -211,6 +227,71 @@ describe('UserRepository', () => {
       expect(result.id).toBe('del-req-existing-pending');
       expect(result.userId).toBe(candidateAId);
       expect(mockPrisma.accountDeletionRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('cancels pending deletion request and sets status to CANCELLED', async () => {
+      const activePending = {
+        id: 'del-req-123',
+        userId: candidateAId,
+        status: 'PENDING',
+        requestedAt: new Date(),
+        scheduledFor: new Date(Date.now() + 86400000),
+      };
+      mockPrisma.accountDeletionRequest.findFirst.mockResolvedValue(
+        activePending,
+      );
+      mockPrisma.accountDeletionRequest.update.mockResolvedValue({
+        ...activePending,
+        status: 'CANCELLED',
+      });
+
+      const cancelled = await repository.cancelAccountDeletion(candidateAId);
+      expect(cancelled.status).toBe('CANCELLED');
+      expect(mockPrisma.accountDeletionRequest.update).toHaveBeenCalledWith({
+        where: { id: 'del-req-123' },
+        data: { status: 'CANCELLED' },
+      });
+    });
+
+    it('throws NotFoundException when cancelling with no pending request', async () => {
+      mockPrisma.accountDeletionRequest.findFirst.mockResolvedValue(null);
+      await expect(
+        repository.cancelAccountDeletion(candidateAId),
+      ).rejects.toThrow();
+    });
+
+    it('finds due account deletions based on scheduledFor threshold', async () => {
+      const dueRequests = [
+        {
+          id: 'del-1',
+          userId: 'user-1',
+          status: 'PENDING',
+          scheduledFor: new Date(Date.now() - 1000),
+        },
+      ];
+      mockPrisma.accountDeletionRequest.findMany.mockResolvedValue(dueRequests);
+
+      const found = await repository.findDueAccountDeletions(new Date());
+      expect(found).toHaveLength(1);
+      expect(found[0].id).toBe('del-1');
+    });
+
+    it('purges user atomically and returns resume storage keys for physical cleanup', async () => {
+      mockPrisma.resumeDocument.findMany.mockResolvedValue([
+        { storageKey: 'resumes/usr_1/doc_1.pdf' },
+        { storageKey: 'resumes/usr_1/doc_2.pdf' },
+      ]);
+      mockPrisma.user.delete.mockResolvedValue({ id: candidateAId });
+
+      const result = await repository.purgeAccount(candidateAId);
+      expect(result.userId).toBe(candidateAId);
+      expect(result.resumeStorageKeys).toEqual([
+        'resumes/usr_1/doc_1.pdf',
+        'resumes/usr_1/doc_2.pdf',
+      ]);
+      expect(mockPrisma.user.delete).toHaveBeenCalledWith({
+        where: { id: candidateAId },
+      });
     });
   });
 });

@@ -112,8 +112,21 @@ export class StorageService {
   /**
    * Persists an object buffer to private storage under a server-controlled opaque key.
    */
-  async putObject(key: string, buffer: Buffer): Promise<void> {
-    this.validatePdfBuffer(buffer);
+  async putObject(
+    key: string,
+    buffer: Buffer,
+    options: { skipPdfCheck?: boolean } = {},
+  ): Promise<void> {
+    if (!options.skipPdfCheck) {
+      this.validatePdfBuffer(buffer);
+    } else {
+      if (!buffer || buffer.length === 0) {
+        throw new BadRequestException('Buffer is empty');
+      }
+      if (buffer.length > MAX_UPLOAD_BYTES) {
+        throw new PayloadTooLargeException('Buffer exceeds the maximum limit');
+      }
+    }
     const targetPath = this.resolveSafePath(key);
     const parentDir = path.dirname(targetPath);
     await fs.promises.mkdir(parentDir, { recursive: true });

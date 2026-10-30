@@ -1258,7 +1258,7 @@ function CandidatePortalContent() {
       />
 
       {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '1.5rem 0' }}>
+      <main id="main-content" style={{ flex: 1, padding: '1.5rem 0' }} tabIndex={-1}>
         <div className="seekers-container">
           {/* ─── TAB 1: DISCOVER ROLES ──────────────────────────────────── */}
           {activeTab === 'discover' && (

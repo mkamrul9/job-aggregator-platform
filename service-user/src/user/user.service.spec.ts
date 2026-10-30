@@ -50,7 +50,13 @@ describe('UserService', () => {
     updateProfile: jest.fn(),
     updateProfileResumeUrl: jest.fn(),
     createExportRequest: jest.fn(),
+    findExportRequestById: jest.fn(),
+    updateExportRequest: jest.fn(),
     createDeletionRequest: jest.fn(),
+    cancelAccountDeletion: jest.fn(),
+    findDueAccountDeletions: jest.fn(),
+    markAccountDeletionProcessing: jest.fn(),
+    purgeAccount: jest.fn(),
     getAccountStatus: jest.fn(),
     updateSkills: jest.fn(),
     createResumeDocument: jest.fn(),
@@ -240,9 +246,83 @@ describe('UserService', () => {
       expect(exportResult.request_id).toBe('export-req-uuid-1');
       expect(exportResult.status).toBe('READY');
       expect(exportResult.profile.name).toBe('Farhan Ahmed');
+      expect(exportResult.archive_url).toContain(
+        '/users/account/export/export-req-uuid-1/download',
+      );
       expect(Array.isArray(exportResult.applications)).toBe(true);
       expect(Array.isArray(exportResult.saved_jobs)).toBe(true);
       expect(Array.isArray(exportResult.alerts)).toBe(true);
+      expect(mockStorageService.putObject).toHaveBeenCalled();
+    });
+
+    it('downloadExportArchive returns buffer when caller is the owner', async () => {
+      mockUserRepository.findExportRequestById.mockResolvedValue({
+        id: 'export-1',
+        userId: 'firebase-uid-123',
+        status: 'READY',
+      });
+      const exportJson = JSON.stringify({ profile: { name: 'Farhan' } });
+      mockStorageService.getObject.mockResolvedValue(
+        Buffer.from(exportJson, 'utf-8'),
+      );
+
+      const result = await service.downloadExportArchive(
+        'firebase-uid-123',
+        'export-1',
+      );
+      expect(result.buffer).toBeDefined();
+      expect(result.fileName).toContain('export-1.json');
+    });
+
+    it('downloadExportArchive throws NotFoundException when export not found or foreign owner', async () => {
+      mockUserRepository.findExportRequestById.mockResolvedValue(null);
+
+      await expect(
+        service.downloadExportArchive('foreign-uid', 'export-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('cancelAccountDeletion & Purge Worker', () => {
+    it('cancels an active pending account deletion request', async () => {
+      mockUserRepository.findById.mockResolvedValue(mockUserWithProfile);
+      mockUserRepository.cancelAccountDeletion.mockResolvedValue({
+        id: 'del-req-123',
+        status: 'CANCELLED',
+      });
+
+      const res = await service.cancelAccountDeletion('firebase-uid-123');
+      expect(res.success).toBe(true);
+      expect(res.status).toBe('CANCELLED');
+    });
+
+    it('processDueAccountDeletions purges expired requests and cleans storage files', async () => {
+      const dueRequest = {
+        id: 'del-due-1',
+        userId: 'user-to-purge',
+        status: 'PENDING',
+        scheduledFor: new Date(Date.now() - 5000),
+      };
+      mockUserRepository.findDueAccountDeletions.mockResolvedValue([
+        dueRequest,
+      ]);
+      mockUserRepository.markAccountDeletionProcessing.mockResolvedValue({
+        ...dueRequest,
+        status: 'PROCESSING',
+      });
+      mockUserRepository.purgeAccount.mockResolvedValue({
+        userId: 'user-to-purge',
+        resumeStorageKeys: ['resumes/user-to-purge/cv.pdf'],
+      });
+
+      const purgedCount = await service.processDueAccountDeletions();
+      expect(purgedCount).toBe(1);
+      expect(mockUserRepository.purgeAccount).toHaveBeenCalledWith(
+        'user-to-purge',
+      );
+      expect(mockStorageService.deleteObject).toHaveBeenCalledWith(
+        'resumes/user-to-purge/cv.pdf',
+      );
     });
   });
 

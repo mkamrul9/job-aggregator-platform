@@ -151,6 +151,36 @@ export class UserController {
   }
 
   /**
+   * GET /users/account/export/:id/download and /users/export/:id/download
+   * Secure candidate download of generated comprehensive personal data export archive.
+   */
+  @Get(['account/export/:id/download', 'export/:id/download'])
+  @UseGuards(FirebaseAuthGuard)
+  async downloadExport(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') exportId: string,
+    @Res() res: Response,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException({
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
+      });
+    }
+
+    const { buffer, fileName } = await this.userService.downloadExportArchive(
+      uid,
+      exportId,
+    );
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return res.send(buffer);
+  }
+
+  /**
    * POST /users/account/delete and /users/delete
    * Initiates a scheduled deletion request with a 30-day grace period.
    */
@@ -177,6 +207,24 @@ export class UserController {
       effectiveIdempotencyKey,
       validated.reason,
     );
+  }
+
+  /**
+   * POST /users/account/cancel-deletion and /users/delete/cancel
+   * Cancels a pending account deletion request during the 30-day grace period.
+   */
+  @Post(['account/cancel-deletion', 'delete/cancel'])
+  @UseGuards(FirebaseAuthGuard)
+  async cancelAccountDeletion(@Req() request: AuthenticatedRequest) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException({
+        code: 'MISSING_IDENTITY',
+        message: 'Authenticated user ID is missing from security context.',
+      });
+    }
+
+    return this.userService.cancelAccountDeletion(uid);
   }
 
   /**

@@ -840,6 +840,8 @@ paths:
                   exported_at:
                     type: string
                     format: date-time
+                  archive_url:
+                    type: string
                   profile:
                     $ref: '#/components/schemas/UserProfile'
                   applications:
@@ -856,6 +858,31 @@ paths:
                       $ref: '#/components/schemas/AlertSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /users/account/export/{id}/download:
+    get:
+      summary: Download Generated Personal Data Export Archive
+      operationId: downloadExportArchive
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Export request ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Personal data export archive file download.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /users/account/delete:
     post:
@@ -896,6 +923,32 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /users/account/cancel-deletion:
+    post:
+      summary: Cancel Pending Account Deletion (Within 30-Day Grace Period)
+      operationId: cancelAccountDeletion
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Deletion request cancelled successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, status]
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  status:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /reports:
     post:

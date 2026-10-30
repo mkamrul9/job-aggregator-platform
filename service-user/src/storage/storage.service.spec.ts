@@ -99,5 +99,24 @@ describe('StorageService', () => {
       const afterDelete = await service.getObject(key);
       expect(afterDelete).toBeNull();
     });
+
+    it('supports storing generic data buffers when skipPdfCheck is true', async () => {
+      const key = 'exports/usr_test_1/export_123.json';
+      const jsonData = Buffer.from(
+        JSON.stringify({ profile: { name: 'Farhan' } }),
+        'utf-8',
+      );
+
+      await service.putObject(key, jsonData, { skipPdfCheck: true });
+
+      const retrieved = await service.getObject(key);
+      expect(retrieved).not.toBeNull();
+      const parsed = JSON.parse(retrieved!.toString('utf-8')) as {
+        profile: { name: string };
+      };
+      expect(parsed.profile.name).toBe('Farhan');
+
+      await service.deleteObject(key);
+    });
   });
 });

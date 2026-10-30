@@ -315,6 +315,22 @@ async function run() {
   assert(Boolean(exportRes.data && exportRes.data.request_id), 'Export request includes unique request_id', exportRes.data && exportRes.data.request_id);
   assert(exportRes.data && exportRes.data.profile && exportRes.data.profile.name === 'Farhan Ahmed', 'Export archive includes persisted profile snapshot', exportRes.data && exportRes.data.profile);
 
+  // Step 13b: Secure Download of Personal Data Export Archive
+  console.log('\n[13b] Testing authorized export archive download and cross-candidate isolation (/users/account/export/:id/download)...');
+  const exportId = exportRes.data && exportRes.data.request_id;
+  if (exportId) {
+    const downloadRes = await request(`${API_BASE}/users/account/export/${exportId}/download`, {
+      headers: { Authorization: `Bearer ${candidateA.token}` },
+    });
+    assert(downloadRes.status === 200, 'Export archive download returns HTTP 200', downloadRes.status);
+
+    // Cross-user test: Candidate B attempting to download Candidate A's export is rejected
+    const foreignDownloadRes = await request(`${API_BASE}/users/account/export/${exportId}/download`, {
+      headers: { Authorization: `Bearer ${candidateB.token}` },
+    });
+    assert(foreignDownloadRes.status === 404 || foreignDownloadRes.status === 403, 'Foreign candidate cannot download export (404/403 isolation)', foreignDownloadRes.status);
+  }
+
   // Step 14: Account Deletion Request with 30-Day Grace Period
   console.log('\n[14/16] Testing account erasure request with 30-day grace period (/users/account/delete)...');
   const idempotencyKey = `smoke-del-${Date.now()}`;
@@ -374,6 +390,21 @@ async function run() {
   assert(statusRes.data && statusRes.data.has_pending_deletion === true, 'Status accurately reflects pending deletion request', statusRes.data && statusRes.data.has_pending_deletion);
   assert(statusRes.data && statusRes.data.pending_deletion && (statusRes.data.pending_deletion.status === 'PENDING' || statusRes.data.pending_deletion.status === 'PENDING_GRACE_PERIOD'), 'Pending deletion has active status', statusRes.data && statusRes.data.pending_deletion);
   assert(Array.isArray(statusRes.data && statusRes.data.recent_exports) && statusRes.data.recent_exports.length >= 1, 'Status reflects at least 1 recorded recent export', statusRes.data && statusRes.data.recent_exports);
+
+  // Step 16b: Cancel Account Deletion during Grace Period
+  console.log('\n[16b] Testing account deletion cancellation during grace period (/users/account/cancel-deletion)...');
+  const cancelRes = await request(`${API_BASE}/users/account/cancel-deletion`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(cancelRes.status === 200 || cancelRes.status === 201, 'Deletion cancellation returns HTTP 200/201', cancelRes.status);
+  assert(cancelRes.data && cancelRes.data.status === 'CANCELLED', 'Deletion status updated to CANCELLED', cancelRes.data && cancelRes.data.status);
+
+  // Verify status reflects no active pending deletion
+  const statusAfterCancel = await request(`${API_BASE}/users/account/status`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(statusAfterCancel.data && statusAfterCancel.data.has_pending_deletion === false, 'Account status reflects cancellation of pending deletion', statusAfterCancel.data && statusAfterCancel.data.has_pending_deletion);
 
   // Step 17: P08 Multipart Resume Upload (/users/resume/upload)
   console.log('\n[17/25] Testing multipart PDF resume upload (/users/resume/upload)...');
