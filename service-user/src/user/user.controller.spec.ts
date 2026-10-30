@@ -298,8 +298,12 @@ describe('UserController', () => {
         message: 'Unsubscribed successfully.',
       });
 
-      const res = await controller.unsubscribeAlert({ token: 'test-token-xyz' });
-      expect(mockUserService.unsubscribeAlertByToken).toHaveBeenCalledWith('test-token-xyz');
+      const res = await controller.unsubscribeAlert({
+        token: 'test-token-xyz',
+      });
+      expect(mockUserService.unsubscribeAlertByToken).toHaveBeenCalledWith(
+        'test-token-xyz',
+      );
       expect(res.success).toBe(true);
     });
 

@@ -1429,7 +1429,9 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async unsubscribeAlertByToken(token: string): Promise<UnsubscribeAlertResponseDto> {
+  async unsubscribeAlertByToken(
+    token: string,
+  ): Promise<UnsubscribeAlertResponseDto> {
     const secret =
       process.env.ALERT_UNSUBSCRIBE_SECRET ||
       process.env.UNSUBSCRIBE_SECRET ||
@@ -1450,22 +1452,33 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     const sigBuf = Buffer.from(signature, 'hex');
     const expBuf = Buffer.from(expectedSignature, 'hex');
 
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    if (
+      sigBuf.length !== expBuf.length ||
+      !crypto.timingSafeEqual(sigBuf, expBuf)
+    ) {
       throw new BadRequestException('Invalid unsubscribe token signature');
     }
 
-    let payload: { sub?: string; cand?: string; email?: string; exp?: number; purpose?: string };
+    let payload: Record<string, unknown>;
     try {
       let base64 = payloadB64.replace(/-/g, '+').replace(/_/g, '/');
       while (base64.length % 4 !== 0) {
         base64 += '=';
       }
-      payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+      payload = JSON.parse(
+        Buffer.from(base64, 'base64').toString('utf8'),
+      ) as Record<string, unknown>;
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('Payload is not an object');
+      }
     } catch {
       throw new BadRequestException('Invalid unsubscribe token payload');
     }
 
-    if (!payload?.sub || payload.purpose !== 'job_alert_unsubscribe') {
+    const subId = typeof payload.sub === 'string' ? payload.sub : undefined;
+    const purpose =
+      typeof payload.purpose === 'string' ? payload.purpose : undefined;
+    if (!subId || purpose !== 'job_alert_unsubscribe') {
       throw new BadRequestException('Invalid token purpose');
     }
 
@@ -1474,7 +1487,7 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Unsubscribe token has expired');
     }
 
-    await this.userRepository.deactivateAlert(payload.sub);
+    await this.userRepository.deactivateAlert(subId);
 
     return {
       success: true,
