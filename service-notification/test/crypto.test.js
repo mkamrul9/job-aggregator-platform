@@ -7,6 +7,9 @@ const {
   generateUnsubscribeToken,
   verifyUnsubscribeToken,
   getUnsubscribeSecret,
+  getCandidateSessionSecret,
+  generateCandidateSessionToken,
+  verifyCandidateSessionToken,
 } = require('../src/crypto');
 
 describe('service-notification: crypto & token tests', () => {
@@ -159,5 +162,33 @@ describe('service-notification: crypto & token tests', () => {
         process.env.ALERT_UNSUBSCRIBE_SECRET = origSecret;
       }
     }
+  });
+
+  it('generates and verifies dedicated candidate session tokens', () => {
+    const sessionToken = generateCandidateSessionToken({
+      candidateId: 'usr_cand_42',
+      expiresInSeconds: 3600,
+    });
+    assert.strictEqual(typeof sessionToken, 'string');
+
+    const verified = verifyCandidateSessionToken(sessionToken);
+    assert.strictEqual(verified.valid, true);
+    assert.strictEqual(verified.candidateId, 'usr_cand_42');
+  });
+
+  it('strictly isolates token purposes: unsubscribe token is rejected for candidate sessions', () => {
+    const sessionSecret = getCandidateSessionSecret();
+    const unsubToken = generateUnsubscribeToken({
+      subscriptionId: 'sub-scope-test',
+      candidateId: 'usr_hacker',
+      email: 'hacker@example.com',
+      secret: sessionSecret,
+    });
+
+    const result = verifyCandidateSessionToken(unsubToken, sessionSecret);
+    assert.strictEqual(result.valid, false);
+    assert.strictEqual(result.error, 'INVALID_TOKEN_PURPOSE');
+    assert.strictEqual(result.expectedPurpose, 'candidate_session');
+    assert.strictEqual(result.receivedPurpose, 'job_alert_unsubscribe');
   });
 });

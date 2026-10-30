@@ -212,10 +212,139 @@ function verifyUnsubscribeToken(token, secret = getUnsubscribeSecret()) {
   };
 }
 
+/**
+ * Resolves the dedicated candidate session token secret.
+ */
+function getCandidateSessionSecret() {
+  const configured =
+    process.env.CANDIDATE_SESSION_SECRET ||
+    process.env.NOTIFICATIONS_TOKEN_SECRET ||
+    process.env.ALERT_UNSUBSCRIBE_SECRET;
+
+  if (configured && configured.trim().length >= 16) {
+    return configured.trim();
+  }
+
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NOTIFICATION_MODE && process.env.NOTIFICATION_MODE.toUpperCase() === 'SMTP');
+
+  if (isProd) {
+    throw new Error(
+      'CANDIDATE_SESSION_SECRET is required in production mode with minimum 16 characters.'
+    );
+  }
+
+  return 'dev-demo-candidate-session-key-p11';
+}
+
+/**
+ * Generates an authenticated candidate session token for WebSocket rooms.
+ */
+function generateCandidateSessionToken({
+  candidateId,
+  expiresInSeconds = 3600,
+  secret = getCandidateSessionSecret(),
+}) {
+  if (!candidateId || typeof candidateId !== 'string') {
+    throw new Error('candidateId is required for candidate session token');
+  }
+  const boundedExp = Math.min(
+    Math.max(Number(expiresInSeconds) || 3600, 60),
+    MAX_EXPIRATION_SECONDS
+  );
+  const nowSec = Math.floor(Date.now() / 1000);
+  const payload = {
+    cand: candidateId.trim(),
+    purpose: 'candidate_session',
+    exp: nowSec + boundedExp,
+    iat: nowSec,
+  };
+  const payloadB64 = base64UrlEncode(payload);
+  const signature = signPayload(payloadB64, secret);
+  return `${payloadB64}.${signature}`;
+}
+
+/**
+ * Verifies a candidate session token.
+ * Strictly checks purpose === 'candidate_session'.
+ * Rejects unsubscribe tokens if passed as session tokens.
+ */
+function verifyCandidateSessionToken(token, secret = getCandidateSessionSecret()) {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'TOKEN_MISSING' };
+  }
+  if (token.length > MAX_TOKEN_LENGTH) {
+    return { valid: false, error: 'TOKEN_TOO_LARGE' };
+  }
+  const parts = token.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return { valid: false, error: 'MALFORMED_TOKEN' };
+  }
+  const [payloadB64, signature] = parts;
+  if (!/^[0-9a-f]{64}$/i.test(signature)) {
+    return { valid: false, error: 'INVALID_SIGNATURE_FORMAT' };
+  }
+
+  let expectedSignature;
+  try {
+    expectedSignature = signPayload(payloadB64, secret);
+  } catch (err) {
+    return { valid: false, error: 'CRYPTO_ERROR' };
+  }
+  const sigBuf = Buffer.from(signature, 'hex');
+  const expBuf = Buffer.from(expectedSignature, 'hex');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { valid: false, error: 'INVALID_SIGNATURE' };
+  }
+
+  let payload;
+  try {
+    payload = base64UrlDecode(payloadB64);
+  } catch (err) {
+    return { valid: false, error: 'INVALID_PAYLOAD_JSON' };
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: 'INVALID_PAYLOAD' };
+  }
+
+  if (payload.purpose !== 'candidate_session') {
+    return {
+      valid: false,
+      error: 'INVALID_TOKEN_PURPOSE',
+      expectedPurpose: 'candidate_session',
+      receivedPurpose: payload.purpose,
+    };
+  }
+
+  if (typeof payload.cand !== 'string' || !payload.cand.trim()) {
+    return { valid: false, error: 'INVALID_CANDIDATE_ID' };
+  }
+
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+    return { valid: false, error: 'MISSING_MANDATORY_EXPIRATION' };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (nowSec > payload.exp) {
+    return { valid: false, error: 'TOKEN_EXPIRED' };
+  }
+
+  return {
+    valid: true,
+    candidateId: payload.cand.trim(),
+    expiresAt: payload.exp,
+  };
+}
+
 module.exports = {
   getUnsubscribeSecret,
   generateUnsubscribeToken,
   verifyUnsubscribeToken,
+  getCandidateSessionSecret,
+  generateCandidateSessionToken,
+  verifyCandidateSessionToken,
   MAX_EXPIRATION_SECONDS,
   MAX_TOKEN_LENGTH,
 };

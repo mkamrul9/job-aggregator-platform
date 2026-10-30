@@ -7,6 +7,8 @@ const promClient = require('prom-client');
 const { createNotificationApp } = require('../index');
 const { DurableNotificationStore } = require('../src/storage');
 const { DeliveryDispatcher } = require('../src/dispatcher');
+const { DurableNotificationWorker } = require('../src/worker');
+const { generateUnsubscribeToken } = require('../src/crypto');
 
 describe('service-notification: full integration test', () => {
   it('executes end-to-end evaluation, local capture, one-click unsubscribe, and suppression lifecycle', async () => {
@@ -175,17 +177,30 @@ describe('service-notification: full integration test', () => {
       });
     assert.strictEqual(unauthWebhook.status, 401);
 
-    // Test Provider Webhook: authenticated bounce suppression
+    // Test Provider Webhook: authenticated bounce suppression with replay protection
     const bounceRes = await request(app)
       .post('/api/v1/notifications/webhooks/provider')
       .set('x-webhook-secret', 'seekers-provider-webhook-p11')
       .send({
+        id: 'wh-msg-1234',
         type: 'bounce',
         email: 'charlie.bounced@example.com',
       });
     assert.strictEqual(bounceRes.status, 200);
     assert.strictEqual(bounceRes.body.action, 'SUPPRESSED_BOUNCE');
     assert.strictEqual(testStore.isGloballySuppressed('charlie.bounced@example.com'), true);
+
+    // Replayed webhook with same id is safely deduplicated without reprocessing
+    const replayBounceRes = await request(app)
+      .post('/api/v1/notifications/webhooks/provider')
+      .set('x-webhook-secret', 'seekers-provider-webhook-p11')
+      .send({
+        id: 'wh-msg-1234',
+        type: 'bounce',
+        email: 'charlie.bounced@example.com',
+      });
+    assert.strictEqual(replayBounceRes.status, 200);
+    assert.strictEqual(replayBounceRes.body.action, 'DUPLICATE_WEBHOOK_IGNORED');
 
     // 10. Check /health detailed endpoint and gateway-stripped path
     const healthRes = await request(app).get('/health?detailed=true');
@@ -195,5 +210,91 @@ describe('service-notification: full integration test', () => {
 
     const strippedHealthRes = await request(app).get('/api/v1/notifications/health');
     assert.strictEqual(strippedHealthRes.status, 200);
+  });
+
+  it('strictly bounds unsubscribe permission to the signed scope (request body cannot expand to global)', async () => {
+    const testStore = new DurableNotificationStore({ inMemoryOnly: true });
+    const testDispatcher = new DeliveryDispatcher({ store: testStore, mode: 'CAPTURE' });
+    const app = createNotificationApp({ store: testStore, dispatcher: testDispatcher });
+
+    testStore.saveSubscription({
+      id: 'sub-scoped-only',
+      candidate_id: 'usr_tariq',
+      email: 'tariq@example.com',
+      query: 'Rust',
+      active: true,
+      email_verified: true,
+    });
+
+    // 1. Generate token signed strictly with scope='subscription'
+    const token = generateUnsubscribeToken({
+      subscriptionId: 'sub-scoped-only',
+      candidateId: 'usr_tariq',
+      email: 'tariq@example.com',
+      scope: 'subscription',
+    });
+
+    // 2. Client submits POST attempting to expand to scope='all'
+    const res = await request(app)
+      .post('/api/v1/notifications/unsubscribe')
+      .send({
+        token,
+        scope: 'all', // forged attempt to globally suppress
+      });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.scope, 'SUBSCRIPTION', 'Must remain strictly SUBSCRIPTION');
+
+    // 3. Verify per-subscription suppression is recorded, but GLOBAL suppression is NOT
+    assert.strictEqual(testStore.isSubscriptionSuppressed('sub-scoped-only'), true);
+    assert.strictEqual(testStore.isGloballySuppressed('tariq@example.com'), false);
+  });
+
+  it('executes durable retry recovery and digest delivery via DurableNotificationWorker', async () => {
+    const testStore = new DurableNotificationStore({ inMemoryOnly: true });
+    const testDispatcher = new DeliveryDispatcher({ store: testStore, mode: 'CAPTURE' });
+
+    testStore.saveSubscription({
+      id: 'sub-digest-dan',
+      candidate_id: 'usr_dan',
+      email: 'dan@example.com',
+      query: 'Python',
+      location: 'Dhaka',
+      remote_preference: 'ANY',
+      frequency: 'DAILY',
+      active: true,
+      email_verified: true,
+    });
+
+    const job = {
+      id: 'job-py-001',
+      title: 'Senior Python Architect',
+      company: 'TechCorp',
+      location: 'Dhaka',
+      remote_eligibility: 'ANY',
+      status: 'ACTIVE',
+      skills: ['Python'],
+    };
+
+    // 1. Dispatching a DAILY frequency subscription buffers into digest
+    const dispatchResult = await testDispatcher.dispatchAlert({
+      subscription: testStore.getSubscription('sub-digest-dan'),
+      jobs: [job],
+    });
+    assert.strictEqual(dispatchResult.status, 'QUEUED_FOR_DIGEST');
+    assert.strictEqual(testStore.listCapturedEmails().length, 0);
+
+    // 2. Worker processDueDigests flushes the digest into an email alert
+    const worker = new DurableNotificationWorker({
+      store: testStore,
+      dispatcher: testDispatcher,
+    });
+    await worker.runOnce();
+
+    assert.strictEqual(testStore.listCapturedEmails().length, 1);
+    const captured = testStore.listCapturedEmails()[0];
+    assert.strictEqual(captured.to, 'dan@example.com');
+    assert.ok(captured.subject.includes('Senior Python Architect'));
   });
 });

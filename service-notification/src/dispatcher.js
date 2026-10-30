@@ -135,9 +135,88 @@ class DeliveryDispatcher {
           reason: 'Alert for this job set already dispatched or actively in-flight',
         };
       }
+
+      if (existingDelivery.providerStatus === 'AMBIGUOUS_UNKNOWN') {
+        return {
+          status: 'SKIPPED_AMBIGUOUS_OUTCOME',
+          delivery: existingDelivery,
+          reason: 'Previous attempt had ambiguous delivery outcome; manual reconciliation required',
+        };
+      }
+
+      if (existingDelivery.providerStatus === 'FAILED_TERMINAL') {
+        return {
+          status: 'SKIPPED_TERMINAL_FAILURE',
+          delivery: existingDelivery,
+          reason: 'Delivery previously reached terminal retry exhaustion',
+        };
+      }
     }
 
-    // 4. Generate purpose-scoped unsubscribe token
+    // 4. Digest Scheduling
+    if (subscription.frequency === 'DAILY' || subscription.frequency === 'WEEKLY') {
+      const digest = this.store.addPendingDigestJob({
+        subscriptionId: subscription.id,
+        candidateId: subscription.candidate_id || subscription.userId || 'usr_anon',
+        email,
+        job: jobList[0],
+        frequency: subscription.frequency,
+        windowKey: dateWindow,
+      });
+      return {
+        status: 'QUEUED_FOR_DIGEST',
+        frequency: subscription.frequency,
+        digest,
+      };
+    }
+
+    // 5. Initial Delivery State Registration
+    const deliveryId = existingDelivery ? existingDelivery.id : crypto.randomUUID();
+    let initialDelivery = this.store.saveDelivery({
+      id: deliveryId,
+      dedupeKey,
+      subscriptionId: subscription.id,
+      candidateId: subscription.candidate_id || subscription.candidateId || subscription.userId || 'usr_anon',
+      recipientEmail: email,
+      eligibleJobIds: jobList.map((j) => j.id),
+      channel: 'EMAIL',
+      templateVersion: 'v1.0.0',
+      providerStatus: 'QUEUED',
+      attemptCount: existingDelivery?.attemptCount || 0,
+      maxAttempts,
+      storedJobs: jobList,
+      storedSubscription: subscription,
+      correlationId,
+      causationId,
+    });
+
+    // 6. Claim with lease and execute attempt
+    const claimed = this.store.claimDeliveryForAttempt(deliveryId, 60000);
+    if (!claimed) {
+      return { status: 'SKIPPED_LOCKED', delivery: initialDelivery };
+    }
+
+    return await this.executeDeliveryAttempt({
+      delivery: claimed,
+      subscription,
+      jobs: jobList,
+      correlationId,
+      causationId,
+    });
+  }
+
+  /**
+   * Executes a delivery attempt for a claimed delivery record.
+   */
+  async executeDeliveryAttempt({ delivery, subscription, jobs, correlationId, causationId }) {
+    const jobList = Array.isArray(jobs) ? jobs : [jobs];
+    const email = (delivery.recipientEmail || subscription.email || '').toLowerCase().trim();
+    const deliveryId = delivery.id;
+    const leaseToken = delivery.leaseToken;
+    const currentAttempt = delivery.attemptCount || 1;
+    const maxAttempts = delivery.maxAttempts || 3;
+
+    // 1. Generate purpose-scoped unsubscribe token
     const token = generateUnsubscribeToken({
       subscriptionId: subscription.id,
       candidateId: subscription.candidate_id || subscription.candidateId || subscription.userId || 'usr_anon',
@@ -145,7 +224,7 @@ class DeliveryDispatcher {
     });
     const unsubscribeUrl = `${this.apiOrigin}/api/v1/notifications/unsubscribe?token=${token}`;
 
-    // 5. Render accessible HTML and plain text templates
+    // 2. Render templates
     const html = renderAlertHtml({
       jobs: jobList,
       subscription,
@@ -159,7 +238,6 @@ class DeliveryDispatcher {
       baseUrl: this.baseUrl,
     });
 
-    const deliveryId = existingDelivery ? existingDelivery.id : crypto.randomUUID();
     const querySubject = subscription.query ? `"${subscription.query}"` : 'Your Preferences';
     const subject =
       jobList.length === 1
@@ -173,29 +251,7 @@ class DeliveryDispatcher {
       'X-Seekers-Subscription-Id': subscription.id,
     };
 
-    // 6. Record ATTEMPTING state with 5-minute lease
-    const now = Date.now();
-    const currentAttempt = (existingDelivery?.attemptCount || 0) + 1;
-    let deliveryRecord = this.store.saveDelivery({
-      id: deliveryId,
-      dedupeKey,
-      subscriptionId: subscription.id,
-      candidateId: subscription.candidate_id || subscription.candidateId || subscription.userId || 'usr_anon',
-      recipientEmail: email,
-      eligibleJobIds: jobList.map((j) => j.id),
-      channel: 'EMAIL',
-      templateVersion: 'v1.0.0',
-      providerStatus: 'ATTEMPTING',
-      attemptCount: currentAttempt,
-      maxAttempts,
-      leasedAt: new Date(now).toISOString(),
-      leaseExpiresAt: new Date(now + 300000).toISOString(),
-      lastAttemptAt: new Date(now).toISOString(),
-      error: null,
-      providerReceipt: null,
-    });
-
-    // 7. Dispatch via CAPTURE (Safe local mailbox) or SMTP Relay
+    // 3. Dispatch via CAPTURE or SMTP Relay
     try {
       if (this.mode === 'CAPTURE' || !this.transporter) {
         const captured = this.store.recordCapturedEmail({
@@ -209,17 +265,16 @@ class DeliveryDispatcher {
           metadata: {
             deliveryId,
             subscriptionId: subscription.id,
-            candidateId: deliveryRecord.candidateId,
+            candidateId: delivery.candidateId,
             jobIds: jobList.map((j) => j.id),
           },
         });
 
-        deliveryRecord = this.store.saveDelivery({
-          id: deliveryId,
+        const outcome = this.store.saveDeliveryOutcome({
+          deliveryId,
+          leaseToken,
           providerStatus: 'ACCEPTED',
-          leasedAt: null,
-          leaseExpiresAt: null,
-          providerReceipt: {
+          providerResponse: {
             mode: 'CAPTURE',
             messageId: captured.id,
             timestamp: captured.capturedAt,
@@ -234,11 +289,16 @@ class DeliveryDispatcher {
           recipientEmail: email,
           jobList,
           providerStatus: 'ACCEPTED',
-          correlationId,
-          causationId,
+          correlationId: correlationId || delivery.correlationId,
+          causationId: causationId || delivery.causationId,
         });
 
-        return { status: 'ACCEPTED', mode: 'CAPTURE', delivery: deliveryRecord, capturedId: captured.id };
+        return {
+          status: 'ACCEPTED',
+          mode: 'CAPTURE',
+          delivery: outcome.delivery,
+          capturedId: captured.id,
+        };
       }
 
       // Mode === 'SMTP': Transmit via configured SMTP relay
@@ -251,12 +311,11 @@ class DeliveryDispatcher {
         headers,
       });
 
-      deliveryRecord = this.store.saveDelivery({
-        id: deliveryId,
+      const outcome = this.store.saveDeliveryOutcome({
+        deliveryId,
+        leaseToken,
         providerStatus: 'ACCEPTED',
-        leasedAt: null,
-        leaseExpiresAt: null,
-        providerReceipt: {
+        providerResponse: {
           mode: 'SMTP',
           messageId: info.messageId,
           response: info.response,
@@ -271,11 +330,11 @@ class DeliveryDispatcher {
         recipientEmail: email,
         jobList,
         providerStatus: 'ACCEPTED',
-        correlationId,
-        causationId,
+        correlationId: correlationId || delivery.correlationId,
+        causationId: causationId || delivery.causationId,
       });
 
-      return { status: 'ACCEPTED', mode: 'SMTP', delivery: deliveryRecord };
+      return { status: 'ACCEPTED', mode: 'SMTP', delivery: outcome.delivery };
     } catch (sendErr) {
       const isTransient = this._isTransientError(sendErr);
       const isAmbiguous = this._isAmbiguousError(sendErr);
@@ -287,16 +346,20 @@ class DeliveryDispatcher {
         finalStatus = 'AMBIGUOUS_UNKNOWN';
       } else if (isTransient && currentAttempt < maxAttempts) {
         finalStatus = 'RETRY_SCHEDULED';
-        const backoffMs = Math.min(60000, 1000 * Math.pow(2, currentAttempt - 1) + Math.floor(Math.random() * 200));
+        const backoffMs = Math.min(
+          60000,
+          1000 * Math.pow(2, currentAttempt - 1) + Math.floor(Math.random() * 200)
+        );
         nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
       }
 
-      deliveryRecord = this.store.saveDelivery({
-        id: deliveryId,
+      const outcome = this.store.saveDeliveryOutcome({
+        deliveryId,
+        leaseToken,
         providerStatus: finalStatus,
-        nextRetryAt,
         error: sendErr.message,
-        providerReceipt: {
+        nextRetryAt,
+        providerResponse: {
           code: sendErr.code,
           responseCode: sendErr.responseCode,
           transient: isTransient,
@@ -312,13 +375,13 @@ class DeliveryDispatcher {
         recipientEmail: email,
         jobList,
         providerStatus: 'REJECTED',
-        correlationId,
-        causationId,
+        correlationId: correlationId || delivery.correlationId,
+        causationId: causationId || delivery.causationId,
       });
 
       return {
         status: finalStatus,
-        delivery: deliveryRecord,
+        delivery: outcome.delivery,
         error: sendErr.message,
         isTransient,
         isAmbiguous,
@@ -343,7 +406,11 @@ class DeliveryDispatcher {
   _isAmbiguousError(err) {
     if (!err) return false;
     const msg = (err.message || '').toLowerCase();
-    return msg.includes('socket hung up after headers') || msg.includes('write epipe') || msg.includes('ambiguous');
+    return (
+      msg.includes('socket hung up after headers') ||
+      msg.includes('write epipe') ||
+      msg.includes('ambiguous')
+    );
   }
 
   _recordMetrics(status) {
@@ -364,7 +431,6 @@ class DeliveryDispatcher {
     correlationId,
     causationId,
   }) {
-    // Map internal status to schema-compatible enum: ACCEPTED, REJECTED, SKIPPED_UNSUBSCRIBED
     let contractStatus = 'REJECTED';
     if (providerStatus === 'ACCEPTED') contractStatus = 'ACCEPTED';
     if (providerStatus === 'SKIPPED_UNSUBSCRIBED') contractStatus = 'SKIPPED_UNSUBSCRIBED';

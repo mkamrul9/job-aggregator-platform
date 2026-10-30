@@ -17,20 +17,48 @@ const { escapeHtml } = require('./templates');
 function createNotificationRouter({ store, dispatcher, metrics = {} }) {
   const router = express.Router();
 
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NOTIFICATION_MODE && process.env.NOTIFICATION_MODE.toUpperCase() === 'SMTP');
+
   // ─── AUTHENTICATION MIDDLEWARE ──────────────────────────────────────────────
 
   function requireAdminOrServiceAuth(req, res, next) {
-    if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true') {
+    // Unsafe demo bypass flags are strictly forbidden in production mode
+    if (!isProduction && process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true') {
       return next();
     }
+
     const adminKey = req.headers['x-admin-key'];
     const serviceKey = req.headers['x-service-key'];
     const authHeader = req.headers['authorization'];
-    const expectedKey =
-      process.env.NOTIFICATION_ADMIN_KEY ||
-      process.env.INTERNAL_SERVICE_KEY ||
-      'seekers-internal-service-p11';
 
+    const configuredKey =
+      process.env.NOTIFICATION_ADMIN_KEY || process.env.INTERNAL_SERVICE_KEY;
+
+    if (isProduction) {
+      if (!configuredKey || configuredKey === 'seekers-internal-service-p11') {
+        return res.status(500).json({
+          error: 'CONFIGURATION_ERROR',
+          message:
+            'NOTIFICATION_ADMIN_KEY or INTERNAL_SERVICE_KEY must be configured in production mode. Default keys are strictly prohibited.',
+        });
+      }
+      if (
+        (adminKey && adminKey === configuredKey) ||
+        (serviceKey && serviceKey === configuredKey) ||
+        (authHeader && authHeader === `Bearer ${configuredKey}`)
+      ) {
+        return next();
+      }
+      return res.status(401).json({
+        error: 'UNAUTHORIZED_ACCESS',
+        message: 'Valid admin or internal service credentials required.',
+      });
+    }
+
+    // In isolated local dev/test mode, accept configured key or dev fallback key
+    const expectedKey = configuredKey || 'seekers-internal-service-p11';
     if (
       (adminKey && adminKey === expectedKey) ||
       (serviceKey && serviceKey === expectedKey) ||
@@ -38,6 +66,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     ) {
       return next();
     }
+
     return res.status(401).json({
       error: 'UNAUTHORIZED_ACCESS',
       message: 'Valid admin or internal service credentials required.',
@@ -45,15 +74,32 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
   }
 
   function requireWebhookAuth(req, res, next) {
-    const webhookSecret =
-      process.env.PROVIDER_WEBHOOK_SECRET || 'seekers-provider-webhook-p11';
-    const providedSecret = req.headers['x-webhook-secret'] || req.query.secret;
-
-    if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true' && !process.env.PROVIDER_WEBHOOK_SECRET) {
+    if (!isProduction && process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true' && !process.env.PROVIDER_WEBHOOK_SECRET) {
       return next();
     }
 
-    if (providedSecret && providedSecret === webhookSecret) {
+    const configuredSecret = process.env.PROVIDER_WEBHOOK_SECRET;
+    const providedSecret = req.headers['x-webhook-secret'] || req.query.secret;
+
+    if (isProduction) {
+      if (!configuredSecret || configuredSecret === 'seekers-provider-webhook-p11') {
+        return res.status(500).json({
+          error: 'CONFIGURATION_ERROR',
+          message:
+            'PROVIDER_WEBHOOK_SECRET must be configured in production mode. Default secrets are strictly prohibited.',
+        });
+      }
+      if (providedSecret && providedSecret === configuredSecret) {
+        return next();
+      }
+      return res.status(401).json({
+        error: 'INVALID_WEBHOOK_SIGNATURE',
+        message: 'Provider webhook signature or secret verification failed.',
+      });
+    }
+
+    const expectedSecret = configuredSecret || 'seekers-provider-webhook-p11';
+    if (providedSecret && providedSecret === expectedSecret) {
       return next();
     }
 
@@ -127,6 +173,11 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
 
     const safeEmail = escapeHtml(verification.email);
     const safeToken = escapeHtml(token);
+    const isGlobalScope = verification.scope === 'all';
+    const descriptionText = isGlobalScope
+      ? `Are you sure you want to stop receiving <strong>all job alerts</strong> sent to <strong>${safeEmail}</strong>?`
+      : `Are you sure you want to stop receiving job alerts for this subscription sent to <strong>${safeEmail}</strong>?`;
+
     res.status(200).send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -146,7 +197,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       <body>
         <div class="card">
           <h1>Unsubscribe from Seekers Alerts</h1>
-          <p>Are you sure you want to stop receiving job alerts for this subscription sent to <strong>${safeEmail}</strong>?</p>
+          <p>${descriptionText}</p>
           <form method="POST" action="/api/v1/notifications/unsubscribe">
             <input type="hidden" name="token" value="${safeToken}" />
             <button type="submit" class="btn-confirm" id="confirm-unsub-btn">Confirm Unsubscribe</button>
@@ -173,8 +224,9 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       });
     }
 
-    // Distinguish per-subscription unsubscribe from global email suppression
-    const isGlobalOptOut = verification.scope === 'all' || req.body?.scope === 'all';
+    // Strict capability boundary: The signed scope is the MAXIMUM authority granted.
+    // A request body cannot expand 'subscription' into 'all'.
+    const isGlobalOptOut = verification.scope === 'all';
 
     if (isGlobalOptOut) {
       store.addGlobalSuppression({
@@ -193,31 +245,70 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       });
     }
 
-    // Synchronize to authoritative service-user if URL configured
+    // Record outbox sync task for durable preference bridge
+    let syncStatus = 'LOCAL_PERSISTED_ONLY';
+    const syncTask = store.recordSyncTask({
+      type: 'ALERT_UNSUBSCRIBE',
+      payload: {
+        token,
+        subscriptionId: verification.subscriptionId,
+        candidateId: verification.candidateId,
+        email: verification.email,
+        scope: isGlobalOptOut ? 'all' : 'subscription',
+      },
+    });
+
+    // Attempt immediate synchronous bridge to authoritative service-user if configured
     const userServiceUrl = process.env.USER_SERVICE_URL;
     if (userServiceUrl) {
       try {
-        fetch(`${userServiceUrl}/users/alerts/unsubscribe`, {
+        const syncRes = await fetch(`${userServiceUrl}/users/alerts/unsubscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token }),
-          signal: AbortSignal.timeout(2000),
-        }).catch(() => {});
-      } catch (e) {
-        // Asynchronous bridge
+          signal: AbortSignal.timeout(3000),
+        });
+        if (syncRes.ok) {
+          syncStatus = 'CONFIRMED';
+          if (syncTask) {
+            store.updateSyncTask(syncTask.id, { status: 'CONFIRMED' });
+          }
+        } else {
+          syncStatus = 'PENDING_RETRY';
+          if (syncTask) {
+            store.updateSyncTask(syncTask.id, {
+              status: 'PENDING',
+              error: `HTTP ${syncRes.status}`,
+              nextRetryAt: new Date(Date.now() + 5000).toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        syncStatus = 'PENDING_RETRY';
+        if (syncTask) {
+          store.updateSyncTask(syncTask.id, {
+            status: 'PENDING',
+            error: err.message,
+            nextRetryAt: new Date(Date.now() + 5000).toISOString(),
+          });
+        }
       }
     }
 
     // Check if client expects HTML or JSON
     const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
     if (acceptsHtml && req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+      const confirmationMsg = isGlobalOptOut
+        ? 'You have been unsubscribed from all job alerts across your account.'
+        : 'You have been unsubscribed from this job alert. You will no longer receive emails for this query.';
+
       return res.status(200).send(`
         <!DOCTYPE html>
         <html>
         <head><title>Unsubscribed - Seekers</title></head>
         <body style="font-family: sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; text-align: center;">
           <h1 style="color: #10b981;">Successfully Unsubscribed</h1>
-          <p style="color: #94a3b8;">You have been unsubscribed from this job alert. You will no longer receive emails for this query.</p>
+          <p style="color: #94a3b8;">${confirmationMsg}</p>
         </body>
         </html>
       `);
@@ -225,10 +316,13 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
 
     return res.status(200).json({
       success: true,
-      message: 'Unsubscribed successfully.',
+      message: isGlobalOptOut
+        ? 'Successfully unsubscribed from all job alerts.'
+        : 'Successfully unsubscribed from this job alert query.',
       subscription_id: verification.subscriptionId,
       email: verification.email,
       scope: isGlobalOptOut ? 'GLOBAL' : 'SUBSCRIPTION',
+      sync_status: syncStatus,
     });
   });
 
@@ -240,12 +334,24 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       return res.status(400).json({ error: 'INVALID_WEBHOOK_PAYLOAD' });
     }
 
+    const eventId = body.id || body.eventId || body.messageId || body.mail?.messageId;
     const eventType = (body.type || body.eventType || body.notificationType || '').toLowerCase();
     const email = body.email || body.recipient || body.mail?.destination?.[0];
 
     if (!email) {
       return res.status(400).json({ error: 'MISSING_RECIPIENT_EMAIL' });
     }
+
+    // Replay & Deduplication Protection
+    const dedupeKey = eventId
+      ? `webhook:${eventId}`
+      : `webhook:${eventType}:${email.toLowerCase().trim()}:${body.timestamp || ''}`;
+
+    if (store.hasEventReceipt(dedupeKey)) {
+      return res.status(200).json({ success: true, action: 'DUPLICATE_WEBHOOK_IGNORED', dedupeKey });
+    }
+
+    store.recordEventReceipt(dedupeKey, 'provider.webhook');
 
     if (eventType.includes('bounce') || body.bounce) {
       store.addGlobalSuppression({

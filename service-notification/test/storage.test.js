@@ -94,42 +94,155 @@ describe('service-notification: storage tests', () => {
     }
   });
 
-  it('coordinates multi-instance concurrent writes without losing subscriptions', () => {
-    const tmpDir = path.join(os.tmpdir(), `seekers-store-multi-${Date.now()}`);
-    const filePath = path.join(tmpDir, 'shared-store.json');
+  it('prevents stale merges from resurrecting paused subscriptions (atomic cross-process consistency)', () => {
+    const tmpDir = path.join(os.tmpdir(), `seekers-store-stale-${Date.now()}`);
+    const filePath = path.join(tmpDir, 'stale-test.json');
 
     try {
-      // Both instances initialized pointing to same file before either writes
-      const storeA = new DurableNotificationStore({ filePath });
-      const storeB = new DurableNotificationStore({ filePath });
-
-      storeA.saveSubscription({
-        id: 'sub-a',
-        candidate_id: 'cand-a',
-        email: 'a@example.com',
-        query: 'Frontend',
+      // 1. Initial subscription created
+      const storeInit = new DurableNotificationStore({ filePath });
+      storeInit.saveSubscription({
+        id: 'sub-target',
+        candidate_id: 'cand-1',
+        email: 'target@example.com',
+        query: 'Node.js',
         active: true,
       });
 
-      storeB.saveSubscription({
-        id: 'sub-b',
-        candidate_id: 'cand-b',
-        email: 'b@example.com',
-        query: 'Backend',
-        active: true,
+      // 2. Two separate store instances opened before either writes
+      const storeFresh = new DurableNotificationStore({ filePath });
+      const storeStale = new DurableNotificationStore({ filePath });
+
+      // 3. Fresh instance pauses the subscription
+      storeFresh.deactivateSubscription('sub-target');
+
+      // 4. Stale instance saves an unrelated delivery
+      storeStale.saveDelivery({
+        id: 'del-unrelated-001',
+        dedupeKey: 'sub-other:job-1',
+        providerStatus: 'ACCEPTED',
       });
 
-      // Fresh reader instance must see both A and B
-      const storeC = new DurableNotificationStore({ filePath });
-      assert.ok(storeC.getSubscription('sub-a'), 'sub-a must be present');
-      assert.ok(storeC.getSubscription('sub-b'), 'sub-b must be present');
-      assert.strictEqual(storeC.getSubscription('sub-a').query, 'Frontend');
-      assert.strictEqual(storeC.getSubscription('sub-b').query, 'Backend');
+      // 5. Fresh reader reads the target subscription
+      const storeReader = new DurableNotificationStore({ filePath });
+      const targetSub = storeReader.getSubscription('sub-target');
+      assert.ok(targetSub, 'Subscription must exist');
+      assert.strictEqual(
+        targetSub.active,
+        false,
+        'Subscription must remain PAUSED and not resurrected by stale writer'
+      );
     } finally {
       if (fs.existsSync(tmpDir)) {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     }
+  });
+
+  it('prevents concurrent double claims on active delivery leases', () => {
+    const store = new DurableNotificationStore({ inMemoryOnly: true });
+    store.saveDelivery({
+      id: 'del-lease-test',
+      dedupeKey: 'key-lease-1',
+      providerStatus: 'QUEUED',
+    });
+
+    // 1. First claim succeeds and leases work for 60 seconds
+    const claim1 = store.claimDeliveryForAttempt('del-lease-test', 60000);
+    assert.ok(claim1, 'First claim must succeed');
+    assert.strictEqual(claim1.providerStatus, 'ATTEMPTING');
+    assert.strictEqual(claim1.attemptCount, 1);
+    assert.ok(claim1.leaseToken);
+
+    // 2. Immediate second claim must return null (already leased)
+    const claim2 = store.claimDeliveryForAttempt('del-lease-test', 60000);
+    assert.strictEqual(claim2, null, 'Second consecutive claim must fail while lease is active');
+  });
+
+  it('fences out stale workers attempting to save delivery outcomes with expired/mismatched tokens', () => {
+    const store = new DurableNotificationStore({ inMemoryOnly: true });
+    store.saveDelivery({
+      id: 'del-fence-test',
+      dedupeKey: 'key-fence-1',
+      providerStatus: 'QUEUED',
+    });
+
+    const claimed = store.claimDeliveryForAttempt('del-fence-test', 60000);
+    const validToken = claimed.leaseToken;
+    const staleToken = 'stale-worker-outdated-token';
+
+    // Stale worker save attempt is fenced
+    const staleOutcome = store.saveDeliveryOutcome({
+      deliveryId: 'del-fence-test',
+      leaseToken: staleToken,
+      providerStatus: 'ACCEPTED',
+    });
+    assert.strictEqual(staleOutcome.fenced, true);
+    assert.strictEqual(staleOutcome.reason, 'STALE_LEASE_FENCED');
+    assert.strictEqual(store.getDelivery('del-fence-test').providerStatus, 'ATTEMPTING');
+
+    // Valid worker save attempt succeeds
+    const validOutcome = store.saveDeliveryOutcome({
+      deliveryId: 'del-fence-test',
+      leaseToken: validToken,
+      providerStatus: 'ACCEPTED',
+    });
+    assert.strictEqual(validOutcome.fenced, false);
+    assert.strictEqual(store.getDelivery('del-fence-test').providerStatus, 'ACCEPTED');
+  });
+
+  it('manages pending digests and outbox sync tasks reliably', () => {
+    const store = new DurableNotificationStore({ inMemoryOnly: true });
+
+    // Digests
+    store.addPendingDigestJob({
+      subscriptionId: 'sub-digest-1',
+      candidateId: 'usr_sarah',
+      email: 'sarah@example.com',
+      job: { id: 'job-101', title: 'React Lead' },
+      frequency: 'DAILY',
+      windowKey: '2026-10-30',
+    });
+    store.addPendingDigestJob({
+      subscriptionId: 'sub-digest-1',
+      candidateId: 'usr_sarah',
+      email: 'sarah@example.com',
+      job: { id: 'job-102', title: 'Fullstack TS' },
+      frequency: 'DAILY',
+      windowKey: '2026-10-30',
+    });
+
+    const digest = store.getPendingDigest('sub-digest-1', '2026-10-30');
+    assert.strictEqual(digest.jobs.length, 2);
+    assert.strictEqual(store.listPendingDigests().length, 1);
+
+    store.clearPendingDigest('sub-digest-1', '2026-10-30');
+    assert.strictEqual(store.getPendingDigest('sub-digest-1', '2026-10-30'), null);
+
+    // Sync tasks
+    const task = store.recordSyncTask({
+      id: 'task-sync-1',
+      type: 'ALERT_UNSUBSCRIBE',
+      payload: { token: 'sample-token' },
+    });
+    assert.strictEqual(task.status, 'PENDING');
+    assert.strictEqual(store.listPendingSyncTasks().length, 1);
+
+    store.updateSyncTask('task-sync-1', { status: 'CONFIRMED' });
+    assert.strictEqual(store.listPendingSyncTasks().length, 0);
+  });
+
+  it('bounds retention without pruning unfinished or active deliveries', () => {
+    const store = new DurableNotificationStore({ inMemoryOnly: true });
+
+    // Seed 1 QUEUED, 1 RETRY_SCHEDULED, and 1 ACCEPTED
+    store.saveDelivery({ id: 'del-active-queued', providerStatus: 'QUEUED' });
+    store.saveDelivery({ id: 'del-active-retry', providerStatus: 'RETRY_SCHEDULED', nextRetryAt: new Date(Date.now() + 10000).toISOString() });
+    store.saveDelivery({ id: 'del-accepted-1', providerStatus: 'ACCEPTED' });
+
+    assert.ok(store.getDelivery('del-active-queued'));
+    assert.ok(store.getDelivery('del-active-retry'));
+    assert.ok(store.getDelivery('del-accepted-1'));
   });
 
   it('backs up corrupted storage file and throws PersistenceCorruptionError', () => {

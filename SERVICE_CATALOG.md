@@ -303,13 +303,13 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `service-notification/package.json`
   - Lockfile: `service-notification/package-lock.json`
 - **Commands & Verification:**
-  - Test: `npm test` — `[Verified]` (36 tests pass cleanly across 8 suites covering HTTP endpoints, crypto & token security, preference matcher, HTML/text templates, durable storage concurrency & corrupt isolation, and full integration lifecycle)
+  - Test: `npm test` — `[Verified]` (44 tests pass cleanly across 8 suites covering HTTP endpoints, crypto & token security with dedicated candidate session tokens, preference matcher, HTML/text templates, atomic storage locking with fencing & corrupt isolation, digests, outbox sync tasks, and full integration lifecycle)
   - Local Dev / Standalone Replay: `node cli.js replay` — `[Verified]`
   - CLI Mailbox Inspection: `node cli.js captured` — `[Verified]`
 - **Required Infrastructure:**
   - Standalone mode: Zero external infrastructure (`CAPTURE` mode with atomic file/in-memory storage).
   - Integrated mode: Kafka broker, SMTP provider or Mailpit sandbox, `service-user` PostgreSQL synchronization.
-- **Current Verification Status:** `[Verified]` — 36 tests pass cleanly across 8 suites; zero external network dependencies in `CAPTURE` mode; tamper-resistant HMAC-SHA256 unsubscribe tokens with mandatory finite expiration; RFC 8058 one-click unsubscribe support; authenticated candidate WebSocket rooms; multi-instance file storage coordination with non-swallowed disk write errors and corrupt file recovery; contract-conformant `alert.dispatched.v1` events.
+- **Current Verification Status:** `[Verified]` — 44 tests pass cleanly across 8 suites; zero external network dependencies in `CAPTURE` mode; tamper-resistant HMAC-SHA256 unsubscribe tokens with mandatory finite expiration; RFC 8058 one-click unsubscribe support; authenticated candidate WebSocket rooms; atomic cross-process file locking with fencing tokens and corrupt file recovery; durable background retry and digest worker; contract-conformant `alert.dispatched.v1` events.
 - **Intended Deployment Boundary:**
   - Container: `service-notification/Dockerfile`
   - Ports: `4000` (internal / host)

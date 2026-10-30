@@ -21,11 +21,14 @@ An event-driven notification service that broadcasts live job ingestion events v
   - API endpoint authentication: admin/internal service credentials required for administrative operations (`/captured`, `/subscriptions`, `/suppressions`, `/evaluate`) and provider webhook secret required for `/webhooks/provider`.
   - HTML entity escaping across all rendered notification templates to prevent XSS injection.
 - **Durable Storage:** `DurableNotificationStore` crash-safe atomic file-backed JSON store:
-  - Multi-instance writer synchronization via on-disk state re-synchronization prior to mutation and flush.
+  - Cross-process exclusive file locking (`_withLock` via `.lock` atomic reservation) preventing concurrent write collisions and stale in-memory state overwrites.
+  - Multi-worker delivery state machine with lease acquisition and fencing token protection against late/stale worker races.
   - Non-swallowed persistence errors: disk write or atomic rename failures immediately bubble up.
   - Corrupt storage file isolation: corrupt JSON files are automatically preserved as `.corrupt-${Date.now()}` and throw `PersistenceCorruptionError`.
-  - Retention bounding: maximum 500 captured emails, 5000 deliveries, and 5000 event receipts.
+  - Retention bounding: maximum 500 captured emails, 5000 completed deliveries, and 10000 event receipts without pruning active or unfinished deliveries.
   - Dual suppression scopes: isolates global suppression (`global_suppressions` for bounces, spam complaints, and global opt-outs) from per-subscription suppression (`subscription_suppressions`).
+  - Durable outbox synchronization tasks (`sync_tasks`) and pending daily/weekly digest buffers (`digests`).
+- **Durable Worker:** `DurableNotificationWorker` background loop recovering due retries with exponential backoff and jitter, bridging pending unsubscribe outbox tasks to `service-user`, and dispatching matured digest batches.
 - **Telemetry & Metrics:** `prom-client` 15.x (`job_notifications_sent_total`, `notification_evaluations_total`, `notification_deliveries_total`)
 
 ---

@@ -12,7 +12,8 @@ const { DurableNotificationStore } = require('./src/storage');
 const { DeliveryDispatcher } = require('./src/dispatcher');
 const { evaluateJobMatch } = require('./src/matcher');
 const { createNotificationRouter } = require('./src/routes');
-const { verifyUnsubscribeToken } = require('./src/crypto');
+const { verifyUnsubscribeToken, verifyCandidateSessionToken } = require('./src/crypto');
+const { DurableNotificationWorker } = require('./src/worker');
 
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = process.env.KAFKA_TOPIC || 'jobs.new';
@@ -262,6 +263,10 @@ async function startServer() {
     },
   });
 
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NOTIFICATION_MODE && process.env.NOTIFICATION_MODE.toUpperCase() === 'SMTP');
+
   io.use((socket, next) => {
     const candidateId = socket.handshake.auth?.candidateId || socket.handshake.query?.candidateId;
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -272,27 +277,58 @@ async function startServer() {
 
     // If candidateId is asserted to join candidate room, require authentication
     if (candidateId) {
-      const expectedKey = process.env.INTERNAL_SERVICE_KEY || 'seekers-internal-service-p11';
-      if (serviceSecret && serviceSecret === expectedKey) {
-        socket.data.candidateId = candidateId;
-        socket.data.authenticated = true;
-        return next();
+      const configuredKey = process.env.INTERNAL_SERVICE_KEY;
+
+      if (isProduction) {
+        if (!configuredKey || configuredKey === 'seekers-internal-service-p11') {
+          return next(
+            new Error(
+              'CONFIGURATION_ERROR: INTERNAL_SERVICE_KEY must be configured in production mode. Default keys prohibited.'
+            )
+          );
+        }
+        if (serviceSecret && serviceSecret === configuredKey) {
+          socket.data.candidateId = candidateId;
+          socket.data.authenticated = true;
+          return next();
+        }
+      } else {
+        const expectedKey = configuredKey || 'seekers-internal-service-p11';
+        if (serviceSecret && serviceSecret === expectedKey) {
+          socket.data.candidateId = candidateId;
+          socket.data.authenticated = true;
+          return next();
+        }
+        if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true') {
+          socket.data.candidateId = candidateId;
+          socket.data.authenticated = true;
+          return next();
+        }
       }
-      if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true' && process.env.NODE_ENV !== 'production') {
-        socket.data.candidateId = candidateId;
-        socket.data.authenticated = true;
-        return next();
-      }
+
       if (!token) {
         return next(new Error('AUTHENTICATION_REQUIRED: token is required to join candidate room'));
       }
-      const verified = verifyUnsubscribeToken(token);
-      if (verified && verified.valid && verified.candidateId === candidateId) {
+
+      // Explicitly reject unsubscribe tokens for candidate room authentication!
+      const unverifiedUnsub = verifyUnsubscribeToken(token);
+      if (unverifiedUnsub.valid) {
+        return next(
+          new Error(
+            'INVALID_TOKEN_PURPOSE: Unsubscribe tokens cannot be used to authenticate candidate rooms'
+          )
+        );
+      }
+
+      // Verify dedicated candidate session token
+      const sessionVerified = verifyCandidateSessionToken(token);
+      if (sessionVerified.valid && sessionVerified.candidateId === candidateId) {
         socket.data.candidateId = candidateId;
         socket.data.authenticated = true;
         return next();
       }
-      return next(new Error('FORBIDDEN: token does not match candidateId or is expired'));
+
+      return next(new Error('FORBIDDEN: token does not match candidateId or is expired/invalid'));
     }
 
     // Anonymous public connection (can listen to 'live-job-feed')
@@ -307,6 +343,15 @@ async function startServer() {
     }
     socket.on('disconnect', () => {});
   });
+
+  // Start background durable retry, digest, and preference sync worker
+  const worker = new DurableNotificationWorker({
+    store: defaultStore,
+    dispatcher: defaultDispatcher,
+    userServiceUrl: process.env.USER_SERVICE_URL,
+    intervalMs: 3000,
+  });
+  worker.start();
 
   const transporter = createTransporter();
   const kafka = new Kafka({ clientId: 'notification-service', brokers: [KAFKA_BROKER] });
@@ -353,7 +398,15 @@ async function startServer() {
     console.log(`🚀 Notification Express server running on port ${PORT} [Mode: ${NOTIFICATION_MODE}]`);
   });
 
-  return { app, server, io, consumer, store: defaultStore, dispatcher: defaultDispatcher };
+  return {
+    app,
+    server,
+    io,
+    consumer,
+    store: defaultStore,
+    dispatcher: defaultDispatcher,
+    worker,
+  };
 }
 
 // Auto-start if executed directly
@@ -374,4 +427,5 @@ module.exports = {
   defaultStore,
   defaultDispatcher,
   startServer,
+  DurableNotificationWorker,
 };
