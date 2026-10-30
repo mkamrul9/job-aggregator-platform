@@ -186,6 +186,7 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     applications: unknown[];
     reports: unknown[];
     alerts: unknown[];
+    recommendations_feedback?: unknown[];
   }> {
     const user = await this.userRepository.findById(userId);
     if (!user) {
