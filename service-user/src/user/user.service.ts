@@ -35,7 +35,16 @@ import type {
   TriageReportDto,
   CreateAlertDto,
   PaginationOptionsDto,
+  RecommendationFeedbackDto,
+  RecommendationsResponseDto,
+  RecommendationFeedbackResponseDto,
 } from './dto/workspace.dto';
+import {
+  filterAndRankRecommendations,
+  STANDALONE_SEED_JOBS,
+  RECOMMENDATION_ALGORITHM_VERSION,
+  CandidateMatchingProfile,
+} from './recommendation-engine';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 
@@ -162,6 +171,7 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     data: UpdateProfileDto,
   ): Promise<UserProfileResponseDto> {
     const updatedUser = await this.userRepository.updateProfile(userId, data);
+    this.recommendationsCache.delete(userId);
     return mapToUserProfileResponse(updatedUser, updatedUser.profile);
   }
 
@@ -238,6 +248,15 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         frequency: al.frequency,
         active: al.active,
         created_at: al.createdAt.toISOString(),
+      })),
+      recommendations_feedback: (
+        comprehensive.recommendationFeedback || []
+      ).map((f) => ({
+        id: f.id,
+        job_id: f.jobId,
+        action: f.action,
+        reason: f.reason,
+        created_at: f.createdAt.toISOString(),
       })),
     };
   }
@@ -545,7 +564,7 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       parseId,
       selectedSkills || [],
     );
-
+    this.recommendationsCache.delete(userId);
     return mapToUserProfileResponse(updatedUser, updatedUser.profile);
   }
 
@@ -636,6 +655,15 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         | { kind: 'NOT_FOUND' }
         | { kind: 'UNAVAILABLE' };
       expiresAt: number;
+    }
+  >();
+
+  private readonly recommendationsCache = new Map<
+    string,
+    {
+      result: RecommendationsResponseDto;
+      expiresAt: number;
+      profileVersion: string;
     }
   >();
 
@@ -1396,6 +1424,181 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       frequency: alert.frequency,
       active: alert.active,
       created_at: alert.createdAt.toISOString(),
+    };
+  }
+
+  // ─── P10 RECOMMENDATIONS & FEEDBACK ──────────────────────────────────────
+
+  async fetchAllActiveJobs(): Promise<CatalogJobResponse[]> {
+    const ingestionUrl =
+      process.env.INGESTION_SERVICE_URL || 'http://localhost:5000';
+    try {
+      const res = await fetch(
+        `${ingestionUrl}/api/v1/jobs?limit=100&sort=date_desc`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(2500),
+        },
+      );
+
+      if (res.status === 200) {
+        const body = (await res.json()) as { items?: CatalogJobResponse[] };
+        if (Array.isArray(body?.items)) {
+          return body.items;
+        }
+        return [];
+      }
+
+      if (process.env.ALLOW_STANDALONE_TEST_SEED_CATALOG === 'true') {
+        return STANDALONE_SEED_JOBS;
+      }
+      throw new ServiceUnavailableException({
+        code: 'CATALOG_UNAVAILABLE',
+        message: 'Job catalog service is temporarily unavailable.',
+      });
+    } catch (err: unknown) {
+      if (err instanceof ServiceUnavailableException) {
+        throw err;
+      }
+      if (process.env.ALLOW_STANDALONE_TEST_SEED_CATALOG === 'true') {
+        return STANDALONE_SEED_JOBS;
+      }
+      throw new ServiceUnavailableException({
+        code: 'CATALOG_UNAVAILABLE',
+        message: 'Job catalog service is temporarily unavailable.',
+      });
+    }
+  }
+
+  async getRecommendations(
+    userId: string,
+    options?: PaginationOptionsDto,
+  ): Promise<RecommendationsResponseDto> {
+    const user = await this.userRepository.findById(userId);
+    const profile = user?.profile;
+
+    const profileVersion = profile?.updatedAt?.toISOString() || 'init';
+
+    if (!options?.cursor) {
+      const cached = this.recommendationsCache.get(userId);
+      if (
+        cached &&
+        cached.expiresAt > Date.now() &&
+        cached.profileVersion === profileVersion
+      ) {
+        return cached.result;
+      }
+    }
+
+    const candMatchingProfile: CandidateMatchingProfile = {
+      userId,
+      skills: profile?.skills || [], // strictly reviewed skills
+      title: profile?.title || null,
+      locations: profile?.locations || [],
+      remotePreference: profile?.remotePreference || 'UNSPECIFIED',
+      minSalary: profile?.minSalary || null,
+      currency: profile?.currency || 'BDT',
+      updatedAt: profile?.updatedAt,
+    };
+
+    const dismissedIds = await this.userRepository.getDismissedJobIds(userId);
+    const allJobs = await this.fetchAllActiveJobs();
+
+    const isColdStart =
+      candMatchingProfile.skills.length === 0 && !candMatchingProfile.title;
+
+    const { items, nextCursor, totalCount } = filterAndRankRecommendations(
+      candMatchingProfile,
+      allJobs,
+      dismissedIds,
+      options,
+    );
+
+    const result: RecommendationsResponseDto = {
+      items,
+      next_cursor: nextCursor,
+      total_count: totalCount,
+      algorithm_version: RECOMMENDATION_ALGORITHM_VERSION,
+      freshness_timestamp: new Date().toISOString(),
+      is_cold_start: isColdStart,
+    };
+
+    if (!options?.cursor) {
+      this.recommendationsCache.set(userId, {
+        result,
+        expiresAt: Date.now() + 15_000,
+        profileVersion,
+      });
+    }
+
+    return result;
+  }
+
+  async submitRecommendationFeedback(
+    userId: string,
+    jobId: string,
+    data: RecommendationFeedbackDto,
+  ): Promise<RecommendationFeedbackResponseDto> {
+    if (!jobId || typeof jobId !== 'string' || !jobId.trim()) {
+      throw new BadRequestException('Valid jobId is required for feedback.');
+    }
+
+    if (data?.action !== 'DISMISS') {
+      throw new BadRequestException('Feedback action must be "DISMISS".');
+    }
+
+    const validReasons = [
+      'NOT_INTERESTED',
+      'WRONG_LOCATION',
+      'UNDERQUALIFIED',
+      'OVERQUALIFIED',
+      'OTHER',
+    ];
+    if (data.reason && !validReasons.includes(data.reason)) {
+      throw new BadRequestException(
+        `Invalid feedback reason. Must be one of: ${validReasons.join(', ')}`,
+      );
+    }
+
+    const saved = await this.userRepository.upsertRecommendationFeedback(
+      userId,
+      jobId.trim(),
+      data.action,
+      data.reason,
+    );
+
+    this.recommendationsCache.delete(userId);
+
+    return {
+      success: true,
+      job_id: saved.jobId,
+      action: saved.action,
+      reason:
+        (saved.reason as RecommendationFeedbackDto['reason']) || undefined,
+      updated_at: saved.updatedAt.toISOString(),
+    };
+  }
+
+  async undoRecommendationFeedback(userId: string, jobId: string) {
+    if (!jobId || typeof jobId !== 'string' || !jobId.trim()) {
+      throw new BadRequestException(
+        'Valid jobId is required to undo feedback.',
+      );
+    }
+
+    const deleted = await this.userRepository.deleteRecommendationFeedback(
+      userId,
+      jobId.trim(),
+    );
+
+    this.recommendationsCache.delete(userId);
+
+    return {
+      success: true,
+      job_id: jobId.trim(),
+      message: deleted
+        ? 'Recommendation dismissal undone.'
+        : 'Feedback record was not found or already restored.',
     };
   }
 

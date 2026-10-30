@@ -210,8 +210,8 @@ All platform services interact through versioned machine-readable contracts loca
 - **Required Infrastructure:**
   - Standalone mode: Dedicated PostgreSQL 15 container + Firebase Auth emulator.
   - Integrated mode: PostgreSQL, Firebase project credentials, `service-resume` gRPC endpoint.
-- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 59 Jest unit tests across 7 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (33 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`, `20261029000000_p09_candidate_workspace_and_support`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
-- **Completed in Phases P05, P08 & P09:**
+- **Current Verification Status:** ESLint (non-mutating), TypeScript compilation, 84 Jest unit tests across 9 suites, negative error-handling verification (`npm run test:smoke:negative`), and strict standalone smoke integration test (39 steps) (`npm run test:smoke`) pass cleanly in local and CI pipelines. Forward-only migrations (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261028000000_p08_resume_documents_and_lifecycle`, `20261029000000_p09_candidate_workspace_and_support`, `20261030000000_p10_recommendations_and_feedback`) deployed and verified against PostgreSQL. Docker packaging builds cleanly.
+- **Completed in Phases P05, P08, P09 & P10:**
   - Idempotent Firebase-to-PostgreSQL synchronization (`POST /users/sync`).
   - Persistent candidate profile read & update (`GET/PUT /users/profile`).
   - Scheduled account deletion with 30-day grace period and idempotency (`POST /users/account/delete`).
@@ -227,7 +227,12 @@ All platform services interact through versioned machine-readable contracts loca
   - P09 Application Tracker: Candidate-managed tracking (`/users/applications`) with atomic database-level optimistic concurrency control (`expected_version` -> 409 Conflict), state machine transition history, and idempotent creation.
   - P09 Support & Moderation: Support report submission (`POST /reports`) with optional auth guard (rejects malformed tokens with 401; allows anonymous with IP hash), durable `RPT-YYYYMMDD-XXXX` receipts, reporter status lookup, and role-enforced admin triage queue (`/admin/reports`).
   - P09 Account export extended to package all personal workspace entities (`saved_jobs`, `saved_searches`, `applications`, `reports`) while omitting internal operator notes and IP hashes.
-  - Standalone runner and integration test suite (`npm run test:smoke`) with Firebase Auth emulator on port 9099, PostgreSQL, and real Python gRPC server, extended to 33 verification steps.
+  - P10 Explainable Recommendations & Matching: Deterministic scoring engine (`recommendation-engine.ts`) version `v1.0.0-deterministic` grounded strictly in reviewed candidate profile skills, location/remote constraints, and pay-period normalized compensation without hallucinated claims.
+  - P10 Strict Hard Exclusions: Zero tolerance for inactive/flagged/draft/expired listings, candidate-dismissed jobs, `ON_SITE`/`HYBRID` listings for `FULLY_REMOTE` candidates, geographic city mismatches for `ON_SITE` candidates, and monthly normalized compensation below minimum requirements.
+  - P10 Recommendation Feedback & Dismissal (`RecommendationFeedback`): Endpoints `POST/DELETE /users/recommendations/:jobId/feedback` with candidate isolation, atomic upserts, and immediate cache invalidation.
+  - P10 Versioned Cursor Security: Base64 JSON cursors cryptographically validated against candidate ownership, algorithm version, and profile update timestamps (rejects malformed/foreign/stale cursors with 400 Bad Request).
+  - P10 Quality & Evaluation Benchmark: 11 candidate profiles evaluated against 22 catalog listings (`recommendation-evaluation.spec.ts`) verifying 0.0% hard exclusion violations, 100% P@1, >=85% P@3, 100% grounded explanations, and bounded latency (< 20ms across 50 runs).
+  - Standalone runner and integration test suite (`npm run test:smoke`) extended to 39 verification steps.
   - Negative error handling regression suite (`npm run test:smoke:negative`) ensuring no false-positive test reporting.
   - Automated CI integration job running database migrations, Python gRPC extractor, and strict smoke tests against isolated PostgreSQL container and Firebase Auth Emulator.
 - **Intended Deployment Boundary:**

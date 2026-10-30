@@ -177,6 +177,7 @@ jobs:
           FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9099
           RESUME_GRPC_URL: 127.0.0.1:50051
           RESUME_SERVICE_TOKEN: seekers-resume-secret-token
+          ALLOW_STANDALONE_TEST_SEED_CATALOG: 'true'
         run: |
           npm run start &
           ready=false

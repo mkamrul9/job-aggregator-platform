@@ -9,6 +9,12 @@ import MobileFilterSheet, { FilterState } from '../components/MobileFilterSheet'
 import ApplicationsWorkspace from '../components/ApplicationsWorkspace';
 import AlertsWorkspace from '../components/AlertsWorkspace';
 import ProfileWorkspace from '../components/ProfileWorkspace';
+import RecommendationsWorkspace from '../components/RecommendationsWorkspace';
+import {
+  computeDemoRecommendations,
+  RecommendedJob,
+  CandidateMatchingInput,
+} from '../lib/recommendation-adapter';
 import AuthModal from '../components/AuthModal';
 import FeedbackModal from '../components/FeedbackModal';
 import DataControlModal from '../components/DataControlModal';
@@ -69,7 +75,15 @@ interface ApiTrackedAppItem {
 
 function CandidatePortalContent() {
   const searchParams = useSearchParams();
-  const { user, token, isDemo: isAuthDemo } = useAuth();
+  const { user, token, profile, isDemo: isAuthDemo } = useAuth();
+
+  // Recommendations State
+  const [liveRecommendations, setLiveRecommendations] = useState<RecommendedJob[]>([]);
+  const [liveIsColdStart, setLiveIsColdStart] = useState<boolean>(false);
+  const [isLoadingRecs, setIsLoadingRecs] = useState<boolean>(false);
+  const [recsError, setRecsError] = useState<string | null>(null);
+  const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(new Set());
+  const [undoDismissJob, setUndoDismissJob] = useState<{ id: string; title: string } | null>(null);
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<ActiveTab>('discover');
@@ -348,7 +362,69 @@ function CandidatePortalContent() {
     return () => {
       isMounted = false;
     };
-  }, [isDemoMode, user, token]);
+    // 5. Recommendations
+    setIsLoadingRecs(true);
+    setRecsError(null);
+    fetch('/api/v1/users/recommendations?limit=20', { headers: authHeaders })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load recommendations (HTTP ${res.status})`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted && data?.items) {
+          setLiveRecommendations(data.items);
+          setLiveIsColdStart(Boolean(data.is_cold_start));
+          setIsLoadingRecs(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (isMounted) {
+          const msg =
+            err instanceof Error
+              ? err.message
+              : 'Could not load recommendations.';
+          setRecsError(msg);
+          setIsLoadingRecs(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isDemoMode, user, token, profile]);
+
+  // Derive Demo Mode Recommendations via useMemo without side effects
+  const demoRecsResult = useMemo(() => {
+    if (!isDemoMode) return { items: [] as RecommendedJob[], isColdStart: false };
+    const demoCandidate: CandidateMatchingInput = {
+      skills: profile?.skills || [],
+      title: profile?.title || null,
+      locations: profile?.preferences?.locations || [],
+      remotePreference:
+        profile?.preferences?.remote_preference || 'UNSPECIFIED',
+      minSalary: profile?.preferences?.min_salary || null,
+      currency: profile?.preferences?.currency || 'BDT',
+    };
+    return computeDemoRecommendations(
+      demoCandidate,
+      SYNTHETIC_JOBS,
+      dismissedJobIds,
+    );
+  }, [isDemoMode, profile, dismissedJobIds]);
+
+  const effectiveRecommendations = useMemo(() => {
+    if (isDemoMode) return demoRecsResult.items;
+    if (!user) return [];
+    return liveRecommendations;
+  }, [isDemoMode, user, demoRecsResult.items, liveRecommendations]);
+
+  const effectiveIsColdStart = useMemo(() => {
+    if (isDemoMode) return demoRecsResult.isColdStart;
+    if (!user) return false;
+    return liveIsColdStart;
+  }, [isDemoMode, user, demoRecsResult.isColdStart, liveIsColdStart]);
 
   // Effective candidate workspace collections (strictly unauthenticated/live = empty)
   const effectiveSavedJobs = useMemo(
@@ -1027,6 +1103,130 @@ function CandidatePortalContent() {
     }
   };
 
+  const handleDismissRecommendation = useCallback(
+    async (jobId: string, reason = 'NOT_INTERESTED') => {
+      const targetJob = effectiveRecommendations.find((r) => r.id === jobId);
+      setDismissedJobIds((prev) => new Set(prev).add(jobId));
+      setLiveRecommendations((prev) => prev.filter((r) => r.id !== jobId));
+      if (targetJob) {
+        setUndoDismissJob({ id: jobId, title: targetJob.title });
+      }
+
+      if (!isDemoMode && user && token) {
+        try {
+          const res = await fetch(
+            `/api/v1/users/recommendations/${jobId}/feedback`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ action: 'DISMISS', reason }),
+            },
+          );
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+        } catch {
+          setDismissedJobIds((prev) => {
+            const next = new Set(prev);
+            next.delete(jobId);
+            return next;
+          });
+          if (targetJob) {
+            setLiveRecommendations((prev) => [targetJob, ...prev]);
+          }
+          setUndoDismissJob(null);
+          alert(
+            'Failed to dismiss recommendation on server. Restoring listing.',
+          );
+        }
+      }
+    },
+    [effectiveRecommendations, isDemoMode, user, token],
+  );
+
+  const handleUndoDismissRecommendation = useCallback(
+    async (jobId: string) => {
+      setDismissedJobIds((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+      setUndoDismissJob(null);
+
+      if (!isDemoMode && user && token) {
+        try {
+          const res = await fetch(
+            `/api/v1/users/recommendations/${jobId}/feedback`,
+            {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          );
+          if (!res.ok && res.status !== 404) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const recsRes = await fetch(
+            '/api/v1/users/recommendations?limit=20',
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/json',
+              },
+            },
+          );
+          if (recsRes.ok) {
+            const data = await recsRes.json();
+            if (data?.items) {
+              setLiveRecommendations(data.items);
+            }
+          }
+        } catch {
+          setDismissedJobIds((prev) => new Set(prev).add(jobId));
+          alert('Failed to undo dismissal on server.');
+        }
+      }
+    },
+    [isDemoMode, user, token],
+  );
+
+  const handleRetryRecs = useCallback(() => {
+    if (isDemoMode || !user || !token) return;
+    setIsLoadingRecs(true);
+    setRecsError(null);
+    fetch('/api/v1/users/recommendations?limit=20', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(
+            `Failed to load recommendations (HTTP ${res.status})`,
+          );
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (data?.items) {
+          setLiveRecommendations(data.items);
+          setLiveIsColdStart(Boolean(data.is_cold_start));
+          setIsLoadingRecs(false);
+        }
+      })
+      .catch((err: unknown) => {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'Could not load recommendations.';
+        setRecsError(msg);
+        setIsLoadingRecs(false);
+      });
+  }, [isDemoMode, user, token]);
+
   const handleDeleteSavedSearch = async (searchId: string) => {
     setSavedSearches((prev) => prev.filter((s) => s.id !== searchId));
     if (!isDemoMode && token) {
@@ -1050,6 +1250,7 @@ function CandidatePortalContent() {
         savedCount={effectiveSavedJobs.length}
         applicationsCount={effectiveApplications.length}
         alertsCount={effectiveAlerts.length}
+        recommendationsCount={effectiveRecommendations.length}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenFeedback={() => setIsFeedbackOpen(true)}
         onOpenDemoInfo={() => setIsDemoInfoOpen(true)}
@@ -1451,6 +1652,28 @@ function CandidatePortalContent() {
           )}
 
           {/* ─── TAB 2: SAVED JOBS ───────────────────────────────────────── */}
+          {/* ─── TAB: RECOMMENDATIONS ─────────────────────────────────────── */}
+          {activeTab === 'recommendations' && (
+            <RecommendationsWorkspace
+              recommendations={effectiveRecommendations}
+              isColdStart={effectiveIsColdStart}
+              isLoading={isLoadingRecs}
+              error={recsError}
+              savedJobIds={savedJobIds}
+              onToggleSave={handleToggleSave}
+              onTrackApplication={handleTrackApplication}
+              onSelectJob={handleSelectJob}
+              onDismiss={handleDismissRecommendation}
+              undoDismissJob={undoDismissJob}
+              onUndoDismiss={handleUndoDismissRecommendation}
+              onGoToProfile={() => setActiveTab('profile')}
+              onOpenAuth={() => setIsAuthOpen(true)}
+              isAuthenticated={Boolean(user)}
+              isDemoMode={isDemoMode}
+              onRetry={handleRetryRecs}
+            />
+          )}
+
           {activeTab === 'saved' && (
             <div>
               <div style={{ marginBottom: '1.25rem' }}>

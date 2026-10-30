@@ -35,6 +35,7 @@ import type {
   TrackApplicationDto,
   UpdateApplicationDto,
   CreateAlertDto,
+  RecommendationFeedbackDto,
 } from './dto/workspace.dto';
 
 function parseSafeLimit(
@@ -666,5 +667,66 @@ export class UserController {
       throw new BadRequestException('User identification missing from token');
     }
     return this.userService.toggleAlert(uid, id);
+  }
+
+  // ─── P10 RECOMMENDATIONS & FEEDBACK ──────────────────────────────────────
+
+  /**
+   * GET /users/recommendations
+   * Deterministic personalized recommendations grounded in candidate-reviewed profile.
+   */
+  @Get('recommendations')
+  @UseGuards(FirebaseAuthGuard)
+  async getRecommendations(
+    @Req() request: AuthenticatedRequest,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    const safeLimit = parseSafeLimit(limit, 10, 50);
+    return this.userService.getRecommendations(uid, {
+      limit: safeLimit,
+      cursor,
+    });
+  }
+
+  /**
+   * POST /users/recommendations/:jobId/feedback
+   * Candidate dismissal or feedback on a recommended job listing.
+   */
+  @Post('recommendations/:jobId/feedback')
+  @HttpCode(200)
+  @UseGuards(FirebaseAuthGuard)
+  async submitRecommendationFeedback(
+    @Req() request: AuthenticatedRequest,
+    @Param('jobId') jobId: string,
+    @Body() body: RecommendationFeedbackDto,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.submitRecommendationFeedback(uid, jobId, body);
+  }
+
+  /**
+   * DELETE /users/recommendations/:jobId/feedback
+   * Undo recommendation feedback and restore listing to candidate pool.
+   */
+  @Delete('recommendations/:jobId/feedback')
+  @HttpCode(200)
+  @UseGuards(FirebaseAuthGuard)
+  async undoRecommendationFeedback(
+    @Req() request: AuthenticatedRequest,
+    @Param('jobId') jobId: string,
+  ) {
+    const uid = request.user?.uid;
+    if (!uid) {
+      throw new BadRequestException('User identification missing from token');
+    }
+    return this.userService.undoRecommendationFeedback(uid, jobId);
   }
 }

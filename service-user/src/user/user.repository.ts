@@ -1344,33 +1344,105 @@ export class UserRepository {
     });
   }
 
+  // ─── RECOMMENDATION FEEDBACK ──────────────────────────────────────────
+
+  async upsertRecommendationFeedback(
+    userId: string,
+    jobId: string,
+    action: string,
+    reason?: string,
+  ) {
+    return this.prisma.recommendationFeedback.upsert({
+      where: {
+        userId_jobId: {
+          userId,
+          jobId,
+        },
+      },
+      update: {
+        action,
+        reason: reason || null,
+        updatedAt: new Date(),
+      },
+      create: {
+        userId,
+        jobId,
+        action,
+        reason: reason || null,
+      },
+    });
+  }
+
+  async deleteRecommendationFeedback(
+    userId: string,
+    jobId: string,
+  ): Promise<boolean> {
+    const deleted = await this.prisma.recommendationFeedback.deleteMany({
+      where: {
+        userId,
+        jobId,
+      },
+    });
+    return deleted.count > 0;
+  }
+
+  async getDismissedJobIds(userId: string): Promise<Set<string>> {
+    const feedback = await this.prisma.recommendationFeedback.findMany({
+      where: {
+        userId,
+        action: 'DISMISS',
+      },
+      select: {
+        jobId: true,
+      },
+    });
+    return new Set(feedback.map((f) => f.jobId));
+  }
+
+  async listRecommendationFeedback(userId: string) {
+    return this.prisma.recommendationFeedback.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   // ─── ACCOUNT EXPORT COMPREHENSIVE QUERY ──────────────────────────────────
 
   async getComprehensiveUserData(userId: string) {
-    const [savedJobs, savedSearches, applications, supportReports, alerts] =
-      await Promise.all([
-        this.prisma.savedJob.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.savedSearch.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.trackedApplication.findMany({
-          where: { userId },
-          include: { history: { orderBy: { changedAt: 'asc' } } },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.supportReport.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.alertSubscription.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-      ]);
+    const [
+      savedJobs,
+      savedSearches,
+      applications,
+      supportReports,
+      alerts,
+      recommendationFeedback,
+    ] = await Promise.all([
+      this.prisma.savedJob.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.savedSearch.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.trackedApplication.findMany({
+        where: { userId },
+        include: { history: { orderBy: { changedAt: 'asc' } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.supportReport.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.alertSubscription.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.recommendationFeedback.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
     return {
       savedJobs,
@@ -1378,6 +1450,7 @@ export class UserRepository {
       applications,
       supportReports,
       alerts,
+      recommendationFeedback,
     };
   }
 }

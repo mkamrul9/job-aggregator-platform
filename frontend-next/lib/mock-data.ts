@@ -92,6 +92,22 @@ export interface UserProfile {
   };
 }
 
+export interface MatchReasons {
+  matched_skills: string[];
+  missing_skills: string[];
+  location_reason?: string;
+  seniority_reason?: string;
+  compensation_reason?: string;
+  overall_summary: string;
+}
+
+export interface RecommendedJob extends JobSummary {
+  score: number;
+  match_reasons: MatchReasons;
+  algorithm_version: string;
+  is_available: boolean;
+}
+
 export const SYNTHETIC_JOBS: JobDetail[] = [
   {
     id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",

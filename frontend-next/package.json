@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node test/auth-provider-regression.mjs && node test/job-search-regression.mjs"
+    "test": "node test/auth-provider-regression.mjs && node test/job-search-regression.mjs && node test/recommendations-regression.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

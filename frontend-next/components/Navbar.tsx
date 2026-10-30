@@ -3,7 +3,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../lib/auth-context';
 
-export type ActiveTab = 'discover' | 'saved' | 'applications' | 'alerts' | 'profile';
+export type ActiveTab =
+  | 'discover'
+  | 'recommendations'
+  | 'saved'
+  | 'applications'
+  | 'alerts'
+  | 'profile';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -11,6 +17,7 @@ interface NavbarProps {
   savedCount: number;
   applicationsCount: number;
   alertsCount: number;
+  recommendationsCount?: number;
   onOpenAuth: () => void;
   onOpenFeedback: () => void;
   onOpenDemoInfo: () => void;
@@ -23,6 +30,7 @@ export default function Navbar({
   savedCount,
   applicationsCount,
   alertsCount,
+  recommendationsCount,
   onOpenAuth,
   onOpenFeedback,
   onOpenDemoInfo,
@@ -106,6 +114,18 @@ export default function Navbar({
                   id="nav-tab-discover"
                 >
                   Discover Roles
+                </button>
+
+                <button
+                  type="button"
+                  className={`tab-item ${activeTab === 'recommendations' ? 'active' : ''}`}
+                  onClick={() => handleTabClick('recommendations')}
+                  id="nav-tab-recommendations"
+                >
+                  Recommendations
+                  {recommendationsCount !== undefined && recommendationsCount > 0 && (
+                    <span className="tab-count">{recommendationsCount}</span>
+                  )}
                 </button>
 
                 <button
@@ -373,6 +393,15 @@ export default function Navbar({
               style={{ width: '100%', justifyContent: 'flex-start', minHeight: '44px' }}
             >
               🔍 Discover Roles
+            </button>
+
+            <button
+              type="button"
+              className={`tab-item ${activeTab === 'recommendations' ? 'active' : ''}`}
+              onClick={() => handleTabClick('recommendations')}
+              style={{ width: '100%', justifyContent: 'flex-start', minHeight: '44px' }}
+            >
+              🎯 Recommendations {recommendationsCount !== undefined && recommendationsCount > 0 ? `(${recommendationsCount})` : ''}
             </button>
 
             <button

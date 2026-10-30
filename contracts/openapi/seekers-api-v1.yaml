@@ -552,6 +552,101 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/recommendations:
+    get:
+      summary: Get Personalized Job Recommendations
+      description: Returns deterministic ranked job recommendations grounded in reviewed candidate skills and preferences with explainable reasons.
+      operationId: getRecommendations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, algorithm_version]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecommendedJob'
+                  next_cursor:
+                    type: string
+                  total_count:
+                    type: integer
+                  algorithm_version:
+                    type: string
+                  freshness_timestamp:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/recommendations/{jobId}/feedback:
+    post:
+      summary: Submit Feedback on Recommended Job
+      description: Candidate submits feedback (e.g. dismiss or not interested) on a recommended job listing.
+      operationId: submitRecommendationFeedback
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationFeedbackRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationFeedbackResponse'
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationFeedbackResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      summary: Undo Recommendation Feedback (Restore dismissed job)
+      description: Removes candidate dismissal or feedback on a job, restoring it to the candidate's eligible recommendations pool.
+      operationId: undoRecommendationFeedback
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Feedback undone successfully.
+        '204':
+          description: Feedback undone successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /users/applications:
     get:
       summary: List Candidate-Managed Tracked Applications
@@ -1485,3 +1580,93 @@ components:
                 type: string
               issue:
                 type: string
+
+    RecommendedJob:
+      type: object
+      required: [id, title, company, score, match_reasons, algorithm_version]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        company:
+          type: string
+        location:
+          type: string
+        remote_eligibility:
+          type: string
+        seniority:
+          type: string
+        job_type:
+          type: string
+        salary:
+          $ref: '#/components/schemas/Salary'
+        skills:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        match_reasons:
+          $ref: '#/components/schemas/MatchReasons'
+        algorithm_version:
+          type: string
+        is_available:
+          type: boolean
+        is_expired:
+          type: boolean
+        published_at:
+          type: string
+          format: date-time
+
+    MatchReasons:
+      type: object
+      required: [matched_skills, missing_skills]
+      properties:
+        matched_skills:
+          type: array
+          items:
+            type: string
+        missing_skills:
+          type: array
+          items:
+            type: string
+        location_reason:
+          type: string
+        seniority_reason:
+          type: string
+        compensation_reason:
+          type: string
+        overall_summary:
+          type: string
+
+    RecommendationFeedbackRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [DISMISS]
+        reason:
+          type: string
+          enum: [NOT_INTERESTED, WRONG_LOCATION, UNDERQUALIFIED, OVERQUALIFIED, OTHER]
+
+    RecommendationFeedbackResponse:
+      type: object
+      required: [success, job_id, action]
+      properties:
+        success:
+          type: boolean
+        job_id:
+          type: string
+        action:
+          type: string
+        reason:
+          type: string
+        updated_at:
+          type: string
+          format: date-time

@@ -939,7 +939,7 @@ async function run() {
   }
 
   // Step 33: Personal Data Export Includes Real Workspace Items (/users/account/export)
-  console.log('\n[33/33] Verifying personal data export includes real workspace items (/users/account/export)...');
+  console.log('\n[33/39] Verifying personal data export includes real workspace items (/users/account/export)...');
   const exportCheckRes = await request(`${API_BASE}/users/account/export`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${candidateA.token}` },
@@ -950,6 +950,123 @@ async function run() {
   assert(Array.isArray(exportCheckRes.data?.applications), 'Export contains applications array', exportCheckRes.data?.applications);
   assert(Array.isArray(exportCheckRes.data?.reports), 'Export contains reports array', exportCheckRes.data?.reports);
 
+  // =========================================================================
+  // PHASE 10 EXPLAINABLE MATCHING & RECOMMENDATIONS VERIFICATION
+  // =========================================================================
+
+  // Step 34: Cold-Start Discovery Recommendations (Candidate B with unpopulated profile)
+  console.log('\n[34/39] Testing cold-start recommendations for Candidate B (/users/recommendations)...');
+  const coldStartRes = await request(`${API_BASE}/users/recommendations?limit=5`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  assert(coldStartRes.status === 200, 'Cold start recommendations query returns HTTP 200', coldStartRes.status);
+  assert(coldStartRes.data && coldStartRes.data.is_cold_start === true, 'is_cold_start flag is true for Candidate B', coldStartRes.data?.is_cold_start);
+  assert(coldStartRes.data && coldStartRes.data.algorithm_version === 'v1.0.0-deterministic', 'Response declares algorithm version v1.0.0-deterministic', coldStartRes.data?.algorithm_version);
+  assert(Array.isArray(coldStartRes.data?.items), 'Cold-start returns items array', coldStartRes.data?.items);
+
+  // Step 35: Deterministic Grounded Recommendations (Candidate A with reviewed profile)
+  console.log('\n[35/39] Testing deterministic grounded recommendations for Candidate A (/users/recommendations)...');
+  const candARecs = await request(`${API_BASE}/users/recommendations?limit=10`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(candARecs.status === 200, 'Candidate A recommendations query returns HTTP 200', candARecs.status);
+  assert(candARecs.data && candARecs.data.is_cold_start === false, 'is_cold_start is false for Candidate A with reviewed skills', candARecs.data?.is_cold_start);
+  assert(Array.isArray(candARecs.data?.items) && candARecs.data.items.length > 0, 'Candidate A receives non-empty recommendations', candARecs.data?.items?.length);
+
+  const topRec = candARecs.data.items[0];
+  assert(typeof topRec.score === 'number' && topRec.score > 0, 'Top recommendation has positive deterministic score', topRec.score);
+  assert(topRec.match_reasons && Array.isArray(topRec.match_reasons.matched_skills), 'Recommendation contains structured match_reasons', topRec.match_reasons);
+  assert(typeof topRec.match_reasons.overall_summary === 'string', 'Structured overall summary reason provided', topRec.match_reasons?.overall_summary);
+
+  // Step 36: Hard Constraint Enforcement (Remote & Salary Exclusions)
+  console.log('\n[36/39] Verifying hard constraint enforcement (remote preference & salary minimums)...');
+  const recItems = candARecs.data.items;
+  // Candidate A requested FULLY_REMOTE -> No listing returned may be ON_SITE or HYBRID
+  const remoteViolation = recItems.find((j) => {
+    const r = (j.remote_eligibility || '').toUpperCase();
+    return r === 'ON_SITE' || r === 'HYBRID';
+  });
+  assert(!remoteViolation, 'Strictly zero ON_SITE or HYBRID listings returned for FULLY_REMOTE candidate', remoteViolation?.id);
+
+  // Candidate A minimum salary is 180,000 BDT -> No matching-currency listing with max salary below 180,000 may be returned
+  const salaryViolation = recItems.find((j) => {
+    if (j.salary && typeof j.salary === 'object' && j.salary.currency === 'BDT') {
+      let cap = j.salary.max ?? j.salary.min;
+      if (cap && j.salary.period === 'YEARLY') {
+        cap = Math.round(cap / 12);
+      }
+      return cap && cap < 180000;
+    }
+    return false;
+  });
+  assert(!salaryViolation, 'Strictly zero listings below candidate minimum salary for matching currency', salaryViolation?.id);
+
+  // Step 37: Submit Dismissal Feedback (/users/recommendations/:jobId/feedback)
+  console.log('\n[37/39] Testing candidate dismissal feedback on recommended job...');
+  const dismissedJobId = topRec.id;
+  const dismissRes = await request(`${API_BASE}/users/recommendations/${dismissedJobId}/feedback`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${candidateA.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: {
+      action: 'DISMISS',
+      reason: 'NOT_INTERESTED',
+    },
+  });
+  assert(dismissRes.status === 200, 'Dismissal feedback submission returns HTTP 200', dismissRes.status);
+  assert(dismissRes.data && dismissRes.data.success === true, 'Feedback response indicates success', dismissRes.data?.success);
+  assert(dismissRes.data && dismissRes.data.action === 'DISMISS', 'Feedback response reflects DISMISS action', dismissRes.data?.action);
+
+  // Re-fetch recommendations for Candidate A to ensure dismissed job is absent
+  const afterDismissRecs = await request(`${API_BASE}/users/recommendations?limit=10`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  const dismissedFound = afterDismissRecs.data?.items?.some((j) => j.id === dismissedJobId);
+  assert(!dismissedFound, 'Dismissed job is immediately excluded from subsequent candidate recommendations', dismissedFound);
+
+  // Step 38: Candidate B Isolation & Undo Dismissal (/users/recommendations/:jobId/feedback)
+  console.log('\n[38/39] Verifying cross-candidate feedback isolation and undo dismissal...');
+  // Candidate B should NOT be affected by Candidate A's dismissal
+  const candBRecs = await request(`${API_BASE}/users/recommendations?limit=10`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  const candBHasJob = candBRecs.data?.items?.some((j) => j.id === dismissedJobId);
+  assert(candBHasJob, "Candidate A's dismissal does NOT affect Candidate B recommendations (isolated)", candBHasJob);
+
+  // Candidate A undoes dismissal
+  const undoRes = await request(`${API_BASE}/users/recommendations/${dismissedJobId}/feedback`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(undoRes.status === 200, 'Undo dismissal returns HTTP 200', undoRes.status);
+
+  // Re-fetch recommendations for Candidate A to verify restored listing
+  const restoredRecs = await request(`${API_BASE}/users/recommendations?limit=10`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  const restoredFound = restoredRecs.data?.items?.some((j) => j.id === dismissedJobId);
+  assert(restoredFound, 'Dismissed job is successfully restored to recommendations pool after undo', restoredFound);
+
+  // Step 39: Pagination Cursor Integrity & Security (/users/recommendations?cursor=...)
+  console.log('\n[39/39] Testing pagination cursor integrity, tamper protection, and ownership boundaries...');
+  const malformedCursorRes = await request(`${API_BASE}/users/recommendations?cursor=not-a-valid-base64-json`, {
+    headers: { Authorization: `Bearer ${candidateA.token}` },
+  });
+  assert(malformedCursorRes.status === 400, 'Malformed pagination cursor rejected with HTTP 400 Bad Request', malformedCursorRes.status);
+
+  // Foreign cursor (issued to Candidate B, used by Candidate A) rejected with 400
+  const candBPage = await request(`${API_BASE}/users/recommendations?limit=1`, {
+    headers: { Authorization: `Bearer ${candidateB.token}` },
+  });
+  if (candBPage.data?.next_cursor) {
+    const foreignCursorRes = await request(`${API_BASE}/users/recommendations?cursor=${candBPage.data.next_cursor}`, {
+      headers: { Authorization: `Bearer ${candidateA.token}` },
+    });
+    assert(foreignCursorRes.status === 400, 'Foreign candidate cursor rejected with HTTP 400 (owner boundary enforced)', foreignCursorRes.status);
+  }
+
   // Final Evaluation
   console.log('\n----------------------------------------------------');
   if (failedAssertions > 0) {
@@ -957,7 +1074,7 @@ async function run() {
     process.exit(1);
   }
 
-  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 33 integration checks.\x1b[0m`);
+  console.log(`\x1b[32m✔ [PASS] All ${totalAssertions} assertions passed across 39 integration checks.\x1b[0m`);
 }
 
 run().catch((err) => {

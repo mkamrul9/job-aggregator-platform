@@ -29,6 +29,9 @@ describe('UserController', () => {
     requestAccountDeletion: jest.fn(),
     getAccountStatus: jest.fn(),
     getActiveResume: jest.fn(),
+    getRecommendations: jest.fn(),
+    submitRecommendationFeedback: jest.fn(),
+    undoRecommendationFeedback: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -229,6 +232,63 @@ describe('UserController', () => {
 
       expect(res.role).toBe('ADMIN');
       expect(res.message).toContain('Authorized Administrator');
+    });
+  });
+
+  describe('P10 Recommendations & Feedback', () => {
+    it('GET /users/recommendations invokes userService.getRecommendations with parsed limit', async () => {
+      const req = createMockRequest({ uid: 'cand-p10' });
+      mockUserService.getRecommendations.mockResolvedValue({
+        items: [],
+        total_count: 0,
+        algorithm_version: 'v1.0.0-deterministic',
+      });
+
+      const res = await controller.getRecommendations(req, '15', 'cursor-abc');
+      expect(mockUserService.getRecommendations).toHaveBeenCalledWith(
+        'cand-p10',
+        { limit: 15, cursor: 'cursor-abc' },
+      );
+      expect(res.algorithm_version).toBe('v1.0.0-deterministic');
+    });
+
+    it('POST /users/recommendations/:jobId/feedback delegates to userService', async () => {
+      const req = createMockRequest({ uid: 'cand-p10' });
+      mockUserService.submitRecommendationFeedback.mockResolvedValue({
+        success: true,
+        job_id: 'job-123',
+        action: 'DISMISS',
+      });
+
+      const res = await controller.submitRecommendationFeedback(
+        req,
+        'job-123',
+        { action: 'DISMISS', reason: 'NOT_INTERESTED' },
+      );
+      expect(mockUserService.submitRecommendationFeedback).toHaveBeenCalledWith(
+        'cand-p10',
+        'job-123',
+        {
+          action: 'DISMISS',
+          reason: 'NOT_INTERESTED',
+        },
+      );
+      expect(res.success).toBe(true);
+    });
+
+    it('DELETE /users/recommendations/:jobId/feedback delegates to userService', async () => {
+      const req = createMockRequest({ uid: 'cand-p10' });
+      mockUserService.undoRecommendationFeedback.mockResolvedValue({
+        success: true,
+        job_id: 'job-123',
+      });
+
+      const res = await controller.undoRecommendationFeedback(req, 'job-123');
+      expect(mockUserService.undoRecommendationFeedback).toHaveBeenCalledWith(
+        'cand-p10',
+        'job-123',
+      );
+      expect(res.success).toBe(true);
     });
   });
 });
