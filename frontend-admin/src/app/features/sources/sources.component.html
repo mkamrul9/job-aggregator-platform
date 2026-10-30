@@ -1,0 +1,246 @@
+<div class="space-y-6 max-w-7xl mx-auto">
+  
+  <!-- Header / Intro -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="font-['Sora'] font-bold text-lg text-[var(--seekers-text-primary)]">
+        Crawler Source Connectors & Schedule
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+        Authoritative provenance, licensing boundaries, rate budgets, and execution runs.
+      </p>
+    </div>
+
+    <!-- Read-only notice if applicable -->
+    <div *ngIf="!authService.canMutate()" class="px-3 py-1 rounded bg-[rgba(245,158,11,0.1)] border border-[var(--seekers-amber-border)] text-xs text-[var(--seekers-amber-400)]">
+      👁️ Read-Only Session: Privileged controls disabled
+    </div>
+  </div>
+
+  <!-- Status Notification Banner -->
+  <div *ngIf="statusMessage"
+       class="p-3 rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] text-xs text-[var(--seekers-success)] flex items-center justify-between">
+    <span>{{ statusMessage }}</span>
+    <button (click)="statusMessage = ''" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+  </div>
+
+  <!-- Section 1: Crawler Connectors Table -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <h2 class="text-sm font-bold uppercase tracking-wider font-['Sora'] text-[var(--seekers-text-primary)]">
+          Registered Connectors
+        </h2>
+        <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+          Configured ingestion targets in the Go Scraper service registry.
+        </p>
+      </div>
+
+      <div class="text-xs text-[var(--seekers-text-muted)]">
+        Autonomous Schedule: <span class="font-mono text-[var(--seekers-amber-400)]">15m interval</span>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">Source Name & Endpoint</th>
+            <th class="py-2.5 px-3 font-semibold">Geography & Type</th>
+            <th class="py-2.5 px-3 font-semibold">Permission & Licensing</th>
+            <th class="py-2.5 px-3 font-semibold">Health Status</th>
+            <th class="py-2.5 px-3 font-semibold">Rate Budget</th>
+            <th class="py-2.5 px-3 font-semibold">Total Scraped</th>
+            <th class="py-2.5 px-3 font-semibold text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let s of sources$ | async" class="admin-table-row">
+            
+            <!-- Name & URL -->
+            <td class="py-3 px-3 font-medium text-[var(--seekers-text-primary)]">
+              <div>{{ s.name }}</div>
+              <div class="text-[11px] text-[var(--seekers-text-muted)] font-mono">{{ s.url }}</div>
+              <div *ngIf="s.disabledReason" class="mt-1 text-[10px] text-[var(--seekers-amber-400)] font-sans italic">
+                ℹ️ {{ s.disabledReason }}
+              </div>
+            </td>
+
+            <!-- Geography & Type -->
+            <td class="py-3 px-3">
+              <div class="text-[var(--seekers-text-secondary)]">{{ s.targetRegion }}</div>
+              <div class="text-[10px] font-mono text-[var(--seekers-text-muted)] uppercase mt-0.5">{{ s.type }}</div>
+            </td>
+
+            <!-- Permission Status -->
+            <td class="py-3 px-3">
+              <span class="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded"
+                    [ngClass]="{
+                      'bg-[rgba(16,185,129,0.12)] text-[var(--seekers-success)] border border-[rgba(16,185,129,0.25)]': s.permissionStatus === 'PUBLIC_API' || s.permissionStatus === 'LICENSED',
+                      'bg-[rgba(245,158,11,0.12)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': s.permissionStatus === 'PENDING',
+                      'bg-[rgba(239,68,68,0.12)] text-[var(--seekers-danger)] border border-[rgba(239,68,68,0.25)]': s.permissionStatus === 'PROHIBITED'
+                    }">
+                {{ s.permissionStatus }}
+              </span>
+              <div class="text-[10px] text-[var(--seekers-text-muted)] mt-1 max-w-xs truncate" [title]="s.permissionRef">
+                {{ s.permissionRef }}
+              </div>
+            </td>
+
+            <!-- Status -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded"
+                    [ngClass]="{
+                      'badge-status-healthy': s.status === 'HEALTHY',
+                      'badge-status-degraded': s.status === 'DEGRADED',
+                      'badge-status-paused': s.status === 'PAUSED'
+                    }">
+                {{ s.status }}
+              </span>
+              <div class="text-[10px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
+                {{ s.lastCrawledAt }}
+              </div>
+            </td>
+
+            <!-- Rate Budget -->
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-secondary)]">
+              <div>{{ s.fetchBudget.maxRps }} rps</div>
+              <div class="text-[10px] text-[var(--seekers-text-muted)]">{{ s.fetchBudget.dailyLimit | number }} / day</div>
+            </td>
+
+            <!-- Total Collected -->
+            <td class="py-3 px-3 font-mono text-[var(--seekers-text-primary)]">
+              {{ s.totalCollected | number }}
+            </td>
+
+            <!-- Actions -->
+            <td class="py-3 px-3 text-right space-x-1.5">
+              <button *ngIf="s.enabled"
+                      (click)="onTogglePause(s)"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2.5 py-1 rounded text-[11px] font-medium border border-[var(--seekers-border-medium)] bg-[var(--seekers-bg-surface)] hover:text-white transition-colors disabled:opacity-40">
+                {{ s.status === 'PAUSED' ? '▶ Resume' : '⏸ Pause' }}
+              </button>
+
+              <button *ngIf="s.enabled"
+                      (click)="openCrawlModal(s)"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors disabled:opacity-40">
+                ⚡ Crawl Now
+              </button>
+
+              <span *ngIf="!s.enabled" class="text-[10px] text-[var(--seekers-text-muted)] italic">
+                Disabled
+              </span>
+            </td>
+
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section 2: Crawl Runs History -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-sm font-bold uppercase tracking-wider font-['Sora'] text-[var(--seekers-text-primary)]">
+          Recent Crawl Executions
+        </h2>
+        <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+          Execution audit trail verifying items collected, parsing latency, and rate limits.
+        </p>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">Run ID</th>
+            <th class="py-2.5 px-3 font-semibold">Connector Source</th>
+            <th class="py-2.5 px-3 font-semibold">Trigger Type</th>
+            <th class="py-2.5 px-3 font-semibold">Execution Time</th>
+            <th class="py-2.5 px-3 font-semibold">Duration</th>
+            <th class="py-2.5 px-3 font-semibold">Collected</th>
+            <th class="py-2.5 px-3 font-semibold">Status</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let run of crawlRuns$ | async" class="admin-table-row">
+            <td class="py-2.5 px-3 font-mono text-[11px] text-[var(--seekers-amber-400)]">
+              {{ run.id }}
+            </td>
+            <td class="py-2.5 px-3 font-medium text-[var(--seekers-text-primary)]">
+              {{ run.sourceName }}
+            </td>
+            <td class="py-2.5 px-3">
+              <span class="px-1.5 py-0.5 text-[9px] font-mono rounded bg-white/5 border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)]">
+                {{ run.trigger }}
+              </span>
+            </td>
+            <td class="py-2.5 px-3 font-mono text-[11px] text-[var(--seekers-text-muted)]">
+              {{ run.startedAt }}
+            </td>
+            <td class="py-2.5 px-3 font-mono text-[var(--seekers-text-secondary)]">
+              {{ run.durationMs }}ms
+            </td>
+            <td class="py-2.5 px-3 font-mono font-medium text-[var(--seekers-text-primary)]">
+              +{{ run.itemsCollected }}
+            </td>
+            <td class="py-2.5 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded badge-status-healthy">
+                {{ run.status }}
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Manual Crawl Confirmation Modal -->
+  <div *ngIf="selectedSourceForCrawl"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-[var(--seekers-border-subtle)] pb-3">
+        <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+          Trigger Manual Ingestion Crawl
+        </h3>
+        <button (click)="closeCrawlModal()" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+      </div>
+
+      <div class="text-xs text-[var(--seekers-text-secondary)] space-y-2">
+        <p>You are requesting an immediate out-of-schedule crawl for connector:</p>
+        <div class="p-2.5 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] font-mono text-[var(--seekers-text-primary)]">
+          <div><strong>{{ selectedSourceForCrawl.name }}</strong></div>
+          <div class="text-[11px] text-[var(--seekers-amber-400)]">{{ selectedSourceForCrawl.url }}</div>
+        </div>
+        <p class="text-[11px] text-[var(--seekers-text-muted)]">
+          Rate limit bounds: {{ selectedSourceForCrawl.fetchBudget.maxRps }} requests/sec, max daily limit {{ selectedSourceForCrawl.fetchBudget.dailyLimit }}.
+        </p>
+      </div>
+
+      <div class="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--seekers-border-subtle)]">
+        <button (click)="closeCrawlModal()"
+                type="button"
+                class="px-3 py-1.5 rounded text-xs text-[var(--seekers-text-muted)] hover:text-white">
+          Cancel
+        </button>
+        <button (click)="confirmManualCrawl()"
+                [disabled]="crawlInProgress"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors disabled:opacity-50">
+          {{ crawlInProgress ? 'Executing Crawl...' : 'Confirm & Execute' }}
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div>

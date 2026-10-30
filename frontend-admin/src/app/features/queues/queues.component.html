@@ -1,0 +1,299 @@
+<div class="space-y-6 max-w-7xl mx-auto">
+  
+  <!-- Header -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="font-['Sora'] font-bold text-lg text-[var(--seekers-text-primary)]">
+        Kafka Ingestion Queues & Recovery Controls
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+        Monitor broker partition lag, dead-letter quarantine (DLQ), and zero-downtime index maintenance.
+      </p>
+    </div>
+
+    <div *ngIf="!authService.canMutate()" class="px-3 py-1 rounded bg-[rgba(245,158,11,0.1)] border border-[var(--seekers-amber-border)] text-xs text-[var(--seekers-amber-400)]">
+      👁️ Read-Only Session
+    </div>
+  </div>
+
+  <!-- Status Notification Banner -->
+  <div *ngIf="statusMessage"
+       class="p-3 rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] text-xs text-[var(--seekers-success)] flex items-center justify-between">
+    <span>{{ statusMessage }}</span>
+    <button (click)="statusMessage = ''" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+  </div>
+
+  <!-- Section 1: Kafka & Outbox Metrics Grid -->
+  <div *ngIf="metrics$ | async as qm" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    
+    <!-- Topic Lag -->
+    <div class="admin-card p-4">
+      <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider">
+        Kafka Topic Partition Lag
+      </div>
+      <div class="flex items-baseline justify-between mt-2">
+        <div class="text-2xl font-bold font-['Sora'] text-[var(--seekers-text-primary)]">
+          {{ qm.totalLag }} <span class="text-xs font-normal text-[var(--seekers-text-muted)]">records</span>
+        </div>
+        <span class="text-xs px-2 py-0.5 rounded font-medium badge-status-healthy">
+          Healthy
+        </span>
+      </div>
+      <div class="text-[11px] text-[var(--seekers-text-muted)] mt-1 font-mono">
+        Topic: {{ qm.topic }} ({{ qm.partitionCount }} partitions)
+      </div>
+    </div>
+
+    <!-- Consumer Group -->
+    <div class="admin-card p-4">
+      <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider">
+        Consumer Group Status
+      </div>
+      <div class="flex items-baseline justify-between mt-2">
+        <div class="text-base font-bold font-mono text-[var(--seekers-amber-400)] truncate">
+          {{ qm.consumerGroup }}
+        </div>
+        <span class="text-xs px-2 py-0.5 rounded font-medium badge-status-healthy">
+          {{ qm.consumerStatus }}
+        </span>
+      </div>
+      <div class="text-[11px] text-[var(--seekers-text-muted)] mt-1">
+        Offset commits anchored to MongoDB writes
+      </div>
+    </div>
+
+    <!-- Projection Outbox -->
+    <div class="admin-card p-4">
+      <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider">
+        ES Projection Outbox
+      </div>
+      <div class="flex items-baseline justify-between mt-2">
+        <div class="text-2xl font-bold font-['Sora'] text-[var(--seekers-text-primary)]">
+          {{ qm.projectionOutbox.pending }} <span class="text-xs font-normal text-[var(--seekers-text-muted)]">pending</span>
+        </div>
+        <span class="text-xs px-2 py-0.5 rounded font-medium"
+              [ngClass]="qm.projectionOutbox.failed === 0 ? 'badge-status-healthy' : 'badge-status-degraded'">
+          {{ qm.projectionOutbox.failed }} failed
+        </span>
+      </div>
+      <div class="text-[11px] text-[var(--seekers-text-muted)] mt-1">
+        Background sync worker runs every 15s
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Section 2: Dead Letter Queue (DLQ) Table -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <h2 class="text-sm font-bold uppercase tracking-wider font-['Sora'] text-[var(--seekers-text-primary)]">
+          Quarantined Dead-Letter Queue (DLQ)
+        </h2>
+        <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+          Malformed schemas, SSRF violations, and poison events safely quarantined without stalling consumers.
+        </p>
+      </div>
+
+      <div class="text-xs text-[var(--seekers-text-muted)] font-mono">
+        Storage: <span class="text-[var(--seekers-text-secondary)]">mongodb.dead_letters</span>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">DLQ Record ID</th>
+            <th class="py-2.5 px-3 font-semibold">Event Type</th>
+            <th class="py-2.5 px-3 font-semibold">Quarantined At</th>
+            <th class="py-2.5 px-3 font-semibold">Validation Violations</th>
+            <th class="py-2.5 px-3 font-semibold">Retries</th>
+            <th class="py-2.5 px-3 font-semibold">Status</th>
+            <th class="py-2.5 px-3 font-semibold text-right">Recovery Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let item of deadLetters$ | async" class="admin-table-row">
+            
+            <td class="py-3 px-3 font-mono font-medium text-[var(--seekers-amber-400)]">
+              {{ item.id }}
+            </td>
+
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-secondary)]">
+              {{ item.eventType }}
+            </td>
+
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-muted)]">
+              {{ item.quarantinedAt | date:'medium' }}
+            </td>
+
+            <td class="py-3 px-3 text-[11px] text-[var(--seekers-danger)] max-w-md">
+              <ul class="list-disc pl-4 space-y-0.5">
+                <li *ngFor="let err of item.errors">{{ err }}</li>
+              </ul>
+            </td>
+
+            <td class="py-3 px-3 font-mono text-[var(--seekers-text-primary)]">
+              {{ item.retryCount }}
+            </td>
+
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded"
+                    [ngClass]="{
+                      'bg-[rgba(239,68,68,0.12)] text-[var(--seekers-danger)] border border-[rgba(239,68,68,0.25)]': item.status === 'QUARANTINED',
+                      'badge-status-healthy': item.status === 'RESOLVED',
+                      'bg-white/5 text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)]': item.status === 'DISCARDED'
+                    }">
+                {{ item.status }}
+              </span>
+            </td>
+
+            <td class="py-3 px-3 text-right space-x-1.5">
+              <button (click)="onInspectDlq(item)"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium bg-[var(--seekers-bg-surface)] hover:bg-[var(--seekers-bg-hover)] text-[var(--seekers-amber-400)] border border-[var(--seekers-border-subtle)] transition-colors">
+                Inspect ↗
+              </button>
+
+              <button *ngIf="item.status === 'QUARANTINED'"
+                      (click)="onReplayDlq(item)"
+                      [disabled]="!authService.canMutate() || isReplaying"
+                      type="button"
+                      class="px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors disabled:opacity-40">
+                ⚡ Safe Replay
+              </button>
+
+              <button *ngIf="item.status === 'QUARANTINED'"
+                      (click)="onDiscardDlq(item)"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium text-[var(--seekers-text-muted)] hover:text-[var(--seekers-danger)] border border-[var(--seekers-border-subtle)] transition-colors disabled:opacity-40">
+                Discard
+              </button>
+            </td>
+
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section 3: Index Maintenance & Reconciliation -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    
+    <!-- Reconciliation Card -->
+    <div class="admin-card p-4 lg:p-5 flex flex-col justify-between">
+      <div>
+        <h3 class="text-xs font-bold uppercase tracking-wider font-['Sora'] text-[var(--seekers-text-primary)] mb-1">
+          Catalog Reconciliation (MongoDB ↔ Elasticsearch)
+        </h3>
+        <p class="text-xs text-[var(--seekers-text-muted)] mb-4">
+          Detect and repair missing, stale, excess, and misaligned search documents without downtime.
+        </p>
+
+        <div class="flex items-center space-x-3 mb-4">
+          <label class="flex items-center space-x-2 text-xs text-[var(--seekers-text-secondary)] cursor-pointer">
+            <input type="checkbox"
+                   [(ngModel)]="reconcileDryRun"
+                   class="rounded bg-[var(--seekers-bg-input)] border-[var(--seekers-border-medium)] text-[var(--seekers-amber-500)] focus:ring-0">
+            <span>Dry-Run Preview (Report only, no writes)</span>
+          </label>
+        </div>
+
+        <div *ngIf="reconcileReport" class="p-3 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-xs font-mono space-y-1 mb-4">
+          <div class="text-[var(--seekers-amber-400)] font-bold">Reconciliation Report:</div>
+          <div>Scanned: {{ reconcileReport.scannedCount }} | Matched: {{ reconcileReport.matchedCount }}</div>
+          <div>Repaired: {{ reconcileReport.repairedCount }} | Missing in ES: {{ reconcileReport.missingInEs }}</div>
+          <div class="text-[10px] text-[var(--seekers-text-muted)]">Completed: {{ reconcileReport.completedAt | date:'medium' }}</div>
+        </div>
+      </div>
+
+      <button (click)="onTriggerReconcile()"
+              [disabled]="!authService.canMutate() || isReconciling"
+              type="button"
+              class="w-full py-2 px-3 text-xs font-semibold rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-primary)] hover:bg-[var(--seekers-bg-hover)] border border-[var(--seekers-border-medium)] transition-colors disabled:opacity-40">
+        {{ isReconciling ? 'Reconciling Catalog...' : 'Run Catalog Reconciliation' }}
+      </button>
+    </div>
+
+    <!-- Reindex Card -->
+    <div class="admin-card p-4 lg:p-5 flex flex-col justify-between">
+      <div>
+        <h3 class="text-xs font-bold uppercase tracking-wider font-['Sora'] text-[var(--seekers-text-primary)] mb-1">
+          Zero-Downtime Index Rebuild (Atomic Alias Swap)
+        </h3>
+        <p class="text-xs text-[var(--seekers-text-muted)] mb-4">
+          Creates a new Elasticsearch index version from canonical MongoDB and swaps alias atomically.
+        </p>
+
+        <div *ngIf="reindexResult" class="p-3 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-xs font-mono space-y-1 mb-4">
+          <div class="text-[var(--seekers-success)] font-bold">Index Rebuild Succeeded:</div>
+          <div>Target Index: {{ reindexResult.targetIndex }}</div>
+          <div>Indexed: {{ reindexResult.documentsIndexed | number }} docs in {{ reindexResult.durationMs }}ms</div>
+          <div>Alias Pointed: {{ reindexResult.alias }}</div>
+        </div>
+      </div>
+
+      <button (click)="onTriggerReindex()"
+              [disabled]="!authService.isAdmin() || isReindexing"
+              type="button"
+              class="w-full py-2 px-3 text-xs font-semibold rounded bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors disabled:opacity-40">
+        {{ isReindexing ? 'Rebuilding Index...' : '⚡ Initiate Zero-Downtime Reindex' }}
+      </button>
+    </div>
+
+  </div>
+
+  <!-- DLQ Payload Inspection Modal -->
+  <div *ngIf="selectedDlqItem"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+      
+      <div class="px-5 py-4 border-b border-[var(--seekers-border-subtle)] flex items-center justify-between">
+        <div>
+          <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+            Dead Letter Poison Event Inspector
+          </h3>
+          <p class="text-[11px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
+            ID: {{ selectedDlqItem.id }} • {{ selectedDlqItem.eventType }}
+          </p>
+        </div>
+        <button (click)="closeDlqModal()" class="text-[var(--seekers-text-muted)] hover:text-white text-base px-2 py-1">✕</button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-4 text-xs">
+        <div>
+          <div class="text-[11px] font-semibold text-[var(--seekers-danger)] uppercase mb-1">
+            Schema & Security Violations
+          </div>
+          <ul class="p-3 rounded-lg bg-[rgba(239,68,68,0.1)] border border-[rgba(239,68,68,0.3)] list-disc pl-5 text-[var(--seekers-danger)] space-y-1">
+            <li *ngFor="let err of selectedDlqItem.errors">{{ err }}</li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            Quarantined Raw Payload
+          </div>
+          <pre class="p-3 rounded-lg bg-[var(--seekers-bg-base)] border border-[var(--seekers-border-subtle)] font-mono text-[11px] text-[var(--seekers-amber-400)] overflow-x-auto leading-relaxed">{{ selectedDlqItem.rawPayload | json }}</pre>
+        </div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-[var(--seekers-border-subtle)] flex justify-between items-center">
+        <span class="text-[11px] text-[var(--seekers-text-muted)]">
+          Retries attempted: {{ selectedDlqItem.retryCount }}
+        </span>
+        <button (click)="closeDlqModal()"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-bg-surface)] text-white hover:bg-[var(--seekers-bg-hover)]">
+          Close Inspector
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div>

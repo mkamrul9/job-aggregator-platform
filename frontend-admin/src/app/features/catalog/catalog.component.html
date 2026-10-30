@@ -1,0 +1,298 @@
+<div class="space-y-6 max-w-7xl mx-auto">
+  
+  <!-- Header / Controls -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="font-['Sora'] font-bold text-lg text-[var(--seekers-text-primary)]">
+        Canonical Catalog & Moderation Queue
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+        Inspect deduplicated listings, provenance chains, duplicate clusters, and outbound destination health.
+      </p>
+    </div>
+
+    <div *ngIf="!authService.canMutate()" class="px-3 py-1 rounded bg-[rgba(245,158,11,0.1)] border border-[var(--seekers-amber-border)] text-xs text-[var(--seekers-amber-400)]">
+      👁️ Read-Only Session
+    </div>
+  </div>
+
+  <!-- Status Notification Banner -->
+  <div *ngIf="statusMessage"
+       class="p-3 rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] text-xs text-[var(--seekers-success)] flex items-center justify-between">
+    <span>{{ statusMessage }}</span>
+    <button (click)="statusMessage = ''" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+  </div>
+
+  <!-- Filter & Search Toolbar -->
+  <div class="admin-card p-4 flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center space-x-2 flex-1 min-w-[240px]">
+      <input [(ngModel)]="searchQuery"
+             (ngModelChange)="onSearchChange()"
+             type="text"
+             placeholder="Search title, company, or location..."
+             class="px-3 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none w-full max-w-sm" />
+    </div>
+
+    <div class="flex items-center space-x-2 flex-wrap gap-2">
+      <select [(ngModel)]="selectedSource"
+              (ngModelChange)="onFilterChange()"
+              class="px-2.5 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)] focus:outline-none">
+        <option value="ALL">All Sources</option>
+        <option value="greenhouse-feed">Greenhouse Feed</option>
+        <option value="lever-feed">Lever Feed</option>
+        <option value="fixture-local">Fixture Local</option>
+      </select>
+
+      <select [(ngModel)]="selectedStatus"
+              (ngModelChange)="onFilterChange()"
+              class="px-2.5 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)] focus:outline-none">
+        <option value="ALL">All Statuses</option>
+        <option value="ACTIVE">Active</option>
+        <option value="EXPIRED">Expired</option>
+        <option value="FLAGGED">Flagged</option>
+        <option value="HIDDEN">Hidden</option>
+      </select>
+
+      <span class="text-xs text-[var(--seekers-text-muted)] font-mono pl-2">
+        {{ totalJobs }} results
+      </span>
+    </div>
+  </div>
+
+  <!-- Catalog Table -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">Listing & Employer</th>
+            <th class="py-2.5 px-3 font-semibold">Location</th>
+            <th class="py-2.5 px-3 font-semibold">Source & Clicks</th>
+            <th class="py-2.5 px-3 font-semibold">Ingestion Time</th>
+            <th class="py-2.5 px-3 font-semibold">Status</th>
+            <th class="py-2.5 px-3 font-semibold text-right">Moderation Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let job of jobs" class="admin-table-row">
+            
+            <!-- Title & Company -->
+            <td class="py-3 px-3">
+              <div class="font-medium text-[var(--seekers-text-primary)]">{{ job.title }}</div>
+              <div class="text-[11px] text-[var(--seekers-amber-400)]">{{ job.company }}</div>
+              <div class="text-[10px] text-[var(--seekers-text-muted)] font-mono truncate max-w-sm">{{ job.url }}</div>
+            </td>
+
+            <!-- Location -->
+            <td class="py-3 px-3 text-[var(--seekers-text-secondary)]">
+              {{ job.location }}
+            </td>
+
+            <!-- Source & Outbound clicks -->
+            <td class="py-3 px-3">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-white/5 border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)]">
+                {{ job.source }}
+              </span>
+              <div class="text-[10px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
+                Clicks: {{ job.outboundClicks }}
+              </div>
+            </td>
+
+            <!-- Dates -->
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-muted)]">
+              <div>{{ job.scrapedAt }}</div>
+              <div *ngIf="job.expiresAt" class="text-[10px] text-[var(--seekers-text-secondary)]">Exp: {{ job.expiresAt }}</div>
+            </td>
+
+            <!-- Status Badge -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded"
+                    [ngClass]="{
+                      'badge-status-healthy': job.status === 'ACTIVE',
+                      'bg-[rgba(148,163,184,0.12)] text-[#cbd5e1] border border-[rgba(148,163,184,0.2)]': job.status === 'EXPIRED',
+                      'bg-[rgba(239,68,68,0.12)] text-[var(--seekers-danger)] border border-[rgba(239,68,68,0.25)]': job.status === 'FLAGGED',
+                      'bg-purple-900/30 text-purple-300 border border-purple-500/30': job.status === 'HIDDEN'
+                    }">
+                {{ job.status }}
+              </span>
+            </td>
+
+            <!-- Actions -->
+            <td class="py-3 px-3 text-right space-x-1.5">
+              <button (click)="onInspect(job)"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium bg-[var(--seekers-bg-surface)] hover:bg-[var(--seekers-bg-hover)] text-[var(--seekers-amber-400)] border border-[var(--seekers-border-subtle)] transition-colors">
+                Inspect ↗
+              </button>
+
+              <button *ngIf="job.status === 'ACTIVE'"
+                      (click)="promptAction(job, 'EXPIRE')"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium text-[var(--seekers-text-secondary)] hover:text-white border border-[var(--seekers-border-subtle)] disabled:opacity-40">
+                Expire
+              </button>
+
+              <button *ngIf="job.status !== 'FLAGGED'"
+                      (click)="promptAction(job, 'FLAG')"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium text-[var(--seekers-danger)] hover:bg-red-500/10 border border-red-500/30 disabled:opacity-40">
+                Flag
+              </button>
+
+              <button *ngIf="job.status === 'FLAGGED'"
+                      (click)="promptAction(job, 'UNFLAG')"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium text-[var(--seekers-success)] hover:bg-emerald-500/10 border border-emerald-500/30 disabled:opacity-40">
+                Clear Flag
+              </button>
+            </td>
+
+          </tr>
+
+          <tr *ngIf="jobs.length === 0 && !isLoading">
+            <td colspan="6" class="py-8 text-center text-xs text-[var(--seekers-text-muted)]">
+              No matching canonical job listings found for the current query/filters.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination Controls -->
+    <div class="flex items-center justify-between pt-4 mt-2 border-t border-[var(--seekers-border-subtle)] text-xs text-[var(--seekers-text-muted)]">
+      <div>
+        Showing {{ jobs.length }} of {{ totalJobs }} listings (Page {{ currentPage }})
+      </div>
+      <div class="flex items-center space-x-2">
+        <button (click)="prevPage()"
+                [disabled]="currentPage === 1"
+                type="button"
+                class="px-3 py-1 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] disabled:opacity-40 hover:text-white">
+          ← Previous
+        </button>
+        <button (click)="nextPage()"
+                [disabled]="currentPage * pageSize >= totalJobs"
+                type="button"
+                class="px-3 py-1 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] disabled:opacity-40 hover:text-white">
+          Next →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail / Provenance Inspection Modal -->
+  <div *ngIf="selectedJobForInspection"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+      
+      <div class="px-5 py-4 border-b border-[var(--seekers-border-subtle)] flex items-center justify-between">
+        <div>
+          <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+            Canonical Job Provenance & Deduplication
+          </h3>
+          <p class="text-[11px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
+            UUID: {{ selectedJobForInspection.id }}
+          </p>
+        </div>
+        <button (click)="closeInspection()" class="text-[var(--seekers-text-muted)] hover:text-white text-base px-2 py-1">✕</button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-4 text-xs">
+        <div>
+          <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase">Role & Employer</div>
+          <div class="text-sm font-semibold text-[var(--seekers-text-primary)] mt-0.5">{{ selectedJobForInspection.title }}</div>
+          <div class="text-[var(--seekers-text-secondary)] mt-0.5">
+            Employer: <strong>{{ selectedJobForInspection.company }}</strong> • Location: <strong>{{ selectedJobForInspection.location }}</strong>
+          </div>
+          <div class="mt-1 font-mono text-[11px] text-[var(--seekers-amber-400)] break-all">
+            Outbound URL: {{ selectedJobForInspection.url }}
+          </div>
+        </div>
+
+        <div class="p-3 rounded-lg bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] space-y-1.5 font-mono text-[11px]">
+          <div class="text-[var(--seekers-text-secondary)]">Deduplication Provenance:</div>
+          <div class="flex justify-between">
+            <span class="text-[var(--seekers-text-muted)]">Duplicate Cluster Count:</span>
+            <span class="text-[var(--seekers-text-primary)] font-bold">{{ selectedJobForInspection.provenance.duplicateCount }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--seekers-text-muted)]">First Ingested At:</span>
+            <span class="text-[var(--seekers-text-secondary)]">{{ selectedJobForInspection.provenance.firstSeenAt }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--seekers-text-muted)]">Last Verified At:</span>
+            <span class="text-[var(--seekers-text-secondary)]">{{ selectedJobForInspection.provenance.lastVerifiedAt }}</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">Raw Event Payload Preview</div>
+          <pre class="p-3 rounded-lg bg-[var(--seekers-bg-base)] border border-[var(--seekers-border-subtle)] font-mono text-[11px] text-[var(--seekers-amber-400)] overflow-x-auto leading-relaxed">{{ selectedJobForInspection.provenance.rawPayloadPreview }}</pre>
+        </div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-[var(--seekers-border-subtle)] flex justify-end">
+        <button (click)="closeInspection()"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-bg-surface)] text-white hover:bg-[var(--seekers-bg-hover)]">
+          Close Inspector
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Moderation Action Confirmation Modal -->
+  <div *ngIf="selectedJobForAction"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-[var(--seekers-border-subtle)] pb-3">
+        <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+          Confirm Moderation Action: {{ selectedJobForAction.action }}
+        </h3>
+        <button (click)="closeActionModal()" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+      </div>
+
+      <div class="text-xs text-[var(--seekers-text-secondary)] space-y-2">
+        <p>You are about to change the moderation status of listing:</p>
+        <div class="p-2.5 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)]">
+          <div class="font-semibold text-[var(--seekers-text-primary)]">{{ selectedJobForAction.job.title }}</div>
+          <div class="text-[11px] text-[var(--seekers-amber-400)]">{{ selectedJobForAction.job.company }}</div>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            Audit Reason (Required for Privileged Actions)
+          </label>
+          <input [(ngModel)]="moderationReason"
+                 type="text"
+                 placeholder="e.g. Expired on employer career site; broken destination URL..."
+                 class="w-full px-3 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none" />
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--seekers-border-subtle)]">
+        <button (click)="closeActionModal()"
+                type="button"
+                class="px-3 py-1.5 rounded text-xs text-[var(--seekers-text-muted)] hover:text-white">
+          Cancel
+        </button>
+        <button (click)="confirmModerationAction()"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors">
+          Confirm {{ selectedJobForAction.action }}
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div>

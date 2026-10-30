@@ -2,12 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>FrontendAdmin</title>
+  <title>Seekers Operations Console — Administrative Dashboard</title>
   <base href="/">
+  <script>
+    (function() {
+      var base = document.querySelector('base');
+      if (base) {
+        if (window.location.pathname.startsWith('/admin')) {
+          base.setAttribute('href', '/admin/');
+        } else {
+          base.setAttribute('href', '/');
+        }
+      }
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Seekers Ingestion & Operations Console — Distributed pipeline telemetry, crawler source connectors, catalog moderation, and DLQ quarantine triage.">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
-<body>
+<body class="bg-[#090d16] text-[#f8fafc]">
   <app-root></app-root>
 </body>
 </html>

@@ -1,53 +1,95 @@
-<aside class="w-full md:w-60 flex-shrink-0 bg-[var(--seekers-bg-elevated)] border-r border-[var(--seekers-border-medium)] p-4 flex flex-col justify-between">
+<aside class="w-full md:w-60 flex-shrink-0 bg-[var(--seekers-bg-elevated)] border-r border-[var(--seekers-border-medium)] p-4 flex flex-col justify-between h-full">
   
   <div>
-    <!-- Section Navigation -->
-    <div class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider mb-3 px-2">
-      Operations Views
+    <!-- Section Header -->
+    <div class="flex items-center justify-between mb-3 px-2">
+      <span class="text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase tracking-wider">
+        Operations Consoles
+      </span>
+      <button *ngIf="mobileOpen"
+              (click)="closeDrawer.emit()"
+              type="button"
+              class="md:hidden text-[var(--seekers-text-muted)] hover:text-white text-base">
+        ✕
+      </button>
     </div>
 
+    <!-- Navigation Links -->
     <nav class="space-y-1">
-      <button (click)="selectSection('overview')"
-              type="button"
-              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
-              [ngClass]="{
-                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'overview',
-                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'overview'
-              }">
+      
+      <!-- 1. Overview -->
+      <a routerLink="/overview"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         [routerLinkActiveOptions]="{exact: true}"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
         <span class="flex items-center space-x-2">
           <span>📊</span>
           <span>Pipeline Health</span>
         </span>
         <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">LIVE</span>
-      </button>
+      </a>
 
-      <button (click)="selectSection('sources')"
-              type="button"
-              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
-              [ngClass]="{
-                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'sources',
-                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'sources'
-              }">
+      <!-- 2. Crawler Sources -->
+      <a routerLink="/sources"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
         <span class="flex items-center space-x-2">
           <span>🌐</span>
           <span>Crawler Sources</span>
         </span>
-        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">5</span>
-      </button>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">7</span>
+      </a>
 
-      <button (click)="selectSection('feed')"
-              type="button"
-              class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors"
-              [ngClass]="{
-                'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': currentSection === 'feed',
-                'text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white': currentSection !== 'feed'
-              }">
+      <!-- 3. Catalog & Moderation -->
+      <a routerLink="/catalog"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
+        <span class="flex items-center space-x-2">
+          <span>📑</span>
+          <span>Catalog & Moderation</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">DEDUP</span>
+      </a>
+
+      <!-- 4. Queues & DLQ Recovery -->
+      <a routerLink="/queues"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
+        <span class="flex items-center space-x-2">
+          <span>⚙️</span>
+          <span>Queues & DLQ</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">DLQ</span>
+      </a>
+
+      <!-- 5. Support Reports -->
+      <a routerLink="/support"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
+        <span class="flex items-center space-x-2">
+          <span>🎫</span>
+          <span>Support Queue</span>
+        </span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">RPT</span>
+      </a>
+
+      <!-- 6. Audit History -->
+      <a routerLink="/audit"
+         routerLinkActive="bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border-[var(--seekers-amber-border)]"
+         (click)="onLinkClick()"
+         class="w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium text-[var(--seekers-text-secondary)] hover:bg-[var(--seekers-bg-surface)] hover:text-white border border-transparent transition-colors">
         <span class="flex items-center space-x-2">
           <span>📜</span>
-          <span>Ingestion Audit Log</span>
+          <span>Audit History</span>
         </span>
-        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">50</span>
-      </button>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/30 font-mono">LOG</span>
+      </a>
+
     </nav>
   </div>
 
@@ -55,7 +97,7 @@
   <div class="mt-8 p-3 rounded-md bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-[11px] text-[var(--seekers-text-muted)] space-y-1.5">
     <div class="font-semibold text-[var(--seekers-text-secondary)] text-xs flex items-center justify-between">
       <span>System Envelope</span>
-      <span class="text-[var(--seekers-success)]">OK</span>
+      <span class="text-[var(--seekers-success)]">VERIFIED</span>
     </div>
     <div class="flex justify-between">
       <span>Framework:</span>
@@ -70,8 +112,11 @@
       <span class="font-mono text-[var(--seekers-amber-400)]">$0 Free Tier</span>
     </div>
     <div class="flex justify-between">
-      <span>Telemetry:</span>
-      <span class="font-mono text-[var(--seekers-text-secondary)]">Simulated Stream</span>
+      <span>Active Mode:</span>
+      <span class="font-mono"
+            [ngClass]="authService.isDemoMode() ? 'text-[var(--seekers-amber-400)]' : 'text-emerald-400'">
+        {{ authService.isDemoMode() ? 'Synthetic Demo' : 'Live Fleet' }}
+      </span>
     </div>
   </div>
 

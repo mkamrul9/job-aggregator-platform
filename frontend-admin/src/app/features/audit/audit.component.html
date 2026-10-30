@@ -1,0 +1,162 @@
+<div class="space-y-6 max-w-7xl mx-auto">
+  
+  <!-- Header -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="font-['Sora'] font-bold text-lg text-[var(--seekers-text-primary)]">
+        Privileged Operations Audit Log
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+        Server-side immutable activity history: verified actors, targets, idempotency correlations, and state transitions.
+      </p>
+    </div>
+
+    <div class="text-xs text-[var(--seekers-text-muted)] font-mono">
+      Retention: <span class="text-[var(--seekers-amber-400)]">90-Day Immutable Log</span>
+    </div>
+  </div>
+
+  <!-- Filter & Search Toolbar -->
+  <div class="admin-card p-4 flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center space-x-2 flex-1 min-w-[240px]">
+      <input [(ngModel)]="searchQuery"
+             type="text"
+             placeholder="Search by action, actor email, target ID, or notes..."
+             class="px-3 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none w-full max-w-md" />
+    </div>
+
+    <div class="flex items-center space-x-2">
+      <select [(ngModel)]="selectedAction"
+              class="px-2.5 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)] focus:outline-none">
+        <option value="ALL">All Actions</option>
+        <option value="SOURCE">Source Operations</option>
+        <option value="JOB">Job Moderation</option>
+        <option value="DEAD_LETTER">DLQ Recovery</option>
+        <option value="SUPPORT">Support Triage</option>
+        <option value="CATALOG">Index Maintenance</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Audit Table -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">Timestamp</th>
+            <th class="py-2.5 px-3 font-semibold">Actor & Role</th>
+            <th class="py-2.5 px-3 font-semibold">Action</th>
+            <th class="py-2.5 px-3 font-semibold">Target Entity</th>
+            <th class="py-2.5 px-3 font-semibold">Summary Details</th>
+            <th class="py-2.5 px-3 font-semibold">Result</th>
+            <th class="py-2.5 px-3 font-semibold text-right">State Diff</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let log of getFilteredLogs(logs$ | async)" class="admin-table-row">
+            
+            <!-- Timestamp -->
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-muted)] whitespace-nowrap">
+              {{ log.timestamp | date:'short' }}
+            </td>
+
+            <!-- Actor -->
+            <td class="py-3 px-3">
+              <div class="font-medium text-[var(--seekers-text-primary)]">{{ log.actor.email }}</div>
+              <span class="px-1.5 py-0.2 text-[9px] font-mono rounded"
+                    [ngClass]="{
+                      'bg-[rgba(245,158,11,0.15)] text-[var(--seekers-amber-400)]': log.actor.role === 'ADMIN',
+                      'bg-sky-900/30 text-sky-300': log.actor.role === 'OPERATOR',
+                      'bg-white/5 text-[var(--seekers-text-muted)]': log.actor.role === 'READ_ONLY'
+                    }">
+                {{ log.actor.role }}
+              </span>
+            </td>
+
+            <!-- Action -->
+            <td class="py-3 px-3 font-mono font-medium text-[var(--seekers-text-primary)]">
+              {{ log.action }}
+            </td>
+
+            <!-- Target -->
+            <td class="py-3 px-3">
+              <div class="text-[10px] font-mono text-[var(--seekers-text-muted)] uppercase">{{ log.targetType }}</div>
+              <div class="font-mono text-[11px] text-[var(--seekers-amber-400)] truncate max-w-xs">{{ log.targetId }}</div>
+            </td>
+
+            <!-- Details -->
+            <td class="py-3 px-3 text-[var(--seekers-text-secondary)] max-w-xs truncate" [title]="log.details || ''">
+              {{ log.details }}
+            </td>
+
+            <!-- Result -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded"
+                    [ngClass]="log.result === 'SUCCESS' ? 'badge-status-healthy' : 'bg-red-500/15 text-red-400 border border-red-500/30'">
+                {{ log.result }}
+              </span>
+            </td>
+
+            <!-- Diff Button -->
+            <td class="py-3 px-3 text-right">
+              <button *ngIf="log.beforeState || log.afterState"
+                      (click)="inspectEntry(log)"
+                      type="button"
+                      class="px-2 py-1 rounded text-[11px] font-medium bg-[var(--seekers-bg-surface)] hover:bg-[var(--seekers-bg-hover)] text-[var(--seekers-text-secondary)] hover:text-white border border-[var(--seekers-border-subtle)] transition-colors">
+                Inspect Diff
+              </button>
+              <span *ngIf="!log.beforeState && !log.afterState" class="text-[10px] text-[var(--seekers-text-muted)] italic">
+                N/A
+              </span>
+            </td>
+
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- State Diff Modal -->
+  <div *ngIf="selectedLogEntry"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-lg p-5 space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-[var(--seekers-border-subtle)] pb-3">
+        <div>
+          <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+            Audit State Transition Diff
+          </h3>
+          <p class="text-[11px] text-[var(--seekers-text-muted)] font-mono">
+            {{ selectedLogEntry.action }} • {{ selectedLogEntry.targetId }}
+          </p>
+        </div>
+        <button (click)="closeModal()" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <div class="text-[10px] font-semibold uppercase text-[var(--seekers-danger)] mb-1">Before State</div>
+          <pre class="p-3 rounded bg-[var(--seekers-bg-base)] border border-[var(--seekers-border-subtle)] font-mono text-[11px] text-[var(--seekers-text-secondary)] overflow-x-auto">{{ selectedLogEntry.beforeState | json }}</pre>
+        </div>
+
+        <div>
+          <div class="text-[10px] font-semibold uppercase text-[var(--seekers-success)] mb-1">After State</div>
+          <pre class="p-3 rounded bg-[var(--seekers-bg-base)] border border-[var(--seekers-border-subtle)] font-mono text-[11px] text-[var(--seekers-success)] overflow-x-auto">{{ selectedLogEntry.afterState | json }}</pre>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-[var(--seekers-border-subtle)]">
+        <button (click)="closeModal()"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-bg-surface)] text-white hover:bg-[var(--seekers-bg-hover)]">
+          Close
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div>

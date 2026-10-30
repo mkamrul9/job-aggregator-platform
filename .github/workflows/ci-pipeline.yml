@@ -331,6 +331,10 @@ jobs:
         working-directory: ./frontend-admin
         run: npm ci
 
+      - name: Run Angular Karma Unit Tests (Headless Chrome)
+        working-directory: ./frontend-admin
+        run: npm run test:ci
+
       - name: Build Angular Application
         working-directory: ./frontend-admin
         run: npm run build

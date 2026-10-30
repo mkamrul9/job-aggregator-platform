@@ -15,6 +15,7 @@ const { ensureEsIndex, indexJobToEs } = require('./src/search/elasticsearch');
 const { startProjectionWorker } = require('./src/search/projection-worker');
 const { validateIncomingEvent } = require('./src/events/validator');
 const { createJobsRouter } = require('./src/api/jobs-router');
+const { createAdminRouter } = require('./src/api/admin-router');
 
 // Environment variables
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
@@ -29,9 +30,9 @@ function escapeRegex(str) {
 }
 
 /**
- * Creates the Express application configured with canonical catalog routes.
+ * Creates the Express application configured with canonical catalog and admin operations routes.
  */
-function createIngestionApp(jobsCollection = null, esClient = null) {
+function createIngestionApp(jobsCollection = null, esClient = null, deadLettersCollection = null, auditCollection = null) {
   const app = express();
   app.use(cors({ origin: ALLOWED_ORIGINS }));
   app.use(express.json());
@@ -45,6 +46,11 @@ function createIngestionApp(jobsCollection = null, esClient = null) {
   const jobsRouter = createJobsRouter({ jobsCollection, esClient });
   app.use('/api/v1/jobs', jobsRouter);
   app.use('/api/jobs', jobsRouter);
+
+  // Mount admin operations router
+  const adminRouter = createAdminRouter({ jobsCollection, deadLettersCollection, esClient, auditCollection });
+  app.use('/api/v1/admin/ingestion', adminRouter);
+  app.use('/api/v1/admin', adminRouter);
 
   return app;
 }
@@ -118,6 +124,7 @@ async function run() {
     const db = mongoClient.db(process.env.MONGO_DB || 'job_platform');
     const jobsCollection = db.collection('jobs');
     const deadLettersCollection = db.collection('dead_letters');
+    const auditCollection = db.collection('audit_logs');
     console.log('✅ Connected to MongoDB');
 
     await ensureMongoIndexes(jobsCollection, deadLettersCollection);
@@ -135,8 +142,8 @@ async function run() {
       console.log('✅ Background projection outbox worker started');
     }
 
-    // 4. Start Express API for Job Fetching
-    const app = createIngestionApp(jobsCollection, esClient);
+    // 4. Start Express API for Job Fetching & Operations
+    const app = createIngestionApp(jobsCollection, esClient, deadLettersCollection, auditCollection);
     const PORT = process.env.PORT || 5000;
     const server = app.listen(PORT, () => {
       console.log(`✅ Jobs API listening on port ${PORT}`);

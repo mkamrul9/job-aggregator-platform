@@ -1,13 +1,21 @@
-import { Component } from '@angular/core';
+// frontend-admin/src/app/layout/sidebar/sidebar.component.ts
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-sidebar',
-  templateUrl: './sidebar.component.html'
+  templateUrl: './sidebar.component.html',
+  styleUrls: ['./sidebar.component.scss']
 })
 export class SidebarComponent {
-  currentSection = 'overview';
+  @Input() mobileOpen = false;
+  @Output() closeDrawer = new EventEmitter<void>();
 
-  selectSection(section: string): void {
-    this.currentSection = section;
+  constructor(public authService: AuthService) {}
+
+  onLinkClick(): void {
+    if (this.mobileOpen) {
+      this.closeDrawer.emit();
+    }
   }
 }

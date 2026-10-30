@@ -26,7 +26,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
 | `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (16/16); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, threadpool offloading, and gRPC verified |
-| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Production build passes; standalone operations console with live simulation adapter verified |
+| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Karma CI passes (50/50 tests); production build passes; standalone operations console with dual-adapter architecture verified across 6 operational routes (/overview, /sources, /catalog, /queues, /support, /audit) |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
 | `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 | ESLint passes (0 errors); tsc & Jest pass (59/59 across 7 suites); P09 candidate workspace, optimistic locking, saved searches, support triage verified |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
@@ -121,7 +121,7 @@ All platform services interact through versioned machine-readable contracts loca
 ### 3.2 `frontend-admin` — Angular Operations Dashboard
 
 - **Purpose & Role:** Provides operational monitoring, real-time job ingestion telemetry, and moderation tools for platform administrators. Preserved as Angular 18+.
-- **Primary Technology:** Angular 18, TypeScript 5.5, SCSS, RxJS 7.8, Socket.io-client 4.8; uses modular components and reactive state.
+- **Primary Technology:** Angular 18, TypeScript 5.5, SCSS, RxJS 7.8, TailwindCSS 3.4; modular architecture with dual-adapter pattern (`DemoOperationsAdapter` and `LiveOperationsAdapter`).
 - **Data Ownership:** UI presentation layer; owns no database persistence. Consumes live WebSocket events from `/socket.io/` via gateway and admin REST endpoints under `/api/v1/admin/*`.
 - **Entry Points & Interfaces:**
   - Web UI: Port `4200` (local dev `ng serve`) / Port `4200` mapped from container port `80` (Docker Compose)
@@ -131,25 +131,21 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `frontend-admin/package.json`
   - Lockfile: `frontend-admin/package-lock.json`
 - **Commands & Verification:**
-  - Build: `npm run build` — `[Verified]` (production compilation succeeds cleanly in CI)
-  - Test: `npm run test:ci` — `[Observed-but-unverified]` (script added; requires headless Chrome in CI)
+  - Build: `npm run build` — `[Verified]` (production compilation succeeds cleanly in CI with zero warnings)
+  - Test: `npm run test:ci` — `[Verified]` (50/50 unit and integration tests passing in headless Chrome)
   - Local Dev: `npm start` (`ng serve`, port 4200) — `[Verified]`
 - **Required Infrastructure:**
-  - Planned standalone mode: Zero backend fleet required (uses synthetic simulated feed service).
-  - Integrated mode: API gateway (`nginx`), `service-notification` (Socket.io), and admin API backends.
-- **Current Verification Status:** Active service in `docker-compose.yml` with port 4200 mapped and Nginx WebSocket proxying configured. Production build compiles cleanly to `dist/frontend-admin/browser`.
-- **Standalone-Readiness Gaps (to complete in P12):**
-  - Implement synthetic simulation feed mode (`mock-live-feed.service.ts`) for recruiter evaluation without running Kafka/backends.
-  - Implement full role-based auth guard for live admin mode with Firebase custom claims.
-  - Replace placeholder charts with real SVG/Canvas telemetry components.
-- **Planned Standalone Demonstration (P12):**
+  - Standalone mode: Zero backend fleet required (uses 100% self-contained deterministic in-memory simulator).
+  - Integrated mode: API gateway (`nginx`), `service-ingestion` (`/api/v1/admin/ingestion/*`), `service-user` (`/api/v1/admin/reports`), and `service-notification` (Socket.io).
+- **Current Verification Status:** Fully verified operational dashboard with 6 functional views (`/overview`, `/sources`, `/catalog`, `/queues`, `/support`, `/audit`), role boundaries (`ADMIN`, `OPERATOR`, `READ_ONLY`), and standalone demonstration mode preloaded with Bangladesh tech ecosystem data.
+- **Standalone Demonstration Features (Delivered P12):**
   - Self-contained synthetic demo mode streaming simulated job intake events with controlled pause/play/burst toggles.
-  - Interactive job moderation table, source status cards, queue lag indicators, and audit log viewer.
+  - Interactive job moderation table, source status cards, queue lag indicators, support triage queue, and immutable audit log viewer.
   - Independent recruiter evaluation without operating Kafka, Elasticsearch, or backend services.
 - **Intended Deployment Boundary:**
   - Multi-stage Nginx container: `frontend-admin/Dockerfile`
   - Ports: `4200` (host mapping) -> `80` (container internal)
-  - Owning Feature Phase: **P12**
+  - Owning Feature Phase: **P12 (Completed)**
 
 ---
 

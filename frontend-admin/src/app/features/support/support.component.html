@@ -1,0 +1,199 @@
+<div class="space-y-6 max-w-7xl mx-auto">
+  
+  <!-- Header -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="font-['Sora'] font-bold text-lg text-[var(--seekers-text-primary)]">
+        Candidate Support & Listing Triage Queue
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)] mt-0.5">
+        Process broken links, expired listings, incorrect salary details, and fraud reports submitted by candidates.
+      </p>
+    </div>
+
+    <div *ngIf="!authService.canMutate()" class="px-3 py-1 rounded bg-[rgba(245,158,11,0.1)] border border-[var(--seekers-amber-border)] text-xs text-[var(--seekers-amber-400)]">
+      👁️ Read-Only Session
+    </div>
+  </div>
+
+  <!-- Status Notification Banner -->
+  <div *ngIf="statusMessage"
+       class="p-3 rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] text-xs text-[var(--seekers-success)] flex items-center justify-between">
+    <span>{{ statusMessage }}</span>
+    <button (click)="statusMessage = ''" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+  </div>
+
+  <!-- Filter Toolbar -->
+  <div class="admin-card p-4 flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center space-x-2">
+      <span class="text-xs text-[var(--seekers-text-muted)] font-semibold uppercase tracking-wider">Status Filter:</span>
+      <select [(ngModel)]="selectedStatus"
+              (ngModelChange)="onStatusFilterChange()"
+              class="px-2.5 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-secondary)] focus:outline-none">
+        <option value="ALL">All Reports</option>
+        <option value="RECEIVED">Received (New)</option>
+        <option value="IN_REVIEW">In Review</option>
+        <option value="RESOLVED">Resolved</option>
+        <option value="DISMISSED">Dismissed</option>
+      </select>
+    </div>
+
+    <div class="text-xs text-[var(--seekers-text-muted)] font-mono">
+      Backend Contract: <span class="text-[var(--seekers-amber-400)]">service-user /admin/reports</span>
+    </div>
+  </div>
+
+  <!-- Reports Table -->
+  <div class="admin-card p-4 lg:p-5">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="border-b border-[var(--seekers-border-medium)] text-[var(--seekers-text-muted)] uppercase text-[10px] tracking-wider bg-[var(--seekers-bg-surface)]">
+          <tr>
+            <th class="py-2.5 px-3 font-semibold">Reference #</th>
+            <th class="py-2.5 px-3 font-semibold">Report Type</th>
+            <th class="py-2.5 px-3 font-semibold">Description & Contact</th>
+            <th class="py-2.5 px-3 font-semibold">Associated Job</th>
+            <th class="py-2.5 px-3 font-semibold">Submitted</th>
+            <th class="py-2.5 px-3 font-semibold">Status & Operator Notes</th>
+            <th class="py-2.5 px-3 font-semibold text-right">Triage</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--seekers-border-subtle)]">
+          <tr *ngFor="let report of reports$ | async" class="admin-table-row">
+            
+            <!-- Reference -->
+            <td class="py-3 px-3 font-mono font-medium text-[var(--seekers-amber-400)]">
+              {{ report.referenceNum }}
+            </td>
+
+            <!-- Type -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-white/5 border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)]">
+                {{ report.reportType }}
+              </span>
+            </td>
+
+            <!-- Description & Contact -->
+            <td class="py-3 px-3 max-w-xs">
+              <div class="text-[var(--seekers-text-primary)] leading-normal">{{ report.description }}</div>
+              <div *ngIf="report.contactEmail" class="text-[10px] text-[var(--seekers-text-muted)] font-mono mt-0.5">
+                From: {{ report.contactEmail }}
+              </div>
+            </td>
+
+            <!-- Associated Job -->
+            <td class="py-3 px-3 max-w-xs">
+              <div *ngIf="report.jobTitle" class="font-medium text-[var(--seekers-text-secondary)] truncate">
+                {{ report.jobTitle }}
+              </div>
+              <div *ngIf="report.jobId" class="text-[10px] font-mono text-[var(--seekers-text-muted)] truncate">
+                ID: {{ report.jobId }}
+              </div>
+              <div *ngIf="!report.jobId && !report.jobTitle" class="text-[10px] text-[var(--seekers-text-muted)] italic">
+                Platform General
+              </div>
+            </td>
+
+            <!-- Date -->
+            <td class="py-3 px-3 font-mono text-[11px] text-[var(--seekers-text-muted)]">
+              {{ report.createdAt | date:'short' }}
+            </td>
+
+            <!-- Status & Notes -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 text-[10px] font-semibold uppercase rounded"
+                    [ngClass]="{
+                      'bg-[rgba(245,158,11,0.12)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]': report.status === 'RECEIVED',
+                      'bg-sky-900/30 text-sky-300 border border-sky-500/30': report.status === 'IN_REVIEW',
+                      'badge-status-healthy': report.status === 'RESOLVED',
+                      'bg-white/5 text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)]': report.status === 'DISMISSED'
+                    }">
+                {{ report.status }}
+              </span>
+              <div *ngIf="report.operatorNotes" class="text-[10px] text-[var(--seekers-text-secondary)] italic mt-1 max-w-xs truncate" [title]="report.operatorNotes">
+                Note: {{ report.operatorNotes }}
+              </div>
+            </td>
+
+            <!-- Triage Button -->
+            <td class="py-3 px-3 text-right">
+              <button (click)="openTriageModal(report)"
+                      [disabled]="!authService.canMutate()"
+                      type="button"
+                      class="px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors disabled:opacity-40">
+                Triage →
+              </button>
+            </td>
+
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Triage Modal -->
+  <div *ngIf="selectedReportForTriage"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+       role="dialog"
+       aria-modal="true">
+    <div class="bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-[var(--seekers-border-subtle)] pb-3">
+        <div>
+          <h3 class="font-['Sora'] font-bold text-sm text-[var(--seekers-text-primary)]">
+            Triage Support Report
+          </h3>
+          <p class="text-[11px] text-[var(--seekers-text-muted)] font-mono">
+            {{ selectedReportForTriage.referenceNum }} • {{ selectedReportForTriage.reportType }}
+          </p>
+        </div>
+        <button (click)="closeTriageModal()" class="text-[var(--seekers-text-muted)] hover:text-white">✕</button>
+      </div>
+
+      <div class="text-xs text-[var(--seekers-text-secondary)] space-y-3">
+        <div class="p-3 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)]">
+          <div class="text-[10px] font-semibold uppercase text-[var(--seekers-text-muted)]">Candidate Description:</div>
+          <p class="mt-1 text-[var(--seekers-text-primary)]">{{ selectedReportForTriage.description }}</p>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            New Status:
+          </label>
+          <select [(ngModel)]="triageTargetStatus"
+                  class="w-full px-3 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:outline-none">
+            <option value="RECEIVED">RECEIVED</option>
+            <option value="IN_REVIEW">IN_REVIEW</option>
+            <option value="RESOLVED">RESOLVED</option>
+            <option value="DISMISSED">DISMISSED</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            Operator Triage Notes:
+          </label>
+          <textarea [(ngModel)]="triageNotes"
+                    rows="3"
+                    placeholder="Document action taken or resolution summary..."
+                    class="w-full px-3 py-1.5 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none"></textarea>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--seekers-border-subtle)]">
+        <button (click)="closeTriageModal()"
+                type="button"
+                class="px-3 py-1.5 rounded text-xs text-[var(--seekers-text-muted)] hover:text-white">
+          Cancel
+        </button>
+        <button (click)="saveTriage()"
+                type="button"
+                class="px-4 py-1.5 rounded text-xs font-semibold bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors">
+          Save Resolution
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div>

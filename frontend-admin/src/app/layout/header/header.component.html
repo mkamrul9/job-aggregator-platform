@@ -1,26 +1,37 @@
-<header class="w-full flex items-center justify-between px-4 lg:px-6 py-3 border-b border-[var(--seekers-border-medium)] bg-[var(--seekers-bg-elevated)]">
+<header class="w-full flex items-center justify-between px-4 lg:px-6 py-3 border-b border-[var(--seekers-border-medium)] bg-[var(--seekers-bg-elevated)] relative z-30">
   
-  <!-- Left Brand & Context -->
+  <!-- Left: Mobile Menu Toggle + Brand & Context -->
   <div class="flex items-center space-x-3">
-    <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--seekers-amber-500)] text-[#090d16] font-bold text-base font-['Sora']">
-      S
-    </div>
-    <div>
-      <div class="flex items-center space-x-2">
-        <span class="font-['Sora'] font-bold text-base tracking-tight text-[var(--seekers-text-primary)]">
-          seekers <span class="text-[var(--seekers-amber-500)]">console</span>
-        </span>
-        <span class="px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]">
-          Standalone Demo Mode
-        </span>
+    <!-- Hamburger button for mobile -->
+    <button (click)="onToggleMobile()"
+            type="button"
+            class="md:hidden p-1.5 rounded text-[var(--seekers-text-secondary)] hover:text-white hover:bg-[var(--seekers-bg-surface)]"
+            aria-label="Toggle navigation drawer">
+      <span class="text-lg">☰</span>
+    </button>
+
+    <a routerLink="/overview" class="flex items-center space-x-3 group">
+      <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--seekers-amber-500)] text-[#090d16] font-bold text-base font-['Sora']">
+        S
       </div>
-      <div class="text-[11px] text-[var(--seekers-text-muted)] font-mono">
-        Angular 18 Operations Shell • Kafka/Ingestion Simulator
+      <div>
+        <div class="flex items-center space-x-2">
+          <span class="font-['Sora'] font-bold text-base tracking-tight text-[var(--seekers-text-primary)]">
+            seekers <span class="text-[var(--seekers-amber-500)]">console</span>
+          </span>
+          <span class="px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded"
+                [ngClass]="(mode$ | async) === 'demo' ? 'bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)]' : 'bg-emerald-900/30 text-emerald-400 border border-emerald-500/30'">
+            {{ (mode$ | async) === 'demo' ? 'Standalone Demo' : 'Live Platform' }}
+          </span>
+        </div>
+        <div class="hidden sm:block text-[11px] text-[var(--seekers-text-muted)] font-mono">
+          Angular 18 Operations Shell • Pipeline Telemetry
+        </div>
       </div>
-    </div>
+    </a>
   </div>
 
-  <!-- Right Simulator Controls & Status -->
+  <!-- Right: Connection Status & Operator Controls -->
   <div class="flex items-center space-x-2 lg:space-x-3 flex-wrap">
     
     <!-- Connection State Pill -->
@@ -42,43 +53,89 @@
       </span>
     </div>
 
-    <!-- Burst Trigger Button -->
-    <button (click)="onTriggerBurst()"
-            type="button"
-            class="px-2.5 py-1 text-xs font-semibold rounded bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors"
-            title="Inject 5 simulated newly crawled jobs into the pipeline">
-      ⚡ Crawl Burst (+5)
-    </button>
+    <!-- Simulator Controls (Visible in Demo mode) -->
+    <ng-container *ngIf="(mode$ | async) === 'demo'">
+      <button (click)="onTriggerBurst()"
+              type="button"
+              class="hidden sm:inline-flex px-2.5 py-1 text-xs font-semibold rounded bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)] border border-[var(--seekers-amber-border)] hover:bg-[rgba(245,158,11,0.2)] transition-colors"
+              title="Inject 5 simulated newly crawled jobs into the pipeline">
+        ⚡ Burst (+5)
+      </button>
 
-    <!-- Pause / Resume Toggle -->
-    <button (click)="onTogglePause()"
-            type="button"
-            class="px-2.5 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-secondary)] border border-[var(--seekers-border-medium)] hover:text-white transition-colors">
-      {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
-    </button>
+      <button (click)="onResetDemo()"
+              type="button"
+              class="px-2 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)] hover:text-white transition-colors"
+              title="Reset telemetry and metrics to initial baseline">
+        🔄 Reset
+      </button>
+    </ng-container>
 
-    <!-- Simulate Disconnect -->
-    <button (click)="onSimulateDisconnect()"
-            type="button"
-            class="hidden md:inline-flex px-2 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)] hover:text-[var(--seekers-danger)] transition-colors"
-            title="Simulate network disconnect to test reconnection banner">
-      Test Offline
-    </button>
+    <!-- Operator Profile & Role Switcher Menu -->
+    <div class="relative pl-2 border-l border-[var(--seekers-border-subtle)]">
+      <button (click)="toggleRoleMenu()"
+              type="button"
+              class="flex items-center space-x-1.5 p-1 rounded hover:bg-[var(--seekers-bg-surface)] transition-colors"
+              aria-haspopup="true"
+              [attr.aria-expanded]="showRoleDropdown">
+        <div class="w-6 h-6 rounded-full bg-[var(--seekers-bg-hover)] text-xs flex items-center justify-center font-bold text-[var(--seekers-amber-400)] font-mono">
+          {{ (user$ | async)?.name?.substring(0, 2)?.toUpperCase() || 'OP' }}
+        </div>
+        <div class="hidden sm:flex flex-col text-left">
+          <span class="text-xs font-medium text-[var(--seekers-text-primary)] leading-tight">
+            {{ (user$ | async)?.name }}
+          </span>
+          <span class="text-[9px] font-mono text-[var(--seekers-amber-400)] leading-tight">
+            {{ (user$ | async)?.role }}
+          </span>
+        </div>
+        <span class="text-[10px] text-[var(--seekers-text-muted)]">▼</span>
+      </button>
 
-    <!-- Reset Demo -->
-    <button (click)="onResetDemo()"
-            type="button"
-            class="px-2 py-1 text-xs font-medium rounded bg-[var(--seekers-bg-surface)] text-[var(--seekers-text-muted)] border border-[var(--seekers-border-subtle)] hover:text-white transition-colors"
-            title="Reset telemetry and metrics to initial baseline">
-      🔄
-    </button>
+      <!-- Dropdown Menu -->
+      <div *ngIf="showRoleDropdown"
+           class="absolute right-0 mt-2 w-56 rounded-lg bg-[var(--seekers-bg-elevated)] border border-[var(--seekers-border-strong)] shadow-2xl py-2 z-50 text-xs">
+        
+        <div class="px-3 py-1.5 border-b border-[var(--seekers-border-subtle)]">
+          <div class="font-semibold text-[var(--seekers-text-primary)]">{{ (user$ | async)?.name }}</div>
+          <div class="text-[10px] text-[var(--seekers-text-muted)] font-mono">{{ (user$ | async)?.email }}</div>
+        </div>
 
-    <!-- Operator Avatar -->
-    <div class="hidden sm:flex items-center space-x-1.5 pl-2 border-l border-[var(--seekers-border-subtle)]">
-      <div class="w-6 h-6 rounded-full bg-[var(--seekers-bg-hover)] text-xs flex items-center justify-center font-bold text-[var(--seekers-amber-400)]">
-        FA
+        <div *ngIf="(mode$ | async) === 'demo'" class="py-1 border-b border-[var(--seekers-border-subtle)]">
+          <div class="px-3 py-1 text-[10px] font-semibold text-[var(--seekers-text-muted)] uppercase">
+            Switch Persona (Demo):
+          </div>
+          <button (click)="onSwitchRole('ADMIN')"
+                  type="button"
+                  class="w-full text-left px-3 py-1.5 hover:bg-[var(--seekers-bg-surface)] flex justify-between"
+                  [ngClass]="{'text-[var(--seekers-amber-400)] font-bold': (user$ | async)?.role === 'ADMIN'}">
+            <span>Farhan A.</span>
+            <span class="font-mono text-[10px]">ADMIN</span>
+          </button>
+          <button (click)="onSwitchRole('OPERATOR')"
+                  type="button"
+                  class="w-full text-left px-3 py-1.5 hover:bg-[var(--seekers-bg-surface)] flex justify-between"
+                  [ngClass]="{'text-sky-400 font-bold': (user$ | async)?.role === 'OPERATOR'}">
+            <span>Tahmid O.</span>
+            <span class="font-mono text-[10px]">OPERATOR</span>
+          </button>
+          <button (click)="onSwitchRole('READ_ONLY')"
+                  type="button"
+                  class="w-full text-left px-3 py-1.5 hover:bg-[var(--seekers-bg-surface)] flex justify-between"
+                  [ngClass]="{'text-white font-bold': (user$ | async)?.role === 'READ_ONLY'}">
+            <span>Auditor</span>
+            <span class="font-mono text-[10px]">READ_ONLY</span>
+          </button>
+        </div>
+
+        <div class="pt-1">
+          <button (click)="onLogout()"
+                  type="button"
+                  class="w-full text-left px-3 py-1.5 hover:bg-red-500/10 text-[var(--seekers-danger)] transition-colors">
+            🚪 Sign Out / Switch Mode
+          </button>
+        </div>
+
       </div>
-      <span class="text-xs font-medium text-[var(--seekers-text-secondary)]">Farhan A.</span>
     </div>
 
   </div>

@@ -1,0 +1,134 @@
+<div class="min-h-[80vh] flex items-center justify-center p-4">
+  <div class="w-full max-w-md admin-card p-6 lg:p-8 space-y-6">
+    
+    <!-- Brand Header -->
+    <div class="text-center space-y-2">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[var(--seekers-amber-500)] text-[#090d16] font-bold text-xl font-['Sora'] mb-2">
+        S
+      </div>
+      <h1 class="text-xl font-bold font-['Sora'] text-[var(--seekers-text-primary)]">
+        seekers <span class="text-[var(--seekers-amber-500)]">console</span>
+      </h1>
+      <p class="text-xs text-[var(--seekers-text-muted)]">
+        Distributed Pipeline Operations & Ingestion Telemetry
+      </p>
+    </div>
+
+    <!-- Mode Selector Tabs -->
+    <div class="grid grid-cols-2 p-1 rounded-lg bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-xs">
+      <button (click)="setMode('demo')"
+              type="button"
+              class="py-2 rounded font-semibold transition-colors"
+              [ngClass]="selectedMode === 'demo' ? 'bg-[var(--seekers-amber-500)] text-[#090d16]' : 'text-[var(--seekers-text-secondary)] hover:text-white'">
+        Portfolio Demo Mode
+      </button>
+      <button (click)="setMode('live')"
+              type="button"
+              class="py-2 rounded font-semibold transition-colors"
+              [ngClass]="selectedMode === 'live' ? 'bg-[var(--seekers-amber-500)] text-[#090d16]' : 'text-[var(--seekers-text-secondary)] hover:text-white'">
+        Live Platform Fleet
+      </button>
+    </div>
+
+    <!-- Mode 1: Portfolio Demo Login -->
+    <div *ngIf="selectedMode === 'demo'" class="space-y-4">
+      <div class="p-3 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-[11px] text-[var(--seekers-text-secondary)] space-y-1">
+        <div class="font-semibold text-[var(--seekers-amber-400)]">Standalone Portfolio Showcase</div>
+        <p>100% self-contained simulator of Bangladesh tech recruitment. Runs with zero backend services, zero Firebase credentials, and zero network traffic.</p>
+      </div>
+
+      <div class="space-y-2">
+        <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase">
+          Select Operator Persona & Role:
+        </label>
+
+        <!-- ADMIN Role -->
+        <button (click)="selectRole('ADMIN')"
+                type="button"
+                class="w-full p-3 rounded-lg border text-left transition-colors flex items-center justify-between"
+                [ngClass]="selectedRole === 'ADMIN' ? 'bg-[rgba(245,158,11,0.1)] border-[var(--seekers-amber-border)]' : 'bg-[var(--seekers-bg-surface)] border-[var(--seekers-border-subtle)] hover:bg-[var(--seekers-bg-hover)]'">
+          <div>
+            <div class="text-xs font-semibold text-[var(--seekers-text-primary)]">Farhan A. (Lead Platform Admin)</div>
+            <div class="text-[11px] text-[var(--seekers-text-muted)]">Full privileges: crawl triggers, DLQ replay, moderation, reindex</div>
+          </div>
+          <span class="text-xs px-2 py-0.5 rounded font-mono font-bold bg-[var(--seekers-amber-dim)] text-[var(--seekers-amber-400)]">
+            ADMIN
+          </span>
+        </button>
+
+        <!-- OPERATOR Role -->
+        <button (click)="selectRole('OPERATOR')"
+                type="button"
+                class="w-full p-3 rounded-lg border text-left transition-colors flex items-center justify-between"
+                [ngClass]="selectedRole === 'OPERATOR' ? 'bg-[rgba(56,189,248,0.1)] border-sky-500/30' : 'bg-[var(--seekers-bg-surface)] border-[var(--seekers-border-subtle)] hover:bg-[var(--seekers-bg-hover)]'">
+          <div>
+            <div class="text-xs font-semibold text-[var(--seekers-text-primary)]">Tahmid O. (Triage Operator)</div>
+            <div class="text-[11px] text-[var(--seekers-text-muted)]">Operations privileges: source pauses, support triage, job moderation</div>
+          </div>
+          <span class="text-xs px-2 py-0.5 rounded font-mono font-bold bg-sky-900/30 text-sky-400">
+            OPERATOR
+          </span>
+        </button>
+
+        <!-- READ_ONLY Role -->
+        <button (click)="selectRole('READ_ONLY')"
+                type="button"
+                class="w-full p-3 rounded-lg border text-left transition-colors flex items-center justify-between"
+                [ngClass]="selectedRole === 'READ_ONLY' ? 'bg-white/10 border-white/20' : 'bg-[var(--seekers-bg-surface)] border-[var(--seekers-border-subtle)] hover:bg-[var(--seekers-bg-hover)]'">
+          <div>
+            <div class="text-xs font-semibold text-[var(--seekers-text-primary)]">Auditor Persona</div>
+            <div class="text-[11px] text-[var(--seekers-text-muted)]">Read-only observation: mutations disabled across all consoles</div>
+          </div>
+          <span class="text-xs px-2 py-0.5 rounded font-mono font-bold bg-white/5 text-[var(--seekers-text-muted)]">
+            READ_ONLY
+          </span>
+        </button>
+      </div>
+
+      <button (click)="onEnterDemo()"
+              type="button"
+              class="w-full py-2.5 px-4 rounded-lg font-semibold text-xs bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors">
+        Enter Operations Console (Demo Mode) →
+      </button>
+    </div>
+
+    <!-- Mode 2: Live Platform Fleet Login -->
+    <div *ngIf="selectedMode === 'live'" class="space-y-4">
+      <div class="p-3 rounded bg-[var(--seekers-bg-surface)] border border-[var(--seekers-border-subtle)] text-[11px] text-[var(--seekers-text-secondary)]">
+        Connect to live platform services via Nginx API gateway (`/api/v1/*`). Requires authenticated administrator credentials.
+      </div>
+
+      <div *ngIf="errorMessage" class="p-2.5 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+        {{ errorMessage }}
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            Administrator Email
+          </label>
+          <input [(ngModel)]="liveEmail"
+                 type="email"
+                 class="w-full px-3 py-2 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none" />
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-[var(--seekers-text-muted)] uppercase mb-1">
+            Admin Bearer Token / Service Key
+          </label>
+          <input [(ngModel)]="liveToken"
+                 type="password"
+                 placeholder="Enter verified administrator secret..."
+                 class="w-full px-3 py-2 text-xs rounded bg-[var(--seekers-bg-input)] border border-[var(--seekers-border-subtle)] text-[var(--seekers-text-primary)] focus:border-[var(--seekers-amber-500)] focus:outline-none" />
+        </div>
+      </div>
+
+      <button (click)="onLoginLive()"
+              type="button"
+              class="w-full py-2.5 px-4 rounded-lg font-semibold text-xs bg-[var(--seekers-amber-500)] text-[#090d16] hover:bg-[var(--seekers-amber-400)] transition-colors">
+        Authenticate & Connect to Fleet →
+      </button>
+    </div>
+
+  </div>
+</div>
