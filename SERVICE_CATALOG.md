@@ -26,7 +26,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
 | `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (16/16); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, threadpool offloading, and gRPC verified |
-| `frontend-admin` | Angular Operations Dashboard | Angular 18, TypeScript, SCSS, RxJS, Socket.io | P12 | Karma CI passes (50/50 tests); production build passes; standalone operations console with dual-adapter architecture verified across 6 operational routes (/overview, /sources, /catalog, /queues, /support, /audit) |
+| `frontend-admin` | Angular Operations Dashboard | Angular 19, TypeScript, SCSS, RxJS, Socket.io | P12 | Karma CI passes (58/58 tests); production build passes; standalone operations console with dual-adapter architecture, server-enforced RBAC, and real live operations verified across 6 operational routes (/overview, /sources, /catalog, /queues, /support, /audit) |
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
 | `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 | ESLint passes (0 errors); tsc & Jest pass (59/59 across 7 suites); P09 candidate workspace, optimistic locking, saved searches, support triage verified |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
@@ -131,13 +131,13 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `frontend-admin/package.json`
   - Lockfile: `frontend-admin/package-lock.json`
 - **Commands & Verification:**
-  - Build: `npm run build` — `[Verified]` (production compilation succeeds cleanly in CI with zero warnings)
-  - Test: `npm run test:ci` — `[Verified]` (50/50 unit and integration tests passing in headless Chrome)
+  - Build: `npm run build` — `[Verified]` (production compilation succeeds cleanly in CI with zero warnings on Angular 19 toolchain)
+  - Test: `npm run test:ci` — `[Verified]` (58/58 unit and integration tests passing in headless Chrome)
   - Local Dev: `npm start` (`ng serve`, port 4200) — `[Verified]`
 - **Required Infrastructure:**
-  - Standalone mode: Zero backend fleet required (uses 100% self-contained deterministic in-memory simulator).
-  - Integrated mode: API gateway (`nginx`), `service-ingestion` (`/api/v1/admin/ingestion/*`), `service-user` (`/api/v1/admin/reports`), and `service-notification` (Socket.io).
-- **Current Verification Status:** Fully verified operational dashboard with 6 functional views (`/overview`, `/sources`, `/catalog`, `/queues`, `/support`, `/audit`), role boundaries (`ADMIN`, `OPERATOR`, `READ_ONLY`), and standalone demonstration mode preloaded with Bangladesh tech ecosystem data.
+  - Standalone mode: Zero backend fleet required (uses 100% self-contained deterministic in-memory simulator with Bangladesh tech ecosystem data).
+  - Integrated mode: API gateway (`nginx`), `service-ingestion` (`/api/v1/admin/*`), `service-user` (`/api/v1/admin/reports`), and `service-notification` (Socket.io).
+- **Current Verification Status:** Fully verified operational dashboard with 6 functional views (`/overview`, `/sources`, `/catalog`, `/queues`, `/support`, `/audit`), server-enforced role boundaries (`ADMIN`, `OPERATOR`, `READ_ONLY`), real crawler operations, privileged catalog search, atomic versioned moderation, and standalone demonstration mode preloaded with Bangladesh tech ecosystem data.
 - **Standalone Demonstration Features (Delivered P12):**
   - Self-contained synthetic demo mode streaming simulated job intake events with controlled pause/play/burst toggles.
   - Interactive job moderation table, source status cards, queue lag indicators, support triage queue, and immutable audit log viewer.
@@ -145,7 +145,7 @@ All platform services interact through versioned machine-readable contracts loca
 - **Intended Deployment Boundary:**
   - Multi-stage Nginx container: `frontend-admin/Dockerfile`
   - Ports: `4200` (host mapping) -> `80` (container internal)
-  - Owning Feature Phase: **P12 (Completed)**
+  - Owning Feature Phase: **P12 (Repaired & Completed)**
 
 ---
 

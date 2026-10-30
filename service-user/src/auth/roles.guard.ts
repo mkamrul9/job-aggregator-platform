@@ -40,11 +40,15 @@ export class RolesGuard implements CanActivate {
     }
 
     // Role check hierarchy:
-    // 1. Check custom claim in verified Firebase token: user.admin === true or user.role === 'ADMIN'
+    // 1. Check custom claim in verified Firebase token: user.admin === true or user.role in ['ADMIN', 'OPERATOR', 'READ_ONLY']
     // 2. Query PostgreSQL User record to verify authoritative role
     let effectiveRole = 'CANDIDATE';
     if (user.admin === true || user.role === 'ADMIN') {
       effectiveRole = 'ADMIN';
+    } else if (user.role === 'OPERATOR') {
+      effectiveRole = 'OPERATOR';
+    } else if (user.role === 'READ_ONLY') {
+      effectiveRole = 'READ_ONLY';
     } else {
       const dbUser = await this.prisma.user.findUnique({
         where: { id: user.uid },

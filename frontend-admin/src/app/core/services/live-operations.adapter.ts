@@ -47,27 +47,47 @@ export class LiveOperationsAdapter implements OperationsAdapter {
     return this.connectionState$.asObservable();
   }
 
+  /**
+   * Probes all 7 microservices in the Seekers platform fleet
+   */
   getHealth(): Observable<SystemHealth[]> {
     const checks = [
-      this.probeService('service-ingestion', 'Node Ingestion Worker', '/api/v1/jobs/health', '5000'),
+      this.probeService('service-scraper', 'Go Job Collection Engine', '/api/v1/admin/sources', '8080'),
+      this.probeService('service-resume', 'Python Resume Extraction Engine', '/api/v1/resume/health', '8000'),
       this.probeService('service-user', 'NestJS User & Support API', '/api/v1/users/health', '3000'),
+      this.probeService('service-ingestion', 'Node Ingestion & Catalog API', '/api/v1/jobs/health', '5000'),
       this.probeService('service-notification', 'Notification Outbox Dispatcher', '/api/v1/notifications/health', '4000'),
-      this.probeService('service-resume', 'Python Resume Extraction Engine', '/api/v1/resume/health', '8000')
+      this.probeService('frontend-next', 'Next.js Candidate Application', '/', '3003'),
+      this.probeLocalAdmin('frontend-admin', 'Angular Operations Console')
     ];
 
     return forkJoin(checks).pipe(
-      catchError(() => of<SystemHealth[]>([
-        {
-          service: 'platform-gateway',
-          displayName: 'Gateway & Services Status',
-          status: 'DEGRADED',
-          latencyMs: 50,
-          version: '1.0.0',
-          endpoint: '/api/v1/*',
-          details: 'One or more platform backend services unreachable',
-          checkedAt: new Date().toISOString()
+      map(results => {
+        const downCount = results.filter(r => r.status === 'DOWN').length;
+        if (downCount === 0) {
+          this.connectionState$.next('connected');
+        } else if (downCount < results.length) {
+          this.connectionState$.next('reconnecting');
+        } else {
+          this.connectionState$.next('disconnected');
         }
-      ]))
+        return results;
+      }),
+      catchError(() => {
+        this.connectionState$.next('disconnected');
+        return of<SystemHealth[]>([
+          {
+            service: 'platform-gateway',
+            displayName: 'Gateway & Services Status',
+            status: 'DOWN',
+            latencyMs: 0,
+            version: '1.0.0',
+            endpoint: '/api/v1/*',
+            details: 'Platform backend services unreachable',
+            checkedAt: new Date().toISOString()
+          }
+        ]);
+      })
     );
   }
 
@@ -83,7 +103,7 @@ export class LiveOperationsAdapter implements OperationsAdapter {
         service,
         displayName,
         status: 'HEALTHY' as const,
-        latencyMs: Math.round(performance.now() - start),
+        latencyMs: Math.max(1, Math.round(performance.now() - start)),
         version: res?.version || '1.0.0',
         endpoint: `http://localhost:${port}`,
         details: res?.status || 'Online and responding',
@@ -102,14 +122,27 @@ export class LiveOperationsAdapter implements OperationsAdapter {
     );
   }
 
+  private probeLocalAdmin(service: string, displayName: string): Observable<SystemHealth> {
+    return of({
+      service,
+      displayName,
+      status: 'HEALTHY' as const,
+      latencyMs: 1,
+      version: '1.0.0',
+      endpoint: window.location.origin,
+      details: 'Active browser application runtime',
+      checkedAt: new Date().toISOString()
+    });
+  }
+
   getTelemetry(): Observable<PipelineTelemetry> {
     return this.http.get<any>('/api/v1/admin/ingestion/status', { headers: this.getAuthHeaders() }).pipe(
       map(res => ({
         activeConnectors: res?.activeConnectors ?? 2,
         totalConnectors: res?.totalConnectors ?? 7,
         throughputHourly: res?.throughputHourly ?? 120,
-        avgLatencyMs: res?.avgLatencyMs ?? 20,
-        kafkaLagMs: res?.kafkaLagMs ?? 15,
+        avgLatencyMs: res?.avgLatencyMs ?? 18,
+        kafkaLagMs: res?.kafkaLagMs ?? 14,
         dlqCount: res?.deadLetters ?? 0,
         lastUpdated: new Date().toLocaleTimeString()
       })),
@@ -137,9 +170,10 @@ export class LiveOperationsAdapter implements OperationsAdapter {
   }
 
   toggleSourcePause(sourceId: string, pause: boolean): Observable<SourceConnector> {
-    return this.http.patch<SourceConnector>(
-      `/api/v1/admin/sources/${sourceId}`,
-      { status: pause ? 'PAUSED' : 'HEALTHY' },
+    const action = pause ? 'pause' : 'resume';
+    return this.http.put<SourceConnector>(
+      `/api/v1/admin/sources/${sourceId}/${action}`,
+      {},
       { headers: this.getAuthHeaders() }
     ).pipe(
       catchError(err => throwError(() => new Error(`Failed to toggle source state: ${err.message}`)))
@@ -156,19 +190,27 @@ export class LiveOperationsAdapter implements OperationsAdapter {
     );
   }
 
+  /**
+   * Privileged catalog inspection: queries across all statuses (ACTIVE, FLAGGED, HIDDEN, EXPIRED)
+   * Maps { items, total_count, next_cursor } response envelope cleanly to ModerationJob
+   */
   getJobs(params: CatalogFilterParams): Observable<{ jobs: ModerationJob[]; total: number }> {
     let httpParams = new HttpParams();
     if (params.query) httpParams = httpParams.set('q', params.query);
     if (params.source && params.source !== 'ALL') httpParams = httpParams.set('source', params.source);
+    if (params.status && params.status !== 'ALL') httpParams = httpParams.set('status', params.status);
     if (params.page) httpParams = httpParams.set('page', params.page.toString());
     if (params.limit) httpParams = httpParams.set('limit', params.limit.toString());
 
-    return this.http.get<any>('/api/v1/jobs', {
+    return this.http.get<any>('/api/v1/admin/jobs', {
       headers: this.getAuthHeaders(),
       params: httpParams
     }).pipe(
-      map(res => ({
-        jobs: (res.jobs || []).map((j: any) => ({
+      map(res => {
+        const rawItems = res?.items || res?.jobs || [];
+        const total = res?.total_count ?? res?.total ?? 0;
+
+        const jobs: ModerationJob[] = rawItems.map((j: any) => ({
           id: j.id,
           title: j.title,
           company: j.company,
@@ -176,20 +218,23 @@ export class LiveOperationsAdapter implements OperationsAdapter {
           source: j.source,
           url: j.canonical_url || j.url,
           status: j.status || 'ACTIVE',
-          latencyMs: j.ingestion_latency_ms || 18,
-          scrapedAt: j.created_at || new Date().toLocaleString(),
-          outboundClicks: j.outbound_clicks || 0,
-          rawDescription: j.description || j.raw_description,
+          latencyMs: j.latencyMs || 18,
+          scrapedAt: j.created_at || j.scrapedAt || new Date().toLocaleString(),
+          outboundClicks: j.outbound_clicks || j.outboundClicks || 0,
+          rawDescription: j.raw_description || j.description,
           provenance: {
-            duplicateCount: j.provenance?.duplicate_count || 1,
-            duplicateHashes: j.provenance?.duplicate_hashes || [],
-            firstSeenAt: j.created_at || new Date().toISOString(),
-            lastVerifiedAt: j.updated_at || new Date().toISOString(),
-            rawPayloadPreview: JSON.stringify(j, null, 2)
+            duplicateCount: j.provenance?.duplicate_count || j.provenance?.duplicateCount || 1,
+            duplicateHashes: j.provenance?.duplicate_hashes || j.provenance?.duplicateHashes || [],
+            firstSeenAt: j.provenance?.first_seen_at || j.created_at || new Date().toISOString(),
+            lastVerifiedAt: j.provenance?.last_verified_at || j.updated_at || new Date().toISOString(),
+            rawPayloadPreview: typeof j.provenance?.raw_payload_preview === 'string'
+              ? j.provenance.raw_payload_preview
+              : JSON.stringify(j, null, 2)
           }
-        })),
-        total: res.total || 0
-      })),
+        }));
+
+        return { jobs, total };
+      }),
       catchError(err => throwError(() => new Error(`Failed to fetch catalog jobs: ${err.message}`)))
     );
   }
@@ -215,7 +260,17 @@ export class LiveOperationsAdapter implements OperationsAdapter {
   }
 
   getDeadLetters(): Observable<DeadLetterItem[]> {
-    return this.http.get<DeadLetterItem[]>('/api/v1/admin/ingestion/dead-letters', { headers: this.getAuthHeaders() }).pipe(
+    return this.http.get<any[]>('/api/v1/admin/ingestion/dead-letters', { headers: this.getAuthHeaders() }).pipe(
+      map(items => (items || []).map(dl => ({
+        id: dl.id,
+        eventType: dl.eventType || dl.event_type || 'job.collected.v1',
+        quarantinedAt: dl.quarantinedAt || dl.quarantined_at || new Date().toISOString(),
+        errors: dl.errors || [],
+        rawPayload: dl.rawPayload || dl.raw_payload,
+        status: dl.status,
+        retryCount: dl.retryCount ?? dl.retry_count ?? 0,
+        resolvedAt: dl.resolvedAt || dl.resolved_at
+      }))),
       catchError(err => throwError(() => new Error(`Failed to fetch dead letters: ${err.message}`)))
     );
   }
@@ -241,49 +296,78 @@ export class LiveOperationsAdapter implements OperationsAdapter {
   }
 
   reconcileCatalog(dryRun: boolean): Observable<ReconcileReport> {
-    return this.http.post<ReconcileReport>(
+    return this.http.post<any>(
       '/api/v1/admin/ingestion/reconcile',
       { dryRun },
       { headers: this.getAuthHeaders() }
     ).pipe(
+      map(res => ({
+        scannedCount: res.scannedCount ?? res.scanned_mongo ?? 0,
+        matchedCount: res.matchedCount ?? (res.scanned_mongo ? res.scanned_mongo - (res.missing_indexed || 0) : 0),
+        repairedCount: res.repairedCount ?? ((res.missing_indexed || 0) + (res.stale_updated || 0)),
+        missingInEs: res.missingInEs ?? res.missing_indexed ?? 0,
+        staleInEs: res.staleInEs ?? res.stale_updated ?? 0,
+        excessInEs: res.excessInEs ?? res.excess_deleted ?? 0,
+        dryRun: Boolean(res.dryRun ?? res.dry_run),
+        errors: res.errors || [],
+        completedAt: res.completedAt || new Date().toISOString()
+      })),
       catchError(err => throwError(() => new Error(`Failed to execute reconciliation: ${err.message}`)))
     );
   }
 
   reindexCatalog(): Observable<ReindexResult> {
-    return this.http.post<ReindexResult>(
+    return this.http.post<any>(
       '/api/v1/admin/ingestion/reindex',
       {},
       { headers: this.getAuthHeaders() }
     ).pipe(
+      map(res => ({
+        operationId: res.operationId || `reindex_${Date.now()}`,
+        status: res.status || (res.success ? 'COMPLETED' : 'FAILED'),
+        sourceIndex: res.sourceIndex || 'jobs_index',
+        targetIndex: res.targetIndex || 'jobs_index',
+        alias: res.alias || 'jobs_index',
+        documentsIndexed: res.documentsIndexed ?? res.activeJobsProjected ?? 0,
+        durationMs: res.durationMs ?? 0,
+        startedAt: res.startedAt || new Date().toISOString(),
+        completedAt: res.completedAt || new Date().toISOString(),
+        error: res.error
+      })),
       catchError(err => throwError(() => new Error(`Failed to trigger index rebuild: ${err.message}`)))
     );
   }
 
+  /**
+   * Support Triage Queue: handles paginated { items, total_count } response from service-user
+   */
   getSupportReports(status?: string): Observable<SupportReport[]> {
     let params = new HttpParams();
     if (status && status !== 'ALL') {
       params = params.set('status', status);
     }
-    return this.http.get<any[]>('/api/v1/admin/reports', {
+    return this.http.get<any>('/api/v1/admin/reports', {
       headers: this.getAuthHeaders(),
       params
     }).pipe(
-      map(reports => (reports || []).map(r => ({
-        id: r.id,
-        referenceNum: r.referenceNum || r.reference_num,
-        userId: r.userId || r.user_id,
-        jobId: r.jobId || r.job_id,
-        reportType: r.reportType || r.report_type,
-        description: r.description,
-        contactEmail: r.contactEmail || r.contact_email,
-        status: r.status,
-        operatorNotes: r.operatorNotes || r.operator_notes,
-        createdAt: r.createdAt || r.created_at,
-        updatedAt: r.updatedAt || r.updated_at,
-        resolvedAt: r.resolvedAt || r.resolved_at,
-        resolvedBy: r.resolvedBy || r.resolved_by
-      }))),
+      map(response => {
+        const rawReports = Array.isArray(response) ? response : (response?.items || []);
+        return rawReports.map((r: any) => ({
+          id: r.id,
+          referenceNum: r.referenceNum || r.reference_num || `RPT-${r.id.slice(0, 8)}`,
+          userId: r.userId || r.user_id,
+          jobId: r.jobId || r.job_id,
+          reportType: r.reportType || r.report_type || 'OTHER',
+          description: r.description,
+          contactEmail: r.contactEmail || r.contact_email,
+          status: r.status,
+          operatorNotes: r.operatorNotes || r.operator_notes,
+          createdAt: r.createdAt || r.created_at || new Date().toISOString(),
+          updatedAt: r.updatedAt || r.updated_at || new Date().toISOString(),
+          resolvedAt: r.resolvedAt || r.resolved_at,
+          resolvedBy: r.resolvedBy || r.resolved_by
+        }));
+      }),
       catchError(err => throwError(() => new Error(`Failed to fetch support reports: ${err.message}`)))
     );
   }
@@ -314,9 +398,8 @@ export class LiveOperationsAdapter implements OperationsAdapter {
     );
   }
 
-  logAuditEvent(entry: Partial<AuditLogEntry>): Observable<void> {
-    return this.http.post<void>('/api/v1/admin/audit', entry, { headers: this.getAuthHeaders() }).pipe(
-      catchError(err => throwError(() => new Error(`Failed to record audit event: ${err.message}`)))
-    );
+  logAuditEvent(_entry: Partial<AuditLogEntry>): Observable<void> {
+    // Authoritative audit evidence is recorded strictly by server-side mutations
+    return of(undefined);
   }
 }

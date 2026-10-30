@@ -14,6 +14,7 @@ describe('SupportComponent', () => {
   let authService: AuthService;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [FormsModule, HttpClientTestingModule],
       declarations: [SupportComponent],

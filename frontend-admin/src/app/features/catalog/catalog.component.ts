@@ -1,5 +1,6 @@
 // frontend-admin/src/app/features/catalog/catalog.component.ts
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Subject, takeUntil } from 'rxjs';
 import { OperationsService } from '../../core/services/operations.service';
 import { AuthService } from '../../core/services/auth.service';
 import { ModerationJob } from '../../core/models/operations.models';
@@ -7,9 +8,10 @@ import { ModerationJob } from '../../core/models/operations.models';
 @Component({
   selector: 'app-catalog',
   templateUrl: './catalog.component.html',
-  styleUrls: ['./catalog.component.scss']
+  styleUrls: ['./catalog.component.scss'],
+  standalone: false
 })
-export class CatalogComponent implements OnInit {
+export class CatalogComponent implements OnInit, OnDestroy {
   jobs: ModerationJob[] = [];
   totalJobs = 0;
   isLoading = false;
@@ -25,6 +27,9 @@ export class CatalogComponent implements OnInit {
   moderationReason = '';
   statusMessage = '';
 
+  private destroy$ = new Subject<void>();
+  private notificationTimer: any = null;
+
   constructor(
     public opsService: OperationsService,
     public authService: AuthService
@@ -32,6 +37,14 @@ export class CatalogComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadJobs();
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+    if (this.notificationTimer) {
+      clearTimeout(this.notificationTimer);
+    }
   }
 
   loadJobs(): void {
@@ -42,7 +55,7 @@ export class CatalogComponent implements OnInit {
       status: this.selectedStatus,
       page: this.currentPage,
       limit: this.pageSize
-    }).subscribe({
+    }).pipe(takeUntil(this.destroy$)).subscribe({
       next: (res) => {
         this.jobs = res.jobs;
         this.totalJobs = res.total;
@@ -106,12 +119,13 @@ export class CatalogComponent implements OnInit {
     const { job, action } = this.selectedJobForAction;
     const reason = this.moderationReason.trim() || `Administrative ${action} executed by ${this.authService.currentUser?.name || 'Operator'}`;
 
-    this.opsService.moderateJob(job.id, action, reason).subscribe({
+    this.opsService.moderateJob(job.id, action, reason).pipe(takeUntil(this.destroy$)).subscribe({
       next: (updated) => {
         this.statusMessage = `Job "${updated.title}" marked as ${updated.status}.`;
         this.closeActionModal();
         this.loadJobs();
-        setTimeout(() => this.statusMessage = '', 4000);
+        if (this.notificationTimer) clearTimeout(this.notificationTimer);
+        this.notificationTimer = setTimeout(() => this.statusMessage = '', 4000);
       },
       error: (err) => {
         alert(`Failed to moderate job: ${err.message}`);

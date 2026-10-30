@@ -7,9 +7,10 @@ import { AuthService } from '../../core/services/auth.service';
 import { ConnectionState, OperatorUser, AppMode, OperatorRole } from '../../core/models/operations.models';
 
 @Component({
-  selector: 'app-header',
-  templateUrl: './header.component.html',
-  styleUrls: ['./header.component.scss']
+    selector: 'app-header',
+    templateUrl: './header.component.html',
+    styleUrls: ['./header.component.scss'],
+    standalone: false
 })
 export class HeaderComponent {
   @Output() mobileMenuToggle = new EventEmitter<void>();

@@ -12,6 +12,7 @@ describe('OverviewComponent', () => {
   let opsService: OperationsService;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [
         RouterModule.forRoot([]),

@@ -11,6 +11,7 @@ describe('AuditComponent', () => {
   let fixture: ComponentFixture<AuditComponent>;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [FormsModule, HttpClientTestingModule],
       declarations: [AuditComponent],

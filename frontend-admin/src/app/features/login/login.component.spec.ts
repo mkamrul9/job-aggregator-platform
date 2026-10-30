@@ -13,6 +13,7 @@ describe('LoginComponent', () => {
   let router: Router;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [
         FormsModule,
@@ -58,5 +59,9 @@ describe('LoginComponent', () => {
     component.liveToken = '';
     component.onLoginLive();
     expect(component.errorMessage).toContain('Please provide an administrative bearer token');
+  });
+
+  afterEach(() => {
+    localStorage.clear();
   });
 });

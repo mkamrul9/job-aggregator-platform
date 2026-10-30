@@ -6,9 +6,10 @@ import { OperationsService } from '../../core/services/operations.service';
 import { AuditLogEntry } from '../../core/models/operations.models';
 
 @Component({
-  selector: 'app-audit',
-  templateUrl: './audit.component.html',
-  styleUrls: ['./audit.component.scss']
+    selector: 'app-audit',
+    templateUrl: './audit.component.html',
+    styleUrls: ['./audit.component.scss'],
+    standalone: false
 })
 export class AuditComponent implements OnInit {
   logs$!: Observable<AuditLogEntry[]>;

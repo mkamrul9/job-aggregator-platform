@@ -96,11 +96,11 @@ export class ReportsController {
   /**
    * GET /admin/reports
    * Operator support queue for triage and incident tracking.
-   * Server-enforced role boundary: ADMIN only.
+   * Server-enforced role boundary: ADMIN, OPERATOR, READ_ONLY.
    */
   @Get('admin/reports')
   @UseGuards(FirebaseAuthGuard, RolesGuard)
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'OPERATOR', 'READ_ONLY')
   async listSupportQueue(
     @Query('status') status?: string,
     @Query('limit') limit?: string,
@@ -117,11 +117,11 @@ export class ReportsController {
   /**
    * PATCH /admin/reports/:id
    * Updates report status and operator triage notes.
-   * Server-enforced role boundary: ADMIN only.
+   * Server-enforced role boundary: ADMIN and OPERATOR.
    */
   @Patch('admin/reports/:id')
   @UseGuards(FirebaseAuthGuard, RolesGuard)
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'OPERATOR')
   async triageReport(
     @Req() request: AuthenticatedRequest,
     @Param('id') id: string,

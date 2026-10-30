@@ -15,6 +15,7 @@ describe('SourcesComponent', () => {
   let authService: AuthService;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [FormsModule, HttpClientTestingModule],
       declarations: [SourcesComponent],

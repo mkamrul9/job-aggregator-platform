@@ -181,6 +181,18 @@ function createJobsRouter({ jobsCollection, esClient }) {
     }
   });
 
+  // Dedicated health endpoint for service-ingestion
+  router.get('/health', (req, res) => {
+    const isReady = Boolean(jobsCollection);
+    return res.status(isReady ? 200 : 503).json({
+      service: 'service-ingestion',
+      status: isReady ? 'HEALTHY' : 'DEGRADED',
+      mongo: Boolean(jobsCollection),
+      elasticsearch: Boolean(esClient),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // 3. GET /:id - Single canonical job details
   router.get('/:id', async (req, res) => {
     const { id } = req.params;

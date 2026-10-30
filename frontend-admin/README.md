@@ -1,6 +1,6 @@
 # Seekers Operations Console (`frontend-admin`)
 
-A responsive administrative operations console, pipeline telemetry dashboard, and job catalog moderation application built with Angular 18 for platform operators and recruiters.
+A responsive administrative operations console, pipeline telemetry dashboard, and job catalog moderation application built with Angular 19 for platform operators and recruiters.
 
 > **Role in Seekers Platform:** Part of the Seekers polyglot microservices platform. Provides operational control and visibility over crawling source connectors, Kafka consumer lag, dead-letter quarantine (DLQ), deduplication clusters, candidate support reports, and catalog reindexing. Preserved as an independent, fully interactive Angular portfolio demonstration adhering to the Seekers Design System.
 
@@ -8,11 +8,11 @@ A responsive administrative operations console, pipeline telemetry dashboard, an
 
 ## 1. Primary Technology Stack & Toolchain
 
-- **Framework:** Angular 18 (NgModule architecture, SCSS styling, TypeScript 5.5, RxJS 7.8)
+- **Framework:** Angular 19 (NgModule architecture, SCSS styling, TypeScript 5.5, RxJS 7.8)
 - **Styling & Design Tokens:** TailwindCSS 3.4 & custom SCSS matching `docs/DESIGN_SYSTEM.md` (Deep Charcoal `#090d16` & Amber `#f59e0b` palette)
 - **State Management & Telemetry:** Reactive RxJS subjects (`BehaviorSubject`, `Observable`, `forkJoin`, `switchMap`)
 - **Dual Adapter Architecture:** Clean abstraction separating `DemoOperationsAdapter` (synthetic simulation) and `LiveOperationsAdapter` (authenticated HTTP gateway & WebSocket) behind a unified `OperationsAdapter` interface
-- **Testing:** Karma 6.4 + Jasmine 5.2 running on headless Chrome (`npm run test:ci`) with 50 automated tests covering all components, adapters, and guards
+- **Testing:** Karma 6.4 + Jasmine 5.2 running on headless Chrome (`npm run test:ci`) with 58 automated tests covering all components, adapters, and guards
 - **Production Server:** Nginx Alpine reverse proxy supporting both root (`/`) and gateway subpath (`/admin/`) deep-link routing
 
 ---
@@ -82,11 +82,11 @@ Privileged actions are strictly guarded both in UI and on backend APIs:
 | Action | `ADMIN` | `OPERATOR` | `READ_ONLY` |
 |---|:---:|:---:|:---:|
 | View Health, Telemetry, and Logs | ✅ | ✅ | ✅ |
-| Pause / Resume Crawler Sources | ✅ | ✅ | ❌ |
+| Pause / Resume Crawler Sources | ✅ | ❌ | ❌ |
 | Trigger Manual Crawl Run | ✅ | ✅ | ❌ |
 | Moderate Listings (Expire, Flag, Hide) | ✅ | ✅ | ❌ |
 | Triage Support Reports & Save Notes | ✅ | ✅ | ❌ |
-| Replay or Discard Quarantined Dead Letters | ✅ | ❌ | ❌ |
+| Replay or Discard Quarantined Dead Letters | ✅ | ✅ | ❌ |
 | Run Catalog Reconciliation (Dry-run / Live) | ✅ | ❌ | ❌ |
 | Initiate Zero-Downtime Index Rebuild | ✅ | ❌ | ❌ |
 
@@ -111,7 +111,7 @@ npm run build
 ### Running Automated Karma Test Suite
 
 ```bash
-# Execute 50 unit and integration tests in headless Chrome:
+# Execute 58 unit and integration tests in headless Chrome:
 npm run test:ci
 ```
 

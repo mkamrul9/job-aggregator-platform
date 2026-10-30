@@ -32,7 +32,14 @@ function escapeRegex(str) {
 /**
  * Creates the Express application configured with canonical catalog and admin operations routes.
  */
-function createIngestionApp(jobsCollection = null, esClient = null, deadLettersCollection = null, auditCollection = null) {
+function createIngestionApp(
+  jobsCollection = null,
+  esClient = null,
+  deadLettersCollection = null,
+  auditCollection = null,
+  sourcesCollection = null,
+  crawlRunsCollection = null
+) {
   const app = express();
   app.use(cors({ origin: ALLOWED_ORIGINS }));
   app.use(express.json());
@@ -48,7 +55,14 @@ function createIngestionApp(jobsCollection = null, esClient = null, deadLettersC
   app.use('/api/jobs', jobsRouter);
 
   // Mount admin operations router
-  const adminRouter = createAdminRouter({ jobsCollection, deadLettersCollection, esClient, auditCollection });
+  const adminRouter = createAdminRouter({
+    jobsCollection,
+    deadLettersCollection,
+    esClient,
+    auditCollection,
+    sourcesCollection,
+    crawlRunsCollection
+  });
   app.use('/api/v1/admin/ingestion', adminRouter);
   app.use('/api/v1/admin', adminRouter);
 
@@ -125,6 +139,8 @@ async function run() {
     const jobsCollection = db.collection('jobs');
     const deadLettersCollection = db.collection('dead_letters');
     const auditCollection = db.collection('audit_logs');
+    const sourcesCollection = db.collection('sources');
+    const crawlRunsCollection = db.collection('crawl_runs');
     console.log('✅ Connected to MongoDB');
 
     await ensureMongoIndexes(jobsCollection, deadLettersCollection);
@@ -143,7 +159,14 @@ async function run() {
     }
 
     // 4. Start Express API for Job Fetching & Operations
-    const app = createIngestionApp(jobsCollection, esClient, deadLettersCollection, auditCollection);
+    const app = createIngestionApp(
+      jobsCollection,
+      esClient,
+      deadLettersCollection,
+      auditCollection,
+      sourcesCollection,
+      crawlRunsCollection
+    );
     const PORT = process.env.PORT || 5000;
     const server = app.listen(PORT, () => {
       console.log(`✅ Jobs API listening on port ${PORT}`);

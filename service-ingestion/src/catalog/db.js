@@ -242,8 +242,8 @@ async function upsertJobDocument(jobsCollection, rawJob, options = {}) {
         effectiveCanonical.remote_eligibility = existing.remote_eligibility;
       }
 
-      // 3. Moderation Invariant: Never allow an automated crawler event to reactivate an EXPIRED or FLAGGED listing
-      if (existing.status === 'EXPIRED' || existing.status === 'FLAGGED') {
+      // 3. Moderation Invariant: Never allow an automated crawler event to reactivate an EXPIRED, FLAGGED, or HIDDEN listing
+      if (existing.status === 'EXPIRED' || existing.status === 'FLAGGED' || existing.status === 'HIDDEN') {
         effectiveCanonical.status = existing.status;
       }
 
