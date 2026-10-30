@@ -2,13 +2,35 @@
 
 const crypto = require('crypto');
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EXPIRATION_SECONDS = 90 * 24 * 3600; // 90 days maximum lifetime
+const MAX_TOKEN_LENGTH = 2048;
+
+/**
+ * Resolves the dedicated unsubscribe HMAC secret.
+ * In production or integrated SMTP mode, a non-empty configured secret is mandatory.
+ */
 function getUnsubscribeSecret() {
-  return (
+  const configured =
     process.env.ALERT_UNSUBSCRIBE_SECRET ||
-    process.env.UNSUBSCRIBE_SECRET ||
-    process.env.JWT_SECRET ||
-    'seekers-unsubscribe-secret-p11'
-  );
+    process.env.NOTIFICATIONS_TOKEN_SECRET;
+
+  if (configured && configured.trim().length >= 16) {
+    return configured.trim();
+  }
+
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NOTIFICATION_MODE && process.env.NOTIFICATION_MODE.toUpperCase() === 'SMTP');
+
+  if (isProd) {
+    throw new Error(
+      'ALERT_UNSUBSCRIBE_SECRET is required in production/SMTP mode with minimum 16 characters. Fallback secrets are strictly prohibited.'
+    );
+  }
+
+  // Explicit isolated local-demo secret for tests & zero-dependency local mode
+  return 'dev-demo-unsubscribe-isolated-key-p11';
 }
 
 /**
@@ -49,7 +71,8 @@ function signPayload(payloadStr, secret = getUnsubscribeSecret()) {
  * @param {string} options.subscriptionId - ID of the alert subscription
  * @param {string} options.candidateId - ID of candidate owner
  * @param {string} options.email - Recipient email address
- * @param {number} [options.expiresInSeconds=2592000] - Default: 30 days
+ * @param {string} [options.scope='subscription'] - 'subscription' or 'all'
+ * @param {number} [options.expiresInSeconds=2592000] - Default: 30 days, max: 90 days
  * @param {string} [options.secret] - Optional override secret
  * @returns {string} Signed token: `<base64urlPayload>.<signatureHex>`
  */
@@ -57,19 +80,32 @@ function generateUnsubscribeToken({
   subscriptionId,
   candidateId,
   email,
+  scope = 'subscription',
   expiresInSeconds = 30 * 24 * 3600,
   secret = getUnsubscribeSecret(),
 }) {
-  if (!subscriptionId) throw new Error('subscriptionId is required to generate unsubscribe token');
-  if (!candidateId) throw new Error('candidateId is required to generate unsubscribe token');
-  if (!email) throw new Error('email is required to generate unsubscribe token');
+  if (!subscriptionId || typeof subscriptionId !== 'string') {
+    throw new Error('subscriptionId is required to generate unsubscribe token');
+  }
+  if (!candidateId || typeof candidateId !== 'string') {
+    throw new Error('candidateId is required to generate unsubscribe token');
+  }
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    throw new Error('A valid email address is required to generate unsubscribe token');
+  }
+
+  const expSec = Number(expiresInSeconds);
+  const boundedExp = Number.isFinite(expSec)
+    ? Math.min(expSec, MAX_EXPIRATION_SECONDS)
+    : 30 * 24 * 3600;
 
   const nowSec = Math.floor(Date.now() / 1000);
   const payload = {
-    sub: subscriptionId,
-    cand: candidateId,
+    sub: subscriptionId.trim(),
+    cand: candidateId.trim(),
     email: email.toLowerCase().trim(),
-    exp: nowSec + expiresInSeconds,
+    scope: scope === 'all' ? 'all' : 'subscription',
+    exp: nowSec + boundedExp,
     iat: nowSec,
     purpose: 'job_alert_unsubscribe',
   };
@@ -80,26 +116,40 @@ function generateUnsubscribeToken({
 }
 
 /**
- * Verifies an unsubscribe token using timing-safe comparison.
+ * Verifies an unsubscribe token using timing-safe comparison and mandatory finite expiration.
  *
  * @param {string} token
  * @param {string} [secret]
- * @returns {{ valid: boolean, error?: string, subscriptionId?: string, candidateId?: string, email?: string, expiresAt?: number }}
+ * @returns {{ valid: boolean, error?: string, subscriptionId?: string, candidateId?: string, email?: string, scope?: string, expiresAt?: number }}
  */
 function verifyUnsubscribeToken(token, secret = getUnsubscribeSecret()) {
   if (!token || typeof token !== 'string') {
     return { valid: false, error: 'TOKEN_MISSING' };
   }
 
+  if (token.length > MAX_TOKEN_LENGTH) {
+    return { valid: false, error: 'TOKEN_TOO_LARGE' };
+  }
+
   const parts = token.split('.');
-  if (parts.length !== 2) {
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     return { valid: false, error: 'MALFORMED_TOKEN' };
   }
 
   const [payloadB64, signature] = parts;
 
-  // 1. Compute expected signature
-  const expectedSignature = signPayload(payloadB64, secret);
+  // Validate signature format (64-char hex)
+  if (!/^[0-9a-f]{64}$/i.test(signature)) {
+    return { valid: false, error: 'INVALID_SIGNATURE_FORMAT' };
+  }
+
+  // 1. Compute expected signature and compare with timing-safe equal
+  let expectedSignature;
+  try {
+    expectedSignature = signPayload(payloadB64, secret);
+  } catch (err) {
+    return { valid: false, error: 'CRYPTO_ERROR' };
+  }
 
   const sigBuf = Buffer.from(signature, 'hex');
   const expBuf = Buffer.from(expectedSignature, 'hex');
@@ -116,22 +166,48 @@ function verifyUnsubscribeToken(token, secret = getUnsubscribeSecret()) {
     return { valid: false, error: 'INVALID_PAYLOAD_JSON' };
   }
 
-  // 3. Validate structure and purpose
-  if (!payload || payload.purpose !== 'job_alert_unsubscribe' || !payload.sub || !payload.cand || !payload.email) {
+  // 3. Validate strict field types, structure, and purpose
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: 'INVALID_PAYLOAD' };
+  }
+
+  if (payload.purpose !== 'job_alert_unsubscribe') {
     return { valid: false, error: 'INVALID_TOKEN_PURPOSE' };
   }
 
-  // 4. Validate expiration
+  if (typeof payload.sub !== 'string' || !payload.sub.trim()) {
+    return { valid: false, error: 'INVALID_SUBSCRIPTION_ID' };
+  }
+
+  if (typeof payload.cand !== 'string' || !payload.cand.trim()) {
+    return { valid: false, error: 'INVALID_CANDIDATE_ID' };
+  }
+
+  if (typeof payload.email !== 'string' || !EMAIL_REGEX.test(payload.email.trim())) {
+    return { valid: false, error: 'INVALID_EMAIL' };
+  }
+
+  // 4. Validate MANDATORY finite expiration
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+    return { valid: false, error: 'MISSING_MANDATORY_EXPIRATION' };
+  }
+
   const nowSec = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp === 'number' && nowSec > payload.exp) {
+  if (nowSec > payload.exp) {
     return { valid: false, error: 'TOKEN_EXPIRED' };
+  }
+
+  // 5. Validate issued-at bounds (cannot be issued more than 60 seconds in the future)
+  if (typeof payload.iat === 'number' && payload.iat > nowSec + 60) {
+    return { valid: false, error: 'TOKEN_ISSUED_IN_FUTURE' };
   }
 
   return {
     valid: true,
-    subscriptionId: payload.sub,
-    candidateId: payload.cand,
-    email: payload.email,
+    subscriptionId: payload.sub.trim(),
+    candidateId: payload.cand.trim(),
+    email: payload.email.toLowerCase().trim(),
+    scope: payload.scope === 'all' ? 'all' : 'subscription',
     expiresAt: payload.exp,
   };
 }
@@ -140,4 +216,6 @@ module.exports = {
   getUnsubscribeSecret,
   generateUnsubscribeToken,
   verifyUnsubscribeToken,
+  MAX_EXPIRATION_SECONDS,
+  MAX_TOKEN_LENGTH,
 };

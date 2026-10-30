@@ -17,9 +17,55 @@ const { escapeHtml } = require('./templates');
 function createNotificationRouter({ store, dispatcher, metrics = {} }) {
   const router = express.Router();
 
-  // ─── CAPTURED MAILBOX ENDPOINTS ─────────────────────────────────────────────
+  // ─── AUTHENTICATION MIDDLEWARE ──────────────────────────────────────────────
 
-  router.get('/captured', (req, res) => {
+  function requireAdminOrServiceAuth(req, res, next) {
+    if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true') {
+      return next();
+    }
+    const adminKey = req.headers['x-admin-key'];
+    const serviceKey = req.headers['x-service-key'];
+    const authHeader = req.headers['authorization'];
+    const expectedKey =
+      process.env.NOTIFICATION_ADMIN_KEY ||
+      process.env.INTERNAL_SERVICE_KEY ||
+      'seekers-internal-service-p11';
+
+    if (
+      (adminKey && adminKey === expectedKey) ||
+      (serviceKey && serviceKey === expectedKey) ||
+      (authHeader && authHeader === `Bearer ${expectedKey}`)
+    ) {
+      return next();
+    }
+    return res.status(401).json({
+      error: 'UNAUTHORIZED_ACCESS',
+      message: 'Valid admin or internal service credentials required.',
+    });
+  }
+
+  function requireWebhookAuth(req, res, next) {
+    const webhookSecret =
+      process.env.PROVIDER_WEBHOOK_SECRET || 'seekers-provider-webhook-p11';
+    const providedSecret = req.headers['x-webhook-secret'] || req.query.secret;
+
+    if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true' && !process.env.PROVIDER_WEBHOOK_SECRET) {
+      return next();
+    }
+
+    if (providedSecret && providedSecret === webhookSecret) {
+      return next();
+    }
+
+    return res.status(401).json({
+      error: 'INVALID_WEBHOOK_SIGNATURE',
+      message: 'Provider webhook signature or secret verification failed.',
+    });
+  }
+
+  // ─── CAPTURED MAILBOX ENDPOINTS (Protected) ─────────────────────────────────
+
+  router.get('/captured', requireAdminOrServiceAuth, (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 50;
     const to = req.query.to ? String(req.query.to) : undefined;
     const items = store.listCapturedEmails({ limit, to });
@@ -30,7 +76,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     });
   });
 
-  router.get('/captured/:id', (req, res) => {
+  router.get('/captured/:id', requireAdminOrServiceAuth, (req, res) => {
     const item = store.getCapturedEmail(req.params.id);
     if (!item) {
       return res.status(404).json({ error: 'CAPTURED_EMAIL_NOT_FOUND' });
@@ -38,12 +84,12 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     res.json(item);
   });
 
-  router.delete('/captured', (req, res) => {
+  router.delete('/captured', requireAdminOrServiceAuth, (req, res) => {
     store.clearCapturedEmails();
     res.json({ success: true, message: 'Captured mailbox cleared.' });
   });
 
-  // ─── ONE-CLICK UNSUBSCRIBE FLOW ─────────────────────────────────────────────
+  // ─── ONE-CLICK UNSUBSCRIBE FLOW (Public, Scoped, RFC 8058) ──────────────────
 
   // GET: Browser confirmation page (GET is safe/idempotent, won't unsubscribe on link prefetch)
   router.get('/unsubscribe', (req, res) => {
@@ -63,9 +109,10 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
 
     const verification = verifyUnsubscribeToken(token);
     if (!verification.valid) {
-      const msg = verification.error === 'TOKEN_EXPIRED'
-        ? 'This unsubscribe link has expired. Please manage your alerts in your Seekers account settings.'
-        : 'This unsubscribe link is invalid or has been modified.';
+      const msg =
+        verification.error === 'TOKEN_EXPIRED'
+          ? 'This unsubscribe link has expired. Please manage your alerts in your Seekers account settings.'
+          : 'This unsubscribe link is invalid or has been modified.';
       return res.status(400).send(`
         <!DOCTYPE html>
         <html>
@@ -78,7 +125,6 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       `);
     }
 
-    // Render Confirmation Form
     const safeEmail = escapeHtml(verification.email);
     const safeToken = escapeHtml(token);
     res.status(200).send(`
@@ -100,7 +146,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       <body>
         <div class="card">
           <h1>Unsubscribe from Seekers Alerts</h1>
-          <p>Are you sure you want to stop receiving job alerts sent to <strong>${safeEmail}</strong>?</p>
+          <p>Are you sure you want to stop receiving job alerts for this subscription sent to <strong>${safeEmail}</strong>?</p>
           <form method="POST" action="/api/v1/notifications/unsubscribe">
             <input type="hidden" name="token" value="${safeToken}" />
             <button type="submit" class="btn-confirm" id="confirm-unsub-btn">Confirm Unsubscribe</button>
@@ -111,10 +157,11 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     `);
   });
 
-  // POST: Execute the unsubscribe (One-click JSON API & Form submit)
-  router.post('/unsubscribe', (req, res) => {
-    const token = req.body?.token;
-    if (!token) {
+  // POST: Execute unsubscribe (Supports RFC 8058 One-Click POST & JSON API)
+  router.post('/unsubscribe', async (req, res) => {
+    // RFC 8058 sends token in URL query parameter and 'List-Unsubscribe=One-Click' in body
+    const token = req.body?.token || req.query?.token;
+    if (!token || typeof token !== 'string') {
       return res.status(400).json({ success: false, error: 'TOKEN_REQUIRED' });
     }
 
@@ -126,17 +173,40 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       });
     }
 
-    // 1. Deactivate subscription in store
-    store.deactivateSubscription(verification.subscriptionId);
+    // Distinguish per-subscription unsubscribe from global email suppression
+    const isGlobalOptOut = verification.scope === 'all' || req.body?.scope === 'all';
 
-    // 2. Add email to suppressions
-    store.addSuppression({
-      email: verification.email,
-      candidateId: verification.candidateId,
-      subscriptionId: verification.subscriptionId,
-      reason: 'UNSUBSCRIBED',
-      source: 'TOKEN_UNSUBSCRIBE',
-    });
+    if (isGlobalOptOut) {
+      store.addGlobalSuppression({
+        email: verification.email,
+        reason: 'GLOBAL_OPTOUT',
+        source: 'TOKEN_UNSUBSCRIBE',
+      });
+    } else {
+      // Scoped per-subscription unsubscribe
+      store.addSubscriptionSuppression({
+        subscriptionId: verification.subscriptionId,
+        email: verification.email,
+        candidateId: verification.candidateId,
+        reason: 'UNSUBSCRIBED',
+        source: 'TOKEN_UNSUBSCRIBE',
+      });
+    }
+
+    // Synchronize to authoritative service-user if URL configured
+    const userServiceUrl = process.env.USER_SERVICE_URL;
+    if (userServiceUrl) {
+      try {
+        fetch(`${userServiceUrl}/users/alerts/unsubscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+          signal: AbortSignal.timeout(2000),
+        }).catch(() => {});
+      } catch (e) {
+        // Asynchronous bridge
+      }
+    }
 
     // Check if client expects HTML or JSON
     const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
@@ -158,12 +228,13 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
       message: 'Unsubscribed successfully.',
       subscription_id: verification.subscriptionId,
       email: verification.email,
+      scope: isGlobalOptOut ? 'GLOBAL' : 'SUBSCRIPTION',
     });
   });
 
-  // ─── PROVIDER WEBHOOKS (Bounce / Complaints) ─────────────────────────────────
+  // ─── PROVIDER WEBHOOKS (Protected & Authenticated) ──────────────────────────
 
-  router.post('/webhooks/provider', (req, res) => {
+  router.post('/webhooks/provider', requireWebhookAuth, (req, res) => {
     const body = req.body;
     if (!body || typeof body !== 'object') {
       return res.status(400).json({ error: 'INVALID_WEBHOOK_PAYLOAD' });
@@ -177,7 +248,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     }
 
     if (eventType.includes('bounce') || body.bounce) {
-      store.addSuppression({
+      store.addGlobalSuppression({
         email,
         reason: 'BOUNCED',
         source: 'WEBHOOK',
@@ -186,7 +257,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     }
 
     if (eventType.includes('complaint') || body.complaint) {
-      store.addSuppression({
+      store.addGlobalSuppression({
         email,
         reason: 'COMPLAINT',
         source: 'WEBHOOK',
@@ -197,15 +268,15 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     res.status(200).json({ success: true, action: 'IGNORED_EVENT_TYPE', eventType });
   });
 
-  // ─── SUBSCRIPTIONS & EVALUATION (Direct / Testing / CLI) ─────────────────────
+  // ─── SUBSCRIPTIONS & EVALUATION (Protected) ─────────────────────────────────
 
-  router.get('/subscriptions', (req, res) => {
+  router.get('/subscriptions', requireAdminOrServiceAuth, (req, res) => {
     const activeOnly = req.query.active === 'true';
     const subs = store.listSubscriptions({ activeOnly });
     res.json({ total: subs.length, subscriptions: subs });
   });
 
-  router.post('/subscriptions', (req, res) => {
+  router.post('/subscriptions', requireAdminOrServiceAuth, (req, res) => {
     const sub = req.body;
     if (!sub || !sub.id || !sub.email) {
       return res.status(400).json({ error: 'Subscription id and email are required' });
@@ -214,11 +285,14 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     res.status(201).json(saved);
   });
 
-  router.get('/suppressions', (req, res) => {
-    res.json({ total: store.listSuppressions().length, suppressions: store.listSuppressions() });
+  router.get('/suppressions', requireAdminOrServiceAuth, (req, res) => {
+    res.json({
+      global_suppressions: store.listGlobalSuppressions(),
+      subscription_suppressions: store.listSubscriptionSuppressions(),
+    });
   });
 
-  router.post('/evaluate', async (req, res) => {
+  router.post('/evaluate', requireAdminOrServiceAuth, async (req, res) => {
     const job = req.body;
     if (!job || !job.id) {
       return res.status(400).json({ error: 'Job payload with id is required' });
@@ -229,7 +303,7 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
 
     for (const sub of subscriptions) {
       const match = evaluateJobMatch(job, sub, {
-        isSuppressed: (email) => store.isSuppressed(email),
+        isSuppressed: (email, subId) => store.isSuppressed(email, subId),
       });
 
       if (match.matches) {

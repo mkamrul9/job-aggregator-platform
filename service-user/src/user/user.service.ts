@@ -6,6 +6,7 @@ import {
   HttpStatus,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
   ServiceUnavailableException,
   Logger,
   OnModuleInit,
@@ -1432,18 +1433,37 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
   async unsubscribeAlertByToken(
     token: string,
   ): Promise<UnsubscribeAlertResponseDto> {
+    if (!token || typeof token !== 'string') {
+      throw new BadRequestException('Unsubscribe token is required');
+    }
+
+    if (token.length > 2048) {
+      throw new BadRequestException('Unsubscribe token exceeds maximum length');
+    }
+
     const secret =
       process.env.ALERT_UNSUBSCRIBE_SECRET ||
-      process.env.UNSUBSCRIBE_SECRET ||
-      process.env.JWT_SECRET ||
-      'seekers-unsubscribe-secret-p11';
+      process.env.NOTIFICATIONS_TOKEN_SECRET ||
+      (process.env.NODE_ENV === 'production'
+        ? (() => {
+            throw new Error(
+              'ALERT_UNSUBSCRIBE_SECRET is required in production',
+            );
+          })()
+        : 'dev-demo-unsubscribe-isolated-key-p11');
 
     const parts = token.split('.');
-    if (parts.length !== 2) {
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
       throw new BadRequestException('Malformed unsubscribe token');
     }
 
     const [payloadB64, signature] = parts;
+    if (!/^[0-9a-f]{64}$/i.test(signature)) {
+      throw new BadRequestException(
+        'Invalid unsubscribe token signature format',
+      );
+    }
+
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(payloadB64)
@@ -1475,16 +1495,43 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Invalid unsubscribe token payload');
     }
 
-    const subId = typeof payload.sub === 'string' ? payload.sub : undefined;
+    const subId =
+      typeof payload.sub === 'string' ? payload.sub.trim() : undefined;
+    const candId =
+      typeof payload.cand === 'string' ? payload.cand.trim() : undefined;
+    const email =
+      typeof payload.email === 'string'
+        ? payload.email.trim().toLowerCase()
+        : undefined;
     const purpose =
       typeof payload.purpose === 'string' ? payload.purpose : undefined;
-    if (!subId || purpose !== 'job_alert_unsubscribe') {
-      throw new BadRequestException('Invalid token purpose');
+
+    if (!subId || !candId || !email || purpose !== 'job_alert_unsubscribe') {
+      throw new BadRequestException('Invalid token purpose or missing claims');
+    }
+
+    if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+      throw new BadRequestException('Token missing mandatory expiration');
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
-    if (typeof payload.exp === 'number' && nowSec > payload.exp) {
+    if (nowSec > payload.exp) {
       throw new BadRequestException('Unsubscribe token has expired');
+    }
+
+    // Bind token scope to actual subscription owner and email
+    const existing = await this.userRepository.findAlertWithUser(subId);
+    if (!existing) {
+      throw new NotFoundException('Alert subscription not found');
+    }
+
+    if (
+      existing.userId !== candId ||
+      existing.user.email.toLowerCase() !== email
+    ) {
+      throw new UnauthorizedException(
+        'Token subject does not match subscription owner',
+      );
     }
 
     await this.userRepository.deactivateAlert(subId);

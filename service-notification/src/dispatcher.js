@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { generateUnsubscribeToken } = require('./crypto');
 const { renderAlertHtml, renderAlertText } = require('./templates');
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 class DeliveryDispatcher {
   /**
    * @param {Object} options
@@ -31,6 +33,12 @@ class DeliveryDispatcher {
     this.apiOrigin = apiOrigin;
     this.metrics = metrics;
     this.onEventEmitted = onEventEmitted;
+
+    if (this.mode === 'SMTP' && !this.transporter) {
+      throw new Error(
+        'DeliveryDispatcher configured for SMTP mode without a valid Nodemailer transporter. Explicit configuration is required.'
+      );
+    }
   }
 
   /**
@@ -41,21 +49,43 @@ class DeliveryDispatcher {
    * @param {Array<Object>|Object} options.jobs
    * @param {string} [options.correlationId]
    * @param {string} [options.causationId]
+   * @param {number} [options.maxAttempts=3]
    * @returns {Promise<Object>} Delivery result
    */
-  async dispatchAlert({ subscription, jobs, correlationId, causationId }) {
+  async dispatchAlert({ subscription, jobs, correlationId, causationId, maxAttempts = 3 }) {
+    if (!subscription || typeof subscription !== 'object') {
+      return { status: 'SKIPPED_INVALID_SUBSCRIPTION', delivery: null };
+    }
+
+    // 1. Strict Final Dispatch Boundary: Active Consent & Verification Checks
+    if (subscription.active !== true) {
+      return { status: 'SKIPPED_PAUSED', reason: 'Subscription is paused', delivery: null };
+    }
+
+    if (subscription.email_verified !== true && subscription.emailVerified !== true) {
+      return { status: 'SKIPPED_UNVERIFIED', reason: 'Email is not verified', delivery: null };
+    }
+
+    const email = (subscription.email || '').toLowerCase().trim();
+    if (!email || !EMAIL_REGEX.test(email)) {
+      return { status: 'SKIPPED_INVALID_EMAIL', delivery: null };
+    }
+
     const jobList = Array.isArray(jobs) ? jobs : [jobs];
     if (jobList.length === 0) {
       return { status: 'SKIPPED_NO_JOBS', delivery: null };
     }
 
-    const email = (subscription.email || '').toLowerCase().trim();
-    if (!email) {
-      return { status: 'SKIPPED_NO_EMAIL', delivery: null };
-    }
+    // 2. Strict Suppression Check (Global vs Per-Subscription)
+    const isGlobal = this.store.isGloballySuppressed(email);
+    const isSubUnsub = this.store.isSubscriptionSuppressed(subscription.id);
 
-    // 1. Check suppression (unsubscribed, complaint, bounced)
-    if (this.store.isSuppressed(email)) {
+    if (isGlobal || isSubUnsub) {
+      const skipStatus = isGlobal ? 'SKIPPED_SUPPRESSED' : 'SKIPPED_UNSUBSCRIBED';
+      const reasonMsg = isGlobal
+        ? 'Recipient address is globally suppressed (bounced or complained)'
+        : 'Candidate unsubscribed from this alert subscription';
+
       const deliveryId = crypto.randomUUID();
       const deliveryRecord = this.store.saveDelivery({
         id: deliveryId,
@@ -65,10 +95,10 @@ class DeliveryDispatcher {
         eligibleJobIds: jobList.map((j) => j.id),
         channel: 'EMAIL',
         templateVersion: 'v1.0.0',
-        providerStatus: 'SKIPPED_UNSUBSCRIBED',
+        providerStatus: skipStatus,
         attemptCount: 0,
-        maxAttempts: 3,
-        error: 'Recipient address is suppressed/unsubscribed',
+        maxAttempts,
+        error: reasonMsg,
         providerReceipt: null,
       });
 
@@ -77,27 +107,37 @@ class DeliveryDispatcher {
         subscription,
         recipientEmail: email,
         jobList,
-        providerStatus: 'SKIPPED_UNSUBSCRIBED',
+        providerStatus: skipStatus,
         correlationId,
         causationId,
       });
 
-      return { status: 'SKIPPED_UNSUBSCRIBED', delivery: deliveryRecord };
+      return { status: skipStatus, delivery: deliveryRecord };
     }
 
-    // 2. Logical deduplication check
-    const primaryJobId = jobList[0].id || 'unknown';
-    const dedupeKey = `sub:${subscription.id}:job:${primaryJobId}`;
+    // 3. Documented Multi-Job Logical Deduplication Key
+    const sortedJobIds = jobList.map((j) => j.id).filter(Boolean).sort().join(',');
+    const dateWindow = new Date().toISOString().substring(0, 10);
+    const dedupeKey = `sub:${subscription.id}:jobs:${sortedJobIds}:v${subscription.version || 1}:${dateWindow}`;
+
     const existingDelivery = this.store.findDeliveryByDedupeKey(dedupeKey);
-    if (existingDelivery && ['ACCEPTED', 'ATTEMPTING'].includes(existingDelivery.providerStatus)) {
-      return {
-        status: 'SKIPPED_DUPLICATE',
-        delivery: existingDelivery,
-        reason: 'Alert for this job already dispatched or in-flight',
-      };
+    if (existingDelivery) {
+      const now = Date.now();
+      const isLeaseActive =
+        existingDelivery.providerStatus === 'ATTEMPTING' &&
+        existingDelivery.leaseExpiresAt &&
+        new Date(existingDelivery.leaseExpiresAt).getTime() > now;
+
+      if (['ACCEPTED', 'RETRY_SCHEDULED'].includes(existingDelivery.providerStatus) || isLeaseActive) {
+        return {
+          status: 'SKIPPED_DUPLICATE',
+          delivery: existingDelivery,
+          reason: 'Alert for this job set already dispatched or actively in-flight',
+        };
+      }
     }
 
-    // 3. Generate purpose-scoped unsubscribe token
+    // 4. Generate purpose-scoped unsubscribe token
     const token = generateUnsubscribeToken({
       subscriptionId: subscription.id,
       candidateId: subscription.candidate_id || subscription.candidateId || subscription.userId || 'usr_anon',
@@ -105,7 +145,7 @@ class DeliveryDispatcher {
     });
     const unsubscribeUrl = `${this.apiOrigin}/api/v1/notifications/unsubscribe?token=${token}`;
 
-    // 4. Render HTML and text
+    // 5. Render accessible HTML and plain text templates
     const html = renderAlertHtml({
       jobs: jobList,
       subscription,
@@ -119,11 +159,12 @@ class DeliveryDispatcher {
       baseUrl: this.baseUrl,
     });
 
-    const deliveryId = crypto.randomUUID();
+    const deliveryId = existingDelivery ? existingDelivery.id : crypto.randomUUID();
     const querySubject = subscription.query ? `"${subscription.query}"` : 'Your Preferences';
-    const subject = jobList.length === 1
-      ? `New Job Match: ${jobList[0].title} at ${jobList[0].company}`
-      : `Seekers Alert: ${jobList.length} new jobs matching ${querySubject}`;
+    const subject =
+      jobList.length === 1
+        ? `New Job Match: ${jobList[0].title} at ${jobList[0].company}`
+        : `Seekers Alert: ${jobList.length} new jobs matching ${querySubject}`;
 
     const headers = {
       'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@seekers.work?subject=unsubscribe:${token}>`,
@@ -132,7 +173,9 @@ class DeliveryDispatcher {
       'X-Seekers-Subscription-Id': subscription.id,
     };
 
-    // Save initial delivery state
+    // 6. Record ATTEMPTING state with 5-minute lease
+    const now = Date.now();
+    const currentAttempt = (existingDelivery?.attemptCount || 0) + 1;
     let deliveryRecord = this.store.saveDelivery({
       id: deliveryId,
       dedupeKey,
@@ -143,17 +186,18 @@ class DeliveryDispatcher {
       channel: 'EMAIL',
       templateVersion: 'v1.0.0',
       providerStatus: 'ATTEMPTING',
-      attemptCount: 1,
-      maxAttempts: 3,
-      lastAttemptAt: new Date().toISOString(),
+      attemptCount: currentAttempt,
+      maxAttempts,
+      leasedAt: new Date(now).toISOString(),
+      leaseExpiresAt: new Date(now + 300000).toISOString(),
+      lastAttemptAt: new Date(now).toISOString(),
       error: null,
       providerReceipt: null,
     });
 
-    // 5. Send via Transporter or Local Capture
+    // 7. Dispatch via CAPTURE (Safe local mailbox) or SMTP Relay
     try {
       if (this.mode === 'CAPTURE' || !this.transporter) {
-        // Safe Local Mailbox Capture (zero real email, zero external network dependency)
         const captured = this.store.recordCapturedEmail({
           id: deliveryId,
           to: email,
@@ -173,6 +217,8 @@ class DeliveryDispatcher {
         deliveryRecord = this.store.saveDelivery({
           id: deliveryId,
           providerStatus: 'ACCEPTED',
+          leasedAt: null,
+          leaseExpiresAt: null,
           providerReceipt: {
             mode: 'CAPTURE',
             messageId: captured.id,
@@ -195,7 +241,7 @@ class DeliveryDispatcher {
         return { status: 'ACCEPTED', mode: 'CAPTURE', delivery: deliveryRecord, capturedId: captured.id };
       }
 
-      // Mode === 'SMTP': Transmit via configured SMTP
+      // Mode === 'SMTP': Transmit via configured SMTP relay
       const info = await this.transporter.sendMail({
         from: process.env.SMTP_FROM || '"Seekers Job Alerts" <alerts@seekers.work>',
         to: email,
@@ -208,6 +254,8 @@ class DeliveryDispatcher {
       deliveryRecord = this.store.saveDelivery({
         id: deliveryId,
         providerStatus: 'ACCEPTED',
+        leasedAt: null,
+        leaseExpiresAt: null,
         providerReceipt: {
           mode: 'SMTP',
           messageId: info.messageId,
@@ -230,20 +278,33 @@ class DeliveryDispatcher {
       return { status: 'ACCEPTED', mode: 'SMTP', delivery: deliveryRecord };
     } catch (sendErr) {
       const isTransient = this._isTransientError(sendErr);
-      const newStatus = isTransient ? 'REJECTED' : 'REJECTED'; // alert.dispatched.v1 schema requires ACCEPTED | REJECTED | SKIPPED_UNSUBSCRIBED
+      const isAmbiguous = this._isAmbiguousError(sendErr);
+
+      let finalStatus = 'FAILED_TERMINAL';
+      let nextRetryAt = null;
+
+      if (isAmbiguous) {
+        finalStatus = 'AMBIGUOUS_UNKNOWN';
+      } else if (isTransient && currentAttempt < maxAttempts) {
+        finalStatus = 'RETRY_SCHEDULED';
+        const backoffMs = Math.min(60000, 1000 * Math.pow(2, currentAttempt - 1) + Math.floor(Math.random() * 200));
+        nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
+      }
 
       deliveryRecord = this.store.saveDelivery({
         id: deliveryId,
-        providerStatus: newStatus,
+        providerStatus: finalStatus,
+        nextRetryAt,
         error: sendErr.message,
         providerReceipt: {
           code: sendErr.code,
           responseCode: sendErr.responseCode,
           transient: isTransient,
+          ambiguous: isAmbiguous,
         },
       });
 
-      this._recordMetrics(newStatus);
+      this._recordMetrics(finalStatus);
 
       this._emitDispatchedEvent({
         deliveryId,
@@ -256,10 +317,12 @@ class DeliveryDispatcher {
       });
 
       return {
-        status: newStatus,
+        status: finalStatus,
         delivery: deliveryRecord,
         error: sendErr.message,
         isTransient,
+        isAmbiguous,
+        nextRetryAt,
       };
     }
   }
@@ -275,6 +338,12 @@ class DeliveryDispatcher {
       return true;
     }
     return false;
+  }
+
+  _isAmbiguousError(err) {
+    if (!err) return false;
+    const msg = (err.message || '').toLowerCase();
+    return msg.includes('socket hung up after headers') || msg.includes('write epipe') || msg.includes('ambiguous');
   }
 
   _recordMetrics(status) {
@@ -295,7 +364,11 @@ class DeliveryDispatcher {
     correlationId,
     causationId,
   }) {
-    // Contract-conforming alert.dispatched.v1 event envelope
+    // Map internal status to schema-compatible enum: ACCEPTED, REJECTED, SKIPPED_UNSUBSCRIBED
+    let contractStatus = 'REJECTED';
+    if (providerStatus === 'ACCEPTED') contractStatus = 'ACCEPTED';
+    if (providerStatus === 'SKIPPED_UNSUBSCRIBED') contractStatus = 'SKIPPED_UNSUBSCRIBED';
+
     const event = {
       event_id: crypto.randomUUID(),
       event_type: 'alert.dispatched.v1',
@@ -311,7 +384,7 @@ class DeliveryDispatcher {
         job_count: jobList.length,
         matching_job_ids: jobList.map((j) => j.id).filter(Boolean),
         delivery_channel: 'EMAIL',
-        provider_status: providerStatus, // 'ACCEPTED' | 'REJECTED' | 'SKIPPED_UNSUBSCRIBED'
+        provider_status: contractStatus,
         dispatched_at: new Date().toISOString(),
       },
     };

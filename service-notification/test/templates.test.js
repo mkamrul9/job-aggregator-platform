@@ -81,3 +81,4 @@ describe('service-notification: template tests', () => {
     assert.ok(text.includes('Unsubscribe from this alert with one click:'));
   });
 });
+

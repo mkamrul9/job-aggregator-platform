@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { StorageService } from '../storage/storage.service';
@@ -7,6 +11,7 @@ import { PrismaService } from '../prisma.service';
 import { of } from 'rxjs';
 import { RemoteEligibility } from '@prisma/client';
 import { Readable } from 'stream';
+import * as crypto from 'crypto';
 
 describe('UserService', () => {
   let service: UserService;
@@ -88,6 +93,8 @@ describe('UserService', () => {
     listAlerts: jest.fn(),
     deleteAlert: jest.fn(),
     toggleAlert: jest.fn(),
+    deactivateAlert: jest.fn(),
+    findAlertWithUser: jest.fn(),
     updateDocumentCleanupStatus: jest.fn(),
     findActiveResume: jest.fn(),
     findActiveResumeWithLatestParse: jest.fn(),
@@ -657,6 +664,129 @@ describe('UserService', () => {
       await expect(
         service.getReport('RPT-20261029-ABCD', 'firebase-uid-123', false),
       ).rejects.toThrow();
+    });
+  });
+
+  describe('Unsubscribe Token Verification and Scope Enforcement', () => {
+    const secret = 'dev-demo-unsubscribe-isolated-key-p11';
+
+    function createTestToken(payload: Record<string, unknown>, key = secret) {
+      const b64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      const sig = crypto.createHmac('sha256', key).update(b64).digest('hex');
+      return `${b64}.${sig}`;
+    }
+
+    it('deactivates alert when token is valid and matches subscription owner', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const token = createTestToken({
+        sub: 'sub-valid-1',
+        cand: 'firebase-uid-123',
+        email: 'candidate@seekers.example',
+        exp: nowSec + 3600,
+        purpose: 'job_alert_unsubscribe',
+      });
+
+      mockUserRepository.findAlertWithUser.mockResolvedValue({
+        id: 'sub-valid-1',
+        userId: 'firebase-uid-123',
+        active: true,
+        user: { email: 'candidate@seekers.example' },
+      });
+      mockUserRepository.deactivateAlert.mockResolvedValue(true);
+
+      const res = await service.unsubscribeAlertByToken(token);
+      expect(res.success).toBe(true);
+      expect(mockUserRepository.deactivateAlert).toHaveBeenCalledWith(
+        'sub-valid-1',
+      );
+    });
+
+    it('rejects token when candidate ID does not match subscription owner', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const token = createTestToken({
+        sub: 'sub-valid-1',
+        cand: 'attacker-uid-999',
+        email: 'candidate@seekers.example',
+        exp: nowSec + 3600,
+        purpose: 'job_alert_unsubscribe',
+      });
+
+      mockUserRepository.findAlertWithUser.mockResolvedValue({
+        id: 'sub-valid-1',
+        userId: 'firebase-uid-123',
+        user: { email: 'candidate@seekers.example' },
+      });
+
+      await expect(service.unsubscribeAlertByToken(token)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('rejects token when recipient email does not match subscription owner', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const token = createTestToken({
+        sub: 'sub-valid-1',
+        cand: 'firebase-uid-123',
+        email: 'different@example.com',
+        exp: nowSec + 3600,
+        purpose: 'job_alert_unsubscribe',
+      });
+
+      mockUserRepository.findAlertWithUser.mockResolvedValue({
+        id: 'sub-valid-1',
+        userId: 'firebase-uid-123',
+        user: { email: 'candidate@seekers.example' },
+      });
+
+      await expect(service.unsubscribeAlertByToken(token)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('rejects token missing mandatory expiration', async () => {
+      const token = createTestToken({
+        sub: 'sub-valid-1',
+        cand: 'firebase-uid-123',
+        email: 'candidate@seekers.example',
+        purpose: 'job_alert_unsubscribe',
+      });
+
+      await expect(service.unsubscribeAlertByToken(token)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rejects expired token', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const token = createTestToken({
+        sub: 'sub-valid-1',
+        cand: 'firebase-uid-123',
+        email: 'candidate@seekers.example',
+        exp: nowSec - 3600,
+        purpose: 'job_alert_unsubscribe',
+      });
+
+      await expect(service.unsubscribeAlertByToken(token)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rejects token signed with wrong key', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const token = createTestToken(
+        {
+          sub: 'sub-valid-1',
+          cand: 'firebase-uid-123',
+          email: 'candidate@seekers.example',
+          exp: nowSec + 3600,
+          purpose: 'job_alert_unsubscribe',
+        },
+        'wrong-secret-key-1234567890',
+      );
+
+      await expect(service.unsubscribeAlertByToken(token)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

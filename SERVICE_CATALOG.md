@@ -303,17 +303,17 @@ All platform services interact through versioned machine-readable contracts loca
   - Manifest: `service-notification/package.json`
   - Lockfile: `service-notification/package-lock.json`
 - **Commands & Verification:**
-  - Test: `npm test` — `[Verified]` (25 tests pass covering unit endpoints, crypto tokens, preference matcher, HTML/text templates, durable storage, and full integration flow)
+  - Test: `npm test` — `[Verified]` (36 tests pass cleanly across 8 suites covering HTTP endpoints, crypto & token security, preference matcher, HTML/text templates, durable storage concurrency & corrupt isolation, and full integration lifecycle)
   - Local Dev / Standalone Replay: `node cli.js replay` — `[Verified]`
   - CLI Mailbox Inspection: `node cli.js captured` — `[Verified]`
 - **Required Infrastructure:**
-  - Standalone mode: Zero external infrastructure (`CAPTURE` mode with in-memory/file storage).
-  - Integrated mode: Kafka broker, SMTP provider or Mailpit sandbox.
-- **Current Verification Status:** `[Verified]` — 25 tests pass cleanly across 8 suites; zero external network dependencies in `CAPTURE` mode; tamper-resistant HMAC-SHA256 unsubscribe tokens; full XSS escaping in templates; contract-conformant `alert.dispatched.v1` events.
+  - Standalone mode: Zero external infrastructure (`CAPTURE` mode with atomic file/in-memory storage).
+  - Integrated mode: Kafka broker, SMTP provider or Mailpit sandbox, `service-user` PostgreSQL synchronization.
+- **Current Verification Status:** `[Verified]` — 36 tests pass cleanly across 8 suites; zero external network dependencies in `CAPTURE` mode; tamper-resistant HMAC-SHA256 unsubscribe tokens with mandatory finite expiration; RFC 8058 one-click unsubscribe support; authenticated candidate WebSocket rooms; multi-instance file storage coordination with non-swallowed disk write errors and corrupt file recovery; contract-conformant `alert.dispatched.v1` events.
 - **Intended Deployment Boundary:**
   - Container: `service-notification/Dockerfile`
   - Ports: `4000` (internal / host)
-  - Owning Feature Phase: **P11**
+  - Owning Feature Phase: **P11 (Completed & Repaired)**
 
 ---
 

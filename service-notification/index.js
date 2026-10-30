@@ -12,6 +12,7 @@ const { DurableNotificationStore } = require('./src/storage');
 const { DeliveryDispatcher } = require('./src/dispatcher');
 const { evaluateJobMatch } = require('./src/matcher');
 const { createNotificationRouter } = require('./src/routes');
+const { verifyUnsubscribeToken } = require('./src/crypto');
 
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = process.env.KAFKA_TOPIC || 'jobs.new';
@@ -86,8 +87,8 @@ function createNotificationApp(options = {}) {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // 3. Health Check Endpoint
-  app.get('/health', (req, res) => {
+  // 3. Health Check Endpoints
+  const handleHealth = (req, res) => {
     if (req.query.details === 'true' || req.query.detailed === 'true') {
       const stats = store.getStats();
       return res.status(200).json({
@@ -102,23 +103,54 @@ function createNotificationApp(options = {}) {
       });
     }
     res.status(200).json({ status: 'Notification Service is running.' });
-  });
+  };
+  app.get('/health', handleHealth);
+  app.get('/api/v1/notifications/health', handleHealth);
+  app.get('/api/notifications/health', handleHealth);
 
-  // 4. Prometheus Metrics Endpoint
-  app.get('/metrics', async (req, res) => {
+  // 4. Prometheus Metrics Endpoints
+  const handleMetrics = async (req, res) => {
     res.set('Content-Type', customRegister.contentType);
     res.end(await customRegister.metrics());
-  });
+  };
+  app.get('/metrics', handleMetrics);
+  app.get('/api/v1/notifications/metrics', handleMetrics);
 
-  // 5. Mount API Routes
+  // 5. Mount API Routes (Direct and Gateway-stripped paths)
   const router = createNotificationRouter({
     store,
     dispatcher,
     metrics: { emailsSentCounter, deliveriesCounter, evaluationsCounter },
   });
   app.use('/api/v1/notifications', router);
+  app.use('/', router);
 
   return app;
+}
+
+/**
+ * Strictly sanitizes public job payloads before broadcasting on public streams.
+ */
+function sanitizePublicJobData(jobData) {
+  if (!jobData || typeof jobData !== 'object') return null;
+  const sanitized = {
+    id: String(jobData.id || jobData.source_job_id || ''),
+    title: String(jobData.title || ''),
+    company: String(jobData.company || ''),
+    location: String(jobData.location || ''),
+    remote_eligibility: jobData.remote_eligibility || jobData.remoteEligibility || 'unknown',
+    url: String(jobData.url || ''),
+    published_at: jobData.published_at || jobData.publishedAt || jobData.collected_at || new Date().toISOString(),
+    skills: Array.isArray(jobData.skills) ? jobData.skills.map(String) : [],
+    source: String(jobData.source || 'aggregator'),
+  };
+  if (jobData.source_job_id) {
+    sanitized.source_job_id = String(jobData.source_job_id);
+  }
+  if (jobData.description) {
+    sanitized.description = String(jobData.description);
+  }
+  return sanitized;
 }
 
 /**
@@ -152,9 +184,12 @@ async function processJobNotification(
   const causationId = isEnvelope ? raw.causation_id : null;
   const jobData = isEnvelope ? raw.payload : raw;
 
-  // 1. Broadcast the new job to connected WebSocket clients (Public stream)
+  // 1. Broadcast sanitized job to connected WebSocket clients (Public stream only)
   if (io) {
-    io.emit('live-job-feed', jobData);
+    const publicJob = sanitizePublicJobData(jobData);
+    if (publicJob) {
+      io.emit('live-job-feed', publicJob);
+    }
   }
 
   // Idempotency check: deduplicate notification evaluation if event already processed
@@ -227,11 +262,48 @@ async function startServer() {
     },
   });
 
-  io.on('connection', (socket) => {
-    // Support candidate joining their personal room for authenticated notifications
+  io.use((socket, next) => {
     const candidateId = socket.handshake.auth?.candidateId || socket.handshake.query?.candidateId;
+    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const serviceSecret =
+      socket.handshake.auth?.serviceSecret ||
+      socket.handshake.headers?.['x-service-secret'] ||
+      socket.handshake.headers?.['x-service-key'];
+
+    // If candidateId is asserted to join candidate room, require authentication
     if (candidateId) {
-      socket.join(`candidate:${candidateId}`);
+      const expectedKey = process.env.INTERNAL_SERVICE_KEY || 'seekers-internal-service-p11';
+      if (serviceSecret && serviceSecret === expectedKey) {
+        socket.data.candidateId = candidateId;
+        socket.data.authenticated = true;
+        return next();
+      }
+      if (process.env.NOTIFICATION_ALLOW_ANON_DEMO === 'true' && process.env.NODE_ENV !== 'production') {
+        socket.data.candidateId = candidateId;
+        socket.data.authenticated = true;
+        return next();
+      }
+      if (!token) {
+        return next(new Error('AUTHENTICATION_REQUIRED: token is required to join candidate room'));
+      }
+      const verified = verifyUnsubscribeToken(token);
+      if (verified && verified.valid && verified.candidateId === candidateId) {
+        socket.data.candidateId = candidateId;
+        socket.data.authenticated = true;
+        return next();
+      }
+      return next(new Error('FORBIDDEN: token does not match candidateId or is expired'));
+    }
+
+    // Anonymous public connection (can listen to 'live-job-feed')
+    socket.data.authenticated = false;
+    return next();
+  });
+
+  io.on('connection', (socket) => {
+    // Only join personal candidate room if authenticated
+    if (socket.data.candidateId && socket.data.authenticated) {
+      socket.join(`candidate:${socket.data.candidateId}`);
     }
     socket.on('disconnect', () => {});
   });

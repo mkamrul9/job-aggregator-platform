@@ -1358,6 +1358,13 @@ export class UserRepository {
     return true;
   }
 
+  async findAlertWithUser(alertId: string) {
+    return this.prisma.alertSubscription.findUnique({
+      where: { id: alertId },
+      include: { user: true },
+    });
+  }
+
   // ─── RECOMMENDATION FEEDBACK ──────────────────────────────────────────
 
   async upsertRecommendationFeedback(

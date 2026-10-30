@@ -105,6 +105,61 @@ describe('service-notification: matcher tests', () => {
     assert.strictEqual(result.reason, 'SALARY_BELOW_MINIMUM');
   });
 
+  it('rejects currency mismatch when currencies are defined and differ', () => {
+    const usdSub = {
+      ...baseSub,
+      min_salary: 1000,
+      currency: 'USD',
+      pay_period: 'MONTHLY',
+    };
+
+    const result = evaluateJobMatch(baseJob, usdSub);
+    assert.strictEqual(result.matches, false);
+    assert.strictEqual(result.reason, 'SALARY_CURRENCY_MISMATCH');
+  });
+
+  it('resolves skill aliases (e.g. golang <-> go, ts <-> typescript, k8s <-> kubernetes)', () => {
+    const subGolang = { ...baseSub, query: 'golang' };
+    const jobGo = {
+      ...baseJob,
+      title: 'Backend Specialist',
+      skills: ['Go', 'Docker'],
+      description: 'Building microservices.',
+    };
+    const resGo = evaluateJobMatch(jobGo, subGolang);
+    assert.strictEqual(resGo.matches, true);
+
+    const subTs = { ...baseSub, query: 'TypeScript' };
+    const jobTs = {
+      ...baseJob,
+      title: 'Frontend Engineer',
+      skills: ['ts', 'react'],
+      description: 'Web UI dev.',
+    };
+    const resTs = evaluateJobMatch(jobTs, subTs);
+    assert.strictEqual(resTs.matches, true);
+  });
+
+  it('matches punctuation-heavy technologies safely (C++, .NET, Node.js, C#)', () => {
+    const subCpp = { ...baseSub, query: 'C++' };
+    const jobCpp = {
+      ...baseJob,
+      title: 'Systems Developer',
+      skills: ['C++', 'Linux'],
+      description: 'Low-latency trading engine in C++.',
+    };
+    assert.strictEqual(evaluateJobMatch(jobCpp, subCpp).matches, true);
+
+    const subDotNet = { ...baseSub, query: '.NET' };
+    const jobDotNet = {
+      ...baseJob,
+      title: 'Backend Developer',
+      skills: ['.NET', 'C#', 'SQL Server'],
+      description: 'Enterprise APIs with .NET Core.',
+    };
+    assert.strictEqual(evaluateJobMatch(jobDotNet, subDotNet).matches, true);
+  });
+
   it('rejects inactive, expired, or non-active jobs', () => {
     const expiredJob1 = { ...baseJob, status: 'EXPIRED' };
     assert.strictEqual(evaluateJobMatch(expiredJob1, baseSub).matches, false);
@@ -117,6 +172,16 @@ describe('service-notification: matcher tests', () => {
     const expiredJob3 = { ...baseJob, expires_at: new Date(Date.now() - 3600000).toISOString() };
     assert.strictEqual(evaluateJobMatch(expiredJob3, baseSub).matches, false);
     assert.strictEqual(evaluateJobMatch(expiredJob3, baseSub).reason, 'JOB_EXPIRED');
+  });
+
+  it('strictly rejects missing or false email_verified', () => {
+    const missingVerified = { ...baseSub, email_verified: undefined, emailVerified: undefined };
+    assert.strictEqual(evaluateJobMatch(baseJob, missingVerified).matches, false);
+    assert.strictEqual(evaluateJobMatch(baseJob, missingVerified).reason, 'EMAIL_NOT_VERIFIED');
+
+    const falseVerified = { ...baseSub, email_verified: false };
+    assert.strictEqual(evaluateJobMatch(baseJob, falseVerified).matches, false);
+    assert.strictEqual(evaluateJobMatch(baseJob, falseVerified).reason, 'EMAIL_NOT_VERIFIED');
   });
 
   it('rejects paused subscriptions, unverified emails, suppressed users, and dismissed jobs', () => {
