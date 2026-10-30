@@ -15,6 +15,7 @@ out/
 *.exe
 .turbo/
 coverage/
+service-notification/data/
 
 # Python caches and virtual environments
 __pycache__/

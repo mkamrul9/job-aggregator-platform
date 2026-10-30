@@ -89,7 +89,7 @@ export default function AlertsWorkspace({
       }}>
         <span style={{ color: 'var(--seekers-amber-400)', fontSize: '1rem' }}>🔔</span>
         <span>
-          <strong>Simulated Email Notifications:</strong> In P04 preview mode, alert preferences match the P03 OpenAPI contract. Dispatched notification webhooks and real email delivery are scheduled for P11.
+          <strong>Preference-Aware Job Alerts:</strong> Alert subscriptions persist durably and dispatch preference-matched engineering opportunities via the P11 notification delivery service with one-click unsubscribe.
         </span>
       </div>
 

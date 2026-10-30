@@ -1344,6 +1344,20 @@ export class UserRepository {
     });
   }
 
+  async deactivateAlert(alertId: string): Promise<boolean> {
+    const existing = await this.prisma.alertSubscription.findUnique({
+      where: { id: alertId },
+    });
+    if (!existing) {
+      return false;
+    }
+    await this.prisma.alertSubscription.update({
+      where: { id: alertId },
+      data: { active: false },
+    });
+    return true;
+  }
+
   // ─── RECOMMENDATION FEEDBACK ──────────────────────────────────────────
 
   async upsertRecommendationFeedback(

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "sub-cand-01-go",
+    "candidate_id": "usr_kamrul",
+    "email": "kamrul.hasan@example.com",
+    "query": "Go Backend",
+    "location": "Dhaka",
+    "remote_preference": "ANY",
+    "min_salary": 150000,
+    "currency": "BDT",
+    "pay_period": "MONTHLY",
+    "frequency": "IMMEDIATE",
+    "active": true,
+    "email_verified": true
+  },
+  {
+    "id": "sub-cand-02-remote-react",
+    "candidate_id": "usr_sarah",
+    "email": "sarah.dev@example.com",
+    "query": "React TypeScript",
+    "location": "Worldwide",
+    "remote_preference": "FULLY_REMOTE",
+    "min_salary": 80000,
+    "currency": "USD",
+    "pay_period": "YEARLY",
+    "frequency": "IMMEDIATE",
+    "active": true,
+    "email_verified": true
+  },
+  {
+    "id": "sub-cand-03-strict-remote-fail",
+    "candidate_id": "usr_tariq",
+    "email": "tariq.remote@example.com",
+    "query": "DevOps",
+    "location": "Dhaka",
+    "remote_preference": "FULLY_REMOTE",
+    "frequency": "IMMEDIATE",
+    "active": true,
+    "email_verified": true
+  },
+  {
+    "id": "sub-cand-04-paused",
+    "candidate_id": "usr_zara",
+    "email": "zara.paused@example.com",
+    "query": "Go Backend",
+    "location": "Dhaka",
+    "remote_preference": "ANY",
+    "frequency": "IMMEDIATE",
+    "active": false,
+    "email_verified": true
+  },
+  {
+    "id": "sub-cand-05-unverified",
+    "candidate_id": "usr_nabil",
+    "email": "nabil.unverified@example.com",
+    "query": "Backend",
+    "location": "Dhaka",
+    "frequency": "IMMEDIATE",
+    "active": true,
+    "email_verified": false
+  }
+]

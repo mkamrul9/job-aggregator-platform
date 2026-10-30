@@ -1,8 +1,8 @@
 # Node.js Notification Delivery Service (`service-notification`)
 
-An event-driven notification service that broadcasts live job ingestion events to admin dashboards via WebSockets and dispatches email alerts to matching candidates.
+An event-driven notification service that broadcasts live job ingestion events via WebSockets, evaluates preference-matched job opportunities against candidate alert subscriptions, and dispatches email alerts with durable delivery tracking and one-click unsubscribe.
 
-> **Role in Seekers Platform:** Operates as a reactive downstream consumer of the `jobs.new` Kafka stream. Emits real-time Socket.io events consumed by `frontend-admin` and delivers candidate job match emails while exposing Prometheus telemetry.
+> **Role in Seekers Platform:** Operates as a reactive downstream consumer of versioned `job.ingested.v1` and legacy `jobs.new` Kafka streams. Emits real-time sanitized Socket.io events consumed by frontend clients, persists delivery/evaluation records in crash-safe storage, and dispatches candidate job match emails in local `CAPTURE` or integrated `SMTP` modes while exposing Prometheus telemetry.
 
 ---
 
@@ -10,95 +10,114 @@ An event-driven notification service that broadcasts live job ingestion events t
 
 - **Runtime:** Node.js 20.x
 - **Server Framework:** Express 5.x with HTTP Server
-- **Real-Time WebSockets:** Socket.io 4.x (CORS-enabled)
+- **Real-Time WebSockets:** Socket.io 4.x (CORS-enabled, sanitized public job stream & candidate-authenticated private rooms)
 - **Event Streaming:** KafkaJS 2.x (Consumer Group: `email-notification-group`)
-- **Email Delivery:** Nodemailer 9.x
-- **Telemetry & Metrics:** `prom-client` 15.x (Default runtime metrics + custom `job_notifications_sent_total`)
+- **Email Delivery & Capturing:** Nodemailer 9.x with dual modes:
+  - `CAPTURE` (default for local development, CI, testing, and demo — stores full message envelopes with zero external dependencies)
+  - `SMTP` (for real or sandbox SMTP relays when configured)
+- **Security & Integrity:** Cryptographic HMAC-SHA256 purpose-scoped unsubscribe tokens (`RFC 8058` one-click header support) and HTML XSS escaping
+- **Durable Storage:** `DurableNotificationStore` crash-safe atomic JSON store (atomic temp write + rename)
+- **Telemetry & Metrics:** `prom-client` 15.x (`job_notifications_sent_total`, `notification_evaluations_total`, `notification_deliveries_total`)
 
 ---
 
-## 2. Architecture & Interfaces
+## 2. Architecture & Data Ownership
 
 ```
                +--------------------------------------+
-               |  Apache Kafka (topic: jobs.new)      |
+               |  Apache Kafka (job.ingested.v1)      |
                +-------------------+------------------+
                                    |
                                    v
                +--------------------------------------+
                |  service-notification (Node.js :4000)|
-               |  - Kafka Consumer Group              |
-               |  - Socket.io Server                  |
-               |  - Nodemailer Dispatcher             |
-               |  - Prometheus /metrics               |
+               |  - Kafka Consumer & Idempotency Gate |
+               |  - Preference Matcher (P10 aligned)  |
+               |  - Delivery State Machine            |
+               |  - Scoped Durable Store (JSON)       |
+               |  - Token Generator (HMAC-SHA256)     |
+               |  - Prometheus Telemetry              |
                +---------+------------------+---------+
                          |                  |
                          v                  v
                  +---------------+  +------------------+
-                 | frontend-admin|  | SMTP / Candidate |
-                 | (WebSocket)   |  | Mailbox          |
+                 | Socket.io     |  | Local Capture    |
+                 | (Sanitized)   |  | Mailbox / SMTP   |
                  +---------------+  +------------------+
 ```
 
-### Endpoints
+### Data Ownership & Source of Truth
+
+- **Identity & Subscriptions Authority:** `service-user` is authoritative for candidate accounts, saved searches, and alert preferences.
+- **Delivery & Notification Records Authority:** `service-notification` owns its delivery state machine records, event watermarks, suppressions, and captured email logs in its scoped durable store (`data/notifications_store.json`).
+- **Idempotency & Deduplication:** Deliveries are keyed logically by `${subscriptionId}:${jobId}`. Duplicate events are safely acknowledged without duplicate email dispatches.
+
+---
+
+## 3. HTTP Endpoints
 
 | Method | Route | Description |
 |---|---|---|
-| `GET` | `/health` | Service health status |
+| `GET` | `/health` | Health status, mode (`CAPTURE` or `SMTP`), uptime, and store statistics |
 | `GET` | `/metrics` | Prometheus metrics exposition format |
-| `WS` | `/socket.io` | WebSocket server emitting `live-job-feed` |
+| `GET` | `/api/v1/notifications/captured` | Query captured demonstration emails (`limit`, `to` filters) |
+| `GET` | `/api/v1/notifications/captured/:id` | Fetch full headers, plain text, and HTML of a captured email |
+| `DELETE` | `/api/v1/notifications/captured` | Clear captured demonstration mailbox |
+| `GET` | `/api/v1/notifications/unsubscribe` | Safe browser confirmation page for one-click unsubscribe (link prefetch safe) |
+| `POST` | `/api/v1/notifications/unsubscribe` | Verify HMAC token and deactivate subscription + record suppression |
+| `POST` | `/api/v1/notifications/webhooks/provider` | Handle bounce and spam complaint callbacks from email providers |
+| `POST` | `/api/v1/notifications/evaluate` | Directly evaluate a job against active subscriptions |
+| `GET` | `/api/v1/notifications/subscriptions` | List cached candidate alert subscriptions |
+| `POST` | `/api/v1/notifications/subscriptions` | Register or update candidate alert subscription |
+| `GET` | `/api/v1/notifications/suppressions` | List active suppressed email addresses |
+| `WS` | `/socket.io` | WebSocket server emitting sanitized `live-job-feed` |
 
 ---
 
-## 3. Current Capabilities & Baseline Status
+## 4. Preference Matching & Delivery Guarantees
 
-- **Syntax & Parse Check (`node --check index.js`):** `[Verified]` — valid JavaScript syntax.
-- **WebSocket Broadcast (`live-job-feed`):** Emits structured job payloads to connected Socket.io clients.
-- **Prometheus Telemetry:** Exposes process memory, CPU, event loop lag, and custom notification counter on `/metrics`.
-- **Known Limitations:**
-  - Email transport currently uses mock Ethereal test credentials and hardcoded recipient data.
-  - Package test script is a placeholder; meaningful unit/integration tests to be added in Phase P02.
-  - Delivery failures are logged to console without retry backoff or dead-letter queue.
+The notification service aligns with Phase 10 matching semantics:
+1. **Query Matching:** Token-boundary matching (`\bword\b`) across job title, company, description, and skills to prevent substring false matches (e.g. `react` matching `reactor`).
+2. **Strict Remote:** If candidate preference is `FULLY_REMOTE`, hybrid or on-site listings are strictly rejected (`REMOTE_PREFERENCE_MISMATCH`).
+3. **Location Matching:** On-site and hybrid roles must match candidate's designated location. Fully remote jobs satisfy any location requirement.
+4. **Compensation Normalization:** Hourly, weekly, monthly, and yearly salary values are normalized before comparing against subscription thresholds.
+5. **Lifecycle Gate:** Expired, flagged, draft, or inactive listings are excluded at the evaluation boundary.
+6. **Suppression Enforcement:** Unsubscribed addresses, hard bounces, and spam complaints are permanently suppressed.
 
 ---
 
-## 4. Setup & Local Execution
+## 5. Standalone CLI & Event Replay Showcase
 
-### Prerequisites
-
-- Node.js 20.x
-- Apache Kafka (or planned synthetic injector)
-
-### Installation
+The notification service provides an independent demonstration CLI that operates without running Kafka, Next.js, Angular, Python, or the full platform fleet:
 
 ```bash
-cd service-notification
-npm install
-```
+# Replay synthetic jobs against candidate subscriptions in CAPTURE mode
+node cli.js replay
 
-### Configuration
+# Inspect captured demonstration emails
+node cli.js captured
 
-The application reads variables from its process environment; it does not load `.env` automatically. The example only documents the supported Kafka/CORS settings:
-```bash
-cp .env.example .env
-```
-Key configuration settings (see `.env.example`):
-- `KAFKA_BROKER`: Kafka broker address (default: `localhost:9092`)
-- `SOCKET_CORS_ORIGIN`: Allowed origins for WebSocket connections (default: `http://localhost:4200,http://localhost:3003`)
+# View full headers, plain text, and HTML body of a captured email
+node cli.js captured-show <captured-id>
 
-The server port (`4000`), SMTP settings, and recipient are currently hardcoded. `PORT` or `SMTP_*` environment variables do not configure them. Provider configuration and safe local capture delivery must be implemented before testing actual mail workflows.
+# Verify a signed unsubscribe token without mutating state
+node cli.js verify-token <token>
 
-### Running Locally
+# Execute one-click unsubscribe using signed token
+node cli.js unsubscribe <token>
 
-```bash
-node index.js
+# Print store delivery statistics and suppression counts
+node cli.js stats
+
+# Clear captured mailbox
+node cli.js captured-clear
 ```
 
 ---
 
-## 5. Planned Standalone Demonstration (Phase P11)
+## 6. Running Tests
 
-In Phase P11, this notification service will feature an independent demonstration mode:
-- **Synthetic Event Injector:** Command-line tool injecting realistic job match events directly into the processing loop without running Kafka.
-- **Local Mailbox Capture:** Integration with a local capture mailbox (e.g. Mailpit) allowing visual inspection of rich HTML email alerts.
-- **Live WebSocket Test Client:** Minimal diagnostic UI verifying socket connection, payload receipt, and live Prometheus metric increments.
+```bash
+# Run the complete unit, storage, template, crypto, and integration test suite
+npm test
+```

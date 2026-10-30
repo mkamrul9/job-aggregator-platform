@@ -1,0 +1,125 @@
+[
+  {
+    "event_id": "e0010001-0000-4000-8000-000000000001",
+    "event_type": "job.ingested.v1",
+    "schema_version": "1.0.0",
+    "producer": "service-ingestion",
+    "timestamp": "2026-10-30T10:00:00Z",
+    "correlation_id": "c0010001-0000-4000-8000-000000000001",
+    "causation_id": null,
+    "payload": {
+      "id": "0192e1b4-2e90-78a0-80c1-3f124d9c5001",
+      "source": "greenhouse-feed",
+      "source_job_id": "gh-pathao-001",
+      "title": "Senior Backend Engineer (Go / Distributed Systems)",
+      "company": "Pathao Engineering",
+      "location": "Dhaka, Bangladesh",
+      "remote_eligibility": "HYBRID",
+      "workplace_type": "HYBRID",
+      "status": "ACTIVE",
+      "is_expired": false,
+      "role_family": "Backend",
+      "skills": ["Go", "Kafka", "PostgreSQL", "Docker", "Kubernetes"],
+      "salary": {
+        "min": 180000,
+        "max": 250000,
+        "currency": "BDT",
+        "period": "MONTHLY"
+      },
+      "description": "Lead high-throughput backend services using Go, Kafka, and Postgres.",
+      "url": "https://boards.greenhouse.io/pathao/jobs/4829101",
+      "canonical_url": "https://seekers.work/jobs/0192e1b4-2e90-78a0-80c1-3f124d9c5001",
+      "published_at": "2026-10-30T09:30:00Z"
+    }
+  },
+  {
+    "event_id": "e0010001-0000-4000-8000-000000000002",
+    "event_type": "job.ingested.v1",
+    "schema_version": "1.0.0",
+    "producer": "service-ingestion",
+    "timestamp": "2026-10-30T10:05:00Z",
+    "correlation_id": "c0010001-0000-4000-8000-000000000002",
+    "causation_id": null,
+    "payload": {
+      "id": "0192e1b4-2e90-78a0-80c1-3f124d9c5002",
+      "source": "lever-feed",
+      "source_job_id": "lev-chaldal-002",
+      "title": "Lead Frontend Architect (React / TypeScript)",
+      "company": "Chaldal Global",
+      "location": "Worldwide",
+      "remote_eligibility": "FULLY_REMOTE",
+      "workplace_type": "REMOTE",
+      "status": "ACTIVE",
+      "is_expired": false,
+      "role_family": "Frontend",
+      "skills": ["React", "TypeScript", "Next.js", "GraphQL"],
+      "salary": {
+        "min": 90000,
+        "max": 130000,
+        "currency": "USD",
+        "period": "YEARLY"
+      },
+      "description": "Architect accessible, responsive web interfaces with React and TypeScript.",
+      "url": "https://jobs.lever.co/chaldal/lead-frontend-arch",
+      "canonical_url": "https://seekers.work/jobs/0192e1b4-2e90-78a0-80c1-3f124d9c5002",
+      "published_at": "2026-10-30T09:45:00Z"
+    }
+  },
+  {
+    "event_id": "e0010001-0000-4000-8000-000000000003",
+    "event_type": "job.ingested.v1",
+    "schema_version": "1.0.0",
+    "producer": "service-ingestion",
+    "timestamp": "2026-10-30T10:10:00Z",
+    "correlation_id": "c0010001-0000-4000-8000-000000000003",
+    "causation_id": null,
+    "payload": {
+      "id": "0192e1b4-2e90-78a0-80c1-3f124d9c5003",
+      "source": "greenhouse-feed",
+      "source_job_id": "gh-shohoz-003",
+      "title": "Senior DevOps Engineer (AWS & Terraform)",
+      "company": "Shohoz Cloud",
+      "location": "Dhaka, Bangladesh",
+      "remote_eligibility": "ON_SITE",
+      "workplace_type": "ON_SITE",
+      "status": "ACTIVE",
+      "is_expired": false,
+      "role_family": "DevOps",
+      "skills": ["AWS", "Terraform", "Kubernetes", "CI/CD"],
+      "salary": {
+        "min": 160000,
+        "max": 220000,
+        "currency": "BDT",
+        "period": "MONTHLY"
+      },
+      "description": "Maintain high uptime on AWS infrastructure with Terraform and Kubernetes.",
+      "url": "https://boards.greenhouse.io/shohoz/jobs/591029",
+      "canonical_url": "https://seekers.work/jobs/0192e1b4-2e90-78a0-80c1-3f124d9c5003",
+      "published_at": "2026-10-30T09:50:00Z"
+    }
+  },
+  {
+    "event_id": "e0010001-0000-4000-8000-000000000004",
+    "event_type": "job.ingested.v1",
+    "schema_version": "1.0.0",
+    "producer": "service-ingestion",
+    "timestamp": "2026-10-30T10:15:00Z",
+    "correlation_id": "c0010001-0000-4000-8000-000000000004",
+    "causation_id": null,
+    "payload": {
+      "id": "0192e1b4-2e90-78a0-80c1-3f124d9c5004",
+      "source": "ashby-feed",
+      "source_job_id": "ashby-004",
+      "title": "Staff ML Platform Engineer",
+      "company": "NeuralEdge",
+      "location": "Dhaka, Bangladesh",
+      "remote_eligibility": "HYBRID",
+      "status": "EXPIRED",
+      "is_expired": true,
+      "role_family": "Data/ML",
+      "description": "This role is already expired.",
+      "url": "https://jobs.ashbyhq.com/neuraledge/expired",
+      "canonical_url": "https://seekers.work/jobs/0192e1b4-2e90-78a0-80c1-3f124d9c5004"
+    }
+  }
+]

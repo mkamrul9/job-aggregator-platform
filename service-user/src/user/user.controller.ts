@@ -35,6 +35,8 @@ import type {
   TrackApplicationDto,
   UpdateApplicationDto,
   CreateAlertDto,
+  UnsubscribeAlertDto,
+  UnsubscribeAlertResponseDto,
   RecommendationFeedbackDto,
 } from './dto/workspace.dto';
 
@@ -667,6 +669,21 @@ export class UserController {
       throw new BadRequestException('User identification missing from token');
     }
     return this.userService.toggleAlert(uid, id);
+  }
+
+  /**
+   * POST /users/alerts/unsubscribe
+   * Public one-click unsubscribe using signed token (no auth session required).
+   */
+  @Post('alerts/unsubscribe')
+  @HttpCode(200)
+  async unsubscribeAlert(
+    @Body() body: UnsubscribeAlertDto,
+  ): Promise<UnsubscribeAlertResponseDto> {
+    if (!body?.token || typeof body.token !== 'string') {
+      throw new BadRequestException('Unsubscribe token is required');
+    }
+    return this.userService.unsubscribeAlertByToken(body.token);
   }
 
   // ─── P10 RECOMMENDATIONS & FEEDBACK ──────────────────────────────────────

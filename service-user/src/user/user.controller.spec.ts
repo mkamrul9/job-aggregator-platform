@@ -32,6 +32,7 @@ describe('UserController', () => {
     getRecommendations: jest.fn(),
     submitRecommendationFeedback: jest.fn(),
     undoRecommendationFeedback: jest.fn(),
+    unsubscribeAlertByToken: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -289,6 +290,23 @@ describe('UserController', () => {
         'job-123',
       );
       expect(res.success).toBe(true);
+    });
+
+    it('POST /users/alerts/unsubscribe delegates to userService.unsubscribeAlertByToken', async () => {
+      mockUserService.unsubscribeAlertByToken.mockResolvedValue({
+        success: true,
+        message: 'Unsubscribed successfully.',
+      });
+
+      const res = await controller.unsubscribeAlert({ token: 'test-token-xyz' });
+      expect(mockUserService.unsubscribeAlertByToken).toHaveBeenCalledWith('test-token-xyz');
+      expect(res.success).toBe(true);
+    });
+
+    it('POST /users/alerts/unsubscribe rejects missing token', async () => {
+      await expect(controller.unsubscribeAlert({ token: '' })).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

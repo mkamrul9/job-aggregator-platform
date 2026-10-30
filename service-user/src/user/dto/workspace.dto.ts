@@ -115,6 +115,15 @@ export interface CreateAlertDto {
   frequency?: string;
 }
 
+export interface UnsubscribeAlertDto {
+  token: string;
+}
+
+export interface UnsubscribeAlertResponseDto {
+  success: boolean;
+  message: string;
+}
+
 export interface PaginationOptionsDto {
   limit?: number;
   cursor?: string;

@@ -34,6 +34,7 @@ import type {
   CreateReportDto,
   TriageReportDto,
   CreateAlertDto,
+  UnsubscribeAlertResponseDto,
   PaginationOptionsDto,
   RecommendationFeedbackDto,
   RecommendationsResponseDto,
@@ -1425,6 +1426,59 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       frequency: alert.frequency,
       active: alert.active,
       created_at: alert.createdAt.toISOString(),
+    };
+  }
+
+  async unsubscribeAlertByToken(token: string): Promise<UnsubscribeAlertResponseDto> {
+    const secret =
+      process.env.ALERT_UNSUBSCRIBE_SECRET ||
+      process.env.UNSUBSCRIBE_SECRET ||
+      process.env.JWT_SECRET ||
+      'seekers-unsubscribe-secret-p11';
+
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+      throw new BadRequestException('Malformed unsubscribe token');
+    }
+
+    const [payloadB64, signature] = parts;
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(payloadB64)
+      .digest('hex');
+
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expBuf = Buffer.from(expectedSignature, 'hex');
+
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      throw new BadRequestException('Invalid unsubscribe token signature');
+    }
+
+    let payload: { sub?: string; cand?: string; email?: string; exp?: number; purpose?: string };
+    try {
+      let base64 = payloadB64.replace(/-/g, '+').replace(/_/g, '/');
+      while (base64.length % 4 !== 0) {
+        base64 += '=';
+      }
+      payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+    } catch {
+      throw new BadRequestException('Invalid unsubscribe token payload');
+    }
+
+    if (!payload?.sub || payload.purpose !== 'job_alert_unsubscribe') {
+      throw new BadRequestException('Invalid token purpose');
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp === 'number' && nowSec > payload.exp) {
+      throw new BadRequestException('Unsubscribe token has expired');
+    }
+
+    await this.userRepository.deactivateAlert(payload.sub);
+
+    return {
+      success: true,
+      message: 'Unsubscribed successfully.',
     };
   }
 

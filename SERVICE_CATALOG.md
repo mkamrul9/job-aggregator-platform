@@ -30,7 +30,7 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 | `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
 | `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 | ESLint passes (0 errors); tsc & Jest pass (59/59 across 7 suites); P09 candidate workspace, optimistic locking, saved searches, support triage verified |
 | `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
-| `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | Safe jsonTransport default; 5 unit tests pass; Socket.io & metric counter verified |
+| `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | 25 unit/crypto/matcher/storage/integration tests pass; Durable JSON store, preference matching, CAPTURE mailbox, HMAC-SHA256 unsubscribe verified |
 | `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype verified |
 
 ---
@@ -291,30 +291,25 @@ All platform services interact through versioned machine-readable contracts loca
 ### 3.6 `service-notification` — Node.js Notification Delivery Service
 
 - **Purpose & Role:** Evaluates candidate alert preferences against newly ingested jobs, renders accessible branded notification templates, manages unsubscribe/suppression lists, and coordinates email and WebSocket alert delivery.
-- **Primary Technology:** Node.js 22 LTS, Express 5.x, Socket.io 4.8, KafkaJS 2.x, Nodemailer 6.x, Prometheus Client (`prom-client`).
-- **Data Ownership:** Notification delivery logs, candidate alert preferences cache, and suppression/unsubscribe tokens. Emits `alert.dispatched.v1`.
+- **Primary Technology:** Node.js 22 LTS, Express 5.x, Socket.io 4.8, KafkaJS 2.x, Nodemailer 9.x, Prometheus Client (`prom-client`).
+- **Data Ownership:** Notification delivery logs, candidate alert preferences cache, suppression records, and captured message envelopes in crash-safe atomic store (`data/notifications_store.json`). Emits `alert.dispatched.v1`.
 - **Entry Points & Interfaces:**
   - Kafka Consumer: Topic `job.ingested.v1` (legacy: `jobs.new`)
   - WebSocket Server: Port `4000` (serves `live-job-feed` through Gateway `/socket.io/`)
   - Metrics: `GET /metrics` on port `4000` (scraped by Prometheus)
+  - REST API: `/api/v1/notifications/*` (captured emails, unsubscribe flow, provider webhooks, evaluations)
+  - Standalone Showcase CLI: `service-notification/cli.js` (`replay`, `captured`, `captured-show`, `unsubscribe`, `stats`)
 - **Dependency Manifests & Lockfiles:**
   - Manifest: `service-notification/package.json`
   - Lockfile: `service-notification/package-lock.json`
 - **Commands & Verification:**
-  - Test: `npm test` — `[Verified]` (5 real unit tests pass covering Express app, Socket.io server, metrics counter, and jsonTransport)
-  - Local Dev: `node index.js` — `[Observed-but-unverified]`
+  - Test: `npm test` — `[Verified]` (25 tests pass covering unit endpoints, crypto tokens, preference matcher, HTML/text templates, durable storage, and full integration flow)
+  - Local Dev / Standalone Replay: `node cli.js replay` — `[Verified]`
+  - CLI Mailbox Inspection: `node cli.js captured` — `[Verified]`
 - **Required Infrastructure:**
-  - Standalone mode: Zero external infrastructure (uses jsonTransport and synthetic event replay).
-  - Integrated mode: Kafka broker, Redis/Postgres for delivery logs, SMTP provider.
-- **Current Verification Status:** Safe `jsonTransport` default prevents accidental email delivery; 5 unit tests pass cleanly; Prometheus metrics scrape target active; Docker image builds cleanly.
-- **Standalone-Readiness Gaps (to complete in P11):**
-  - Implement Mailpit/local sandbox mail capture UI for viewing rendered HTML alert emails.
-  - Implement preference matching logic (matching candidate saved searches with job skills/locations).
-  - Implement one-click signed unsubscribe token verification endpoint.
-- **Planned Standalone Demonstration (P11):**
-  - Synthetic event injection script demonstrating preference matching and alert dispatch.
-  - Local Mailpit capture inbox displaying responsive HTML email templates with authentic Bangladesh tech job listings.
-  - Real-time Socket.io feed displaying live alert metrics.
+  - Standalone mode: Zero external infrastructure (`CAPTURE` mode with in-memory/file storage).
+  - Integrated mode: Kafka broker, SMTP provider or Mailpit sandbox.
+- **Current Verification Status:** `[Verified]` — 25 tests pass cleanly across 8 suites; zero external network dependencies in `CAPTURE` mode; tamper-resistant HMAC-SHA256 unsubscribe tokens; full XSS escaping in templates; contract-conformant `alert.dispatched.v1` events.
 - **Intended Deployment Boundary:**
   - Container: `service-notification/Dockerfile`
   - Ports: `4000` (internal / host)
