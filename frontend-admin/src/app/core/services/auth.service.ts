@@ -130,6 +130,49 @@ export class AuthService {
     }
   }
 
+  async verifyAndLoginLive(token: string): Promise<OperatorUser> {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error('Please provide an administrative bearer token or service key.');
+    }
+
+    try {
+      const res = await fetch('/api/v1/admin/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${trimmed}`,
+          'x-admin-key': trimmed
+        }
+      });
+
+      if (!res.ok) {
+        let errMsg = 'Invalid or unrecognized credentials.';
+        try {
+          const body = await res.json();
+          if (body?.message) errMsg = body.message;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const verified = await res.json();
+      const user: OperatorUser = {
+        id: verified.id || `live_${Date.now()}`,
+        email: verified.email || 'operator@seekers.internal',
+        name: verified.name || 'Verified Operator',
+        role: (verified.role as OperatorRole) || 'ADMIN',
+        token: trimmed
+      };
+
+      try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+      } catch {}
+      this.userSubject.next(user);
+      this.setMode('live');
+      return user;
+    } catch (err: any) {
+      throw new Error(err.message || 'Authentication failed: unable to verify credentials with server.');
+    }
+  }
+
   loginLive(email: string, token: string, role: OperatorRole = 'ADMIN'): void {
     let effectiveRole = role;
     let uid = `live_${Date.now()}`;

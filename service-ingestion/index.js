@@ -38,7 +38,9 @@ function createIngestionApp(
   deadLettersCollection = null,
   auditCollection = null,
   sourcesCollection = null,
-  crawlRunsCollection = null
+  crawlRunsCollection = null,
+  stateDir = null,
+  crawlDispatcher = null
 ) {
   const app = express();
   app.use(cors({ origin: ALLOWED_ORIGINS }));
@@ -61,7 +63,9 @@ function createIngestionApp(
     esClient,
     auditCollection,
     sourcesCollection,
-    crawlRunsCollection
+    crawlRunsCollection,
+    stateDir,
+    crawlDispatcher
   });
   app.use('/api/v1/admin/ingestion', adminRouter);
   app.use('/api/v1/admin', adminRouter);

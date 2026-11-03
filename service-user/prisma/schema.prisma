@@ -73,6 +73,8 @@ model AccountDeletionRequest {
   idempotencyKey String?
   reason         String?
   executedAt     DateTime?
+  leaseExpiresAt DateTime?
+  attemptCount   Int       @default(0)
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, idempotencyKey])
@@ -82,14 +84,26 @@ model AccountDeletionRequest {
 model AccountExportRequest {
   id          String    @id @default(uuid())
   userId      String
-  status      String    @default("READY") // PENDING, READY, FAILED
+  status      String    @default("PENDING") // PENDING, PROCESSING, READY, FAILED
   format      String    @default("JSON")
   requestedAt DateTime  @default(now())
   completedAt DateTime?
   archiveUrl  String?
+  sizeBytes   Int?
+  checksum    String?
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
+}
+
+model DurableErasureRecord {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  erasedAt   DateTime @default(now())
+  reason     String?
+  purgedKeys String[] @default([])
+
+  @@index([userId])
 }
 
 model ResumeDocument {

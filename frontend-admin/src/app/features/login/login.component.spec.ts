@@ -61,6 +61,38 @@ describe('LoginComponent', () => {
     expect(component.errorMessage).toContain('Please provide an administrative bearer token');
   });
 
+  it('navigates to /overview on successful verified live login', async () => {
+    spyOn(router, 'navigate');
+    spyOn(authService, 'verifyAndLoginLive').and.resolveTo({
+      id: 'usr_verified_1',
+      email: 'admin@seekers.internal',
+      name: 'Admin',
+      role: 'ADMIN',
+      token: 'valid.token.sig'
+    });
+
+    component.setMode('live');
+    component.liveToken = 'valid.token.sig';
+    await component.onLoginLive();
+
+    expect(authService.verifyAndLoginLive).toHaveBeenCalledWith('valid.token.sig');
+    expect(router.navigate).toHaveBeenCalledWith(['/overview']);
+    expect(component.errorMessage).toBe('');
+  });
+
+  it('displays error and does not navigate when live verification fails', async () => {
+    spyOn(router, 'navigate');
+    spyOn(authService, 'verifyAndLoginLive').and.rejectWith(new Error('Cryptographic signature verification failed'));
+
+    component.setMode('live');
+    component.liveToken = 'tampered.token.sig';
+    await component.onLoginLive();
+
+    expect(authService.verifyAndLoginLive).toHaveBeenCalledWith('tampered.token.sig');
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(component.errorMessage).toContain('Cryptographic signature verification failed');
+  });
+
   afterEach(() => {
     localStorage.clear();
   });

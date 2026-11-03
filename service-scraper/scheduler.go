@@ -157,6 +157,11 @@ func (s *FileSchedulerStore) ClaimLease(sourceID string, workerID string, durati
 		_ = json.Unmarshal(data, cp)
 	}
 
+	// A paused source connector must not be claimed for scheduled crawl runs
+	if cp.Status == "PAUSED" {
+		return nil, false, nil
+	}
+
 	now := time.Now().UTC()
 	// Check if existing lease is still valid and owned by someone else
 	if cp.WorkerID != "" && cp.WorkerID != workerID && cp.LeaseUntil.After(now) {
@@ -348,6 +353,11 @@ func (m *MemorySchedulerStore) ClaimLease(sourceID string, workerID string, dura
 	if !exists {
 		cp = &Checkpoint{SourceID: sourceID, Status: "IDLE"}
 		m.checkpoints[sourceID] = cp
+	}
+
+	// A paused source connector must not be claimed for scheduled crawl runs
+	if cp.Status == "PAUSED" {
+		return nil, false, nil
 	}
 
 	now := time.Now().UTC()

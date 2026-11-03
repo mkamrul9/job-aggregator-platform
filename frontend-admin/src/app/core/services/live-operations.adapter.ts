@@ -138,11 +138,11 @@ export class LiveOperationsAdapter implements OperationsAdapter {
   getTelemetry(): Observable<PipelineTelemetry> {
     return this.http.get<any>('/api/v1/admin/ingestion/status', { headers: this.getAuthHeaders() }).pipe(
       map(res => ({
-        activeConnectors: res?.activeConnectors ?? 2,
-        totalConnectors: res?.totalConnectors ?? 7,
-        throughputHourly: res?.throughputHourly ?? 120,
-        avgLatencyMs: res?.avgLatencyMs ?? 18,
-        kafkaLagMs: res?.kafkaLagMs ?? 14,
+        activeConnectors: res?.activeConnectors ?? 0,
+        totalConnectors: res?.totalConnectors ?? 0,
+        throughputHourly: res?.throughputHourly ?? 0,
+        avgLatencyMs: res?.avgLatencyMs ?? 0,
+        kafkaLagMs: res?.kafkaLagMs ?? 0,
         dlqCount: res?.deadLetters ?? 0,
         lastUpdated: new Date().toLocaleTimeString()
       })),

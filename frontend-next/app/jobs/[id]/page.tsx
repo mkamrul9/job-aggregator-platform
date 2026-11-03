@@ -72,7 +72,7 @@ export default async function JobDetailPage(
 
   if (result.kind === 'service_unavailable') {
     return (
-      <main style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '4rem 1rem' }}>
+      <main id="main-content" tabIndex={-1} style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '4rem 1rem' }}>
         <div
           style={{
             maxWidth: '600px',
@@ -173,7 +173,7 @@ export default async function JobDetailPage(
   }[job.remote_eligibility];
 
   return (
-    <main style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '2rem 1rem' }}>
+    <main id="main-content" tabIndex={-1} style={{ minHeight: '100vh', backgroundColor: 'var(--seekers-bg-base)', padding: '2rem 1rem' }}>
       {jsonLd && (
         <script
           type="application/ld+json"

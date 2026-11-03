@@ -3,6 +3,9 @@ import {
   BadRequestException,
   NotFoundException,
   PayloadTooLargeException,
+  ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
@@ -12,6 +15,7 @@ import { RemoteEligibility, Role } from '@prisma/client';
 
 describe('P13 Production Qualification: Security, Privacy & Accessibility', () => {
   let service: UserService;
+  let repository: UserRepository;
 
   const candidateAId = 'usr_candidate_alpha';
   const candidateBId = 'usr_candidate_beta';
@@ -99,6 +103,11 @@ describe('P13 Production Qualification: Security, Privacy & Accessibility', () =
     }).compile();
 
     service = module.get<UserService>(UserService);
+    repository = module.get<UserRepository>(UserRepository);
+  });
+
+  afterEach(() => {
+    service.onModuleDestroy();
   });
 
   describe('1. Privacy: Account Deletion Lifecycle & Controllable Purge', () => {
@@ -315,6 +324,67 @@ describe('P13 Production Qualification: Security, Privacy & Accessibility', () =
       expect(() => realStorage.validatePdfBuffer(oversized)).toThrow(
         PayloadTooLargeException,
       );
+    });
+
+    it('rejects cancellation with 409 Conflict when deletion is actively PROCESSING', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(mockCandidateA);
+      mockPrisma.accountDeletionRequest.findFirst.mockResolvedValue({
+        id: 'del_in_flight',
+        userId: candidateAId,
+        status: 'PROCESSING',
+      });
+
+      await expect(service.cancelAccountDeletion(candidateAId)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('prevents stale identity sync from resurrecting a permanently erased account', async () => {
+      mockPrisma.durableErasureRecord = {
+        findUnique: jest.fn().mockResolvedValue({
+          userId: candidateAId,
+          erasedAt: new Date(),
+        }),
+        upsert: jest.fn(),
+      };
+
+      await expect(
+        repository.upsertUser(candidateAId, 'alpha@seekers.internal', true),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('marks export FAILED and throws 500 if storage persistence fails', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(mockCandidateA);
+      mockPrisma.accountExportRequest.create.mockResolvedValue({
+        id: 'exp_fail_01',
+        userId: candidateAId,
+        status: 'PENDING',
+      });
+      mockPrisma.accountExportRequest.update = jest.fn().mockResolvedValue({});
+      mockStorage.putObject.mockRejectedValueOnce(
+        new Error('Storage disk write error'),
+      );
+
+      await expect(service.requestAccountExport(candidateAId)).rejects.toThrow(
+        InternalServerErrorException,
+      );
+      expect(mockPrisma.accountExportRequest.update).toHaveBeenCalledWith({
+        where: { id: 'exp_fail_01' },
+        data: { status: 'FAILED' },
+      });
+    });
+
+    it('throws 404 without regenerating snapshot if requested export archive is missing from storage', async () => {
+      mockPrisma.accountExportRequest.findFirst.mockResolvedValue({
+        id: 'exp_ready_01',
+        userId: candidateAId,
+        status: 'READY',
+      });
+      mockStorage.getObject.mockResolvedValue(null);
+
+      await expect(
+        service.downloadExportArchive(candidateAId, 'exp_ready_01'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

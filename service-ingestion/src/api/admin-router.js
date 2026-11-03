@@ -19,7 +19,8 @@ function createAdminRouter({
   auditCollection = null,
   sourcesCollection = null,
   crawlRunsCollection = null,
-  stateDir = null
+  stateDir = null,
+  crawlDispatcher = null
 } = {}) {
   const router = express.Router();
 
@@ -61,13 +62,54 @@ function createAdminRouter({
       return { error: 'UNAUTHORIZED_ACCESS', status: 401, message: 'Valid administrator or operator credentials required.' };
     }
 
-    // 3. Inspect Token (Firebase ID Token or Scoped Admin/Operator JWT)
-    // Check if token has base64 JSON payload
-    try {
-      const parts = token.split('.');
-      if (parts.length === 3) {
+    // 3. Inspect Token (Cryptographically verified HS256 JWT)
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      try {
+        const headerStr = Buffer.from(parts[0], 'base64url').toString('utf8');
+        const header = JSON.parse(headerStr);
+        if (header.alg !== 'HS256') {
+          return { error: 'UNSUPPORTED_ALGORITHM', status: 401, message: 'Only cryptographically signed HS256 tokens are accepted.' };
+        }
+
+        // Cryptographic HMAC-SHA256 signature verification
+        const expectedSig = crypto
+          .createHmac('sha256', expectedKey)
+          .update(`${parts[0]}.${parts[1]}`)
+          .digest('base64url');
+
+        const sigBuf = Buffer.from(parts[2], 'utf8');
+        const expSigBuf = Buffer.from(expectedSig, 'utf8');
+        if (sigBuf.length !== expSigBuf.length || !crypto.timingSafeEqual(sigBuf, expSigBuf)) {
+          return { error: 'INVALID_TOKEN_SIGNATURE', status: 401, message: 'Cryptographic token signature verification failed.' };
+        }
+
         const payloadStr = Buffer.from(parts[1], 'base64url').toString('utf8');
         const payload = JSON.parse(payloadStr);
+
+        // Mandatory expiration verification
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (typeof payload.exp !== 'number' || payload.exp <= nowSec) {
+          return { error: 'TOKEN_EXPIRED', status: 401, message: 'Bearer token has expired.' };
+        }
+
+        // Issuer verification
+        const trustedIssuers = ['seekers-auth', 'seekers-identity', 'seekers-platform'];
+        if (process.env.JWT_ISSUER) trustedIssuers.push(process.env.JWT_ISSUER);
+        if (payload.iss && !trustedIssuers.includes(payload.iss)) {
+          return { error: 'UNTRUSTED_ISSUER', status: 401, message: 'Token issuer is untrusted.' };
+        }
+
+        // Audience verification
+        const trustedAudiences = ['seekers-admin', 'seekers-api', 'seekers-platform'];
+        if (process.env.JWT_AUDIENCE) trustedAudiences.push(process.env.JWT_AUDIENCE);
+        if (payload.aud && !trustedAudiences.includes(payload.aud)) {
+          return { error: 'INVALID_AUDIENCE', status: 401, message: 'Token audience is invalid.' };
+        }
+
+        if (payload.role === 'CANDIDATE') {
+          return { error: 'FORBIDDEN_CANDIDATE', status: 403, message: 'Candidate accounts cannot access administrative operations.' };
+        }
 
         let role = 'READ_ONLY';
         if (payload.admin === true || payload.role === 'ADMIN') {
@@ -76,8 +118,8 @@ function createAdminRouter({
           role = 'OPERATOR';
         } else if (payload.role === 'READ_ONLY') {
           role = 'READ_ONLY';
-        } else if (payload.role === 'CANDIDATE') {
-          return { error: 'FORBIDDEN_CANDIDATE', status: 403, message: 'Candidate accounts cannot access administrative operations.' };
+        } else {
+          return { error: 'INSUFFICIENT_ROLE_PERMISSIONS', status: 403, message: 'Unrecognized role in token.' };
         }
 
         return {
@@ -88,39 +130,24 @@ function createAdminRouter({
             role
           }
         };
+      } catch (err) {
+        return { error: 'MALFORMED_TOKEN', status: 401, message: `Malformed token: ${err.message}` };
       }
-    } catch {}
+    }
 
-    // 4. Token matches configured admin key or recognized development role token
-    if (token === expectedKey || token === 'admin_secret_token') {
+    // 4. In production mode, strictly reject hardcoded tokens or plain keys
+    if (isProduction) {
+      return { error: 'UNAUTHORIZED_ACCESS', status: 401, message: 'Valid cryptographically signed JWT required in production.' };
+    }
+
+    // 5. In non-production testing, allow matching expectedKey or legacy test tokens
+    if (token === expectedKey) {
       return {
         user: {
           id: 'usr_admin_root',
           email: 'admin@seekers.internal',
           name: 'Principal Platform Admin',
           role: 'ADMIN'
-        }
-      };
-    }
-
-    if (token === 'operator_secret_token') {
-      return {
-        user: {
-          id: 'usr_operator_ops',
-          email: 'operator@seekers.internal',
-          name: 'Duty Triage Operator',
-          role: 'OPERATOR'
-        }
-      };
-    }
-
-    if (token === 'readonly_secret_token') {
-      return {
-        user: {
-          id: 'usr_auditor_read',
-          email: 'auditor@seekers.internal',
-          name: 'Compliance Auditor',
-          role: 'READ_ONLY'
         }
       };
     }
@@ -234,9 +261,9 @@ function createAdminRouter({
         esCount,
         activeConnectors,
         totalConnectors: sources.length,
-        throughputHourly: Math.max(hourlyThroughput, activeConnectors > 0 ? 120 : 0),
-        avgLatencyMs: 18,
-        kafkaLagMs: 14,
+        throughputHourly: hourlyThroughput,
+        avgLatencyMs: null,
+        kafkaLagMs: deadLetters * 2,
         serverTime: new Date().toISOString()
       });
     } catch (err) {
@@ -261,7 +288,7 @@ function createAdminRouter({
   // -------------------------------------------------------------
   router.put('/sources/:id/pause', requireRoles(['ADMIN']), async (req, res) => {
     try {
-      const updated = await updateSourceStatus(req.params.id, 'PAUSED', { sourcesCollection });
+      const updated = await updateSourceStatus(req.params.id, 'PAUSED', { sourcesCollection, stateDir });
       await recordAudit(
         req.user,
         'SOURCE_PAUSED',
@@ -283,7 +310,7 @@ function createAdminRouter({
   // -------------------------------------------------------------
   router.put('/sources/:id/resume', requireRoles(['ADMIN']), async (req, res) => {
     try {
-      const updated = await updateSourceStatus(req.params.id, 'HEALTHY', { sourcesCollection });
+      const updated = await updateSourceStatus(req.params.id, 'HEALTHY', { sourcesCollection, stateDir });
       await recordAudit(
         req.user,
         'SOURCE_RESUMED',
@@ -305,7 +332,7 @@ function createAdminRouter({
     const { status } = req.body || {};
     const targetStatus = status === 'PAUSED' ? 'PAUSED' : 'HEALTHY';
     try {
-      const updated = await updateSourceStatus(req.params.id, targetStatus, { sourcesCollection });
+      const updated = await updateSourceStatus(req.params.id, targetStatus, { sourcesCollection, stateDir });
       await recordAudit(
         req.user,
         `SOURCE_${targetStatus}`,
@@ -346,11 +373,30 @@ function createAdminRouter({
         sourceName: source.name,
         trigger: 'MANUAL',
         startedAt: new Date().toISOString(),
-        durationMs: 420,
-        itemsCollected: 5,
+        durationMs: 0,
+        itemsCollected: 0,
         itemsRejected: 0,
-        status: 'SUCCESS'
+        status: 'PENDING'
       };
+
+      const startTime = Date.now();
+      if (typeof crawlDispatcher === 'function') {
+        try {
+          const outcome = await crawlDispatcher(source);
+          crawlRun.durationMs = outcome.durationMs ?? (Date.now() - startTime);
+          crawlRun.itemsCollected = outcome.itemsCollected ?? 0;
+          crawlRun.itemsRejected = outcome.itemsRejected ?? 0;
+          crawlRun.status = outcome.status ?? 'SUCCESS';
+        } catch (dispatchErr) {
+          crawlRun.durationMs = Date.now() - startTime;
+          crawlRun.status = 'FAILED';
+          crawlRun.error = dispatchErr.message;
+        }
+      } else {
+        crawlRun.durationMs = Date.now() - startTime;
+        crawlRun.status = 'FAILED';
+        crawlRun.error = 'Live collector dispatch channel unavailable or collector process not configured.';
+      }
 
       if (crawlRunsCollection) {
         await crawlRunsCollection.insertOne(crawlRun);
@@ -361,13 +407,14 @@ function createAdminRouter({
         'CRAWL_RUN_TRIGGERED',
         'CONNECTOR',
         id,
-        'SUCCESS',
-        `Triggered manual crawl on source ${source.name} (ID: ${id})`,
+        crawlRun.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+        `Triggered manual crawl on source ${source.name} (ID: ${id}) - Outcome: ${crawlRun.status}`,
         null,
         crawlRun
       );
 
-      return res.status(200).json(crawlRun);
+      const httpStatus = crawlRun.status === 'SUCCESS' ? 200 : 502;
+      return res.status(httpStatus).json(crawlRun);
     } catch (err) {
       return res.status(500).json({ error: 'CRAWL_TRIGGER_FAILED', message: err.message });
     }
@@ -404,7 +451,7 @@ function createAdminRouter({
       const metrics = {
         topic: 'job.collected.v1',
         partitionCount: 3,
-        totalLag: deadLetters > 0 ? deadLetters * 2 : 14,
+        totalLag: deadLetters > 0 ? deadLetters * 2 : 0,
         consumerGroup: 'ingestion-group-v1',
         consumerStatus: failedProjection > 0 ? 'DEGRADED' : 'RUNNING',
         projectionOutbox: {

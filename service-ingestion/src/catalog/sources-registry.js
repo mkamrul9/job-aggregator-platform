@@ -25,9 +25,9 @@ const CANONICAL_SOURCES = [
     enabled: true,
     type: 'json_api',
     baseUrl: 'https://boards-api.greenhouse.io/v1/boards',
-    jobsCollected: 1420,
-    lastRunAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    lastSuccessAt: new Date(Date.now() - 1000 * 60 * 18).toISOString()
+    jobsCollected: 0,
+    lastRunAt: null,
+    lastSuccessAt: null
   },
   {
     id: 'lever-feed',
@@ -46,9 +46,9 @@ const CANONICAL_SOURCES = [
     enabled: true,
     type: 'json_api',
     baseUrl: 'https://api.lever.co/v0/postings',
-    jobsCollected: 980,
-    lastRunAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
-    lastSuccessAt: new Date(Date.now() - 1000 * 60 * 35).toISOString()
+    jobsCollected: 0,
+    lastRunAt: null,
+    lastSuccessAt: null
   },
   {
     id: 'bdjobs-tech',
@@ -153,9 +153,9 @@ const CANONICAL_SOURCES = [
     status: 'HEALTHY',
     enabled: true,
     type: 'fixture',
-    jobsCollected: 24,
-    lastRunAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-    lastSuccessAt: new Date(Date.now() - 1000 * 60 * 5).toISOString()
+    jobsCollected: 0,
+    lastRunAt: null,
+    lastSuccessAt: null
   }
 ];
 
@@ -204,7 +204,7 @@ async function getRegisteredSources(sourcesCollection = null, stateDir = null) {
 /**
  * Updates source state (PAUSE / RESUME)
  */
-async function updateSourceStatus(id, newStatus, { sourcesCollection = null } = {}) {
+async function updateSourceStatus(id, newStatus, { sourcesCollection = null, stateDir = null } = {}) {
   const canonical = CANONICAL_SOURCES.find(s => s.id === id);
   if (!canonical) {
     throw new Error(`Source '${id}' is not registered`);
@@ -227,6 +227,26 @@ async function updateSourceStatus(id, newStatus, { sourcesCollection = null } = 
       { $set: updatedFields },
       { upsert: true }
     );
+  }
+
+  // Durably write status to Go scheduler checkpoint so crawler respects pause/resume
+  const stateBase = stateDir || process.env.STATE_DIR || './data/state';
+  try {
+    if (!fs.existsSync(stateBase)) {
+      fs.mkdirSync(stateBase, { recursive: true });
+    }
+    const cpPath = path.join(stateBase, `${id}.checkpoint.json`);
+    let cp = { source_id: id, status: newStatus === 'PAUSED' ? 'PAUSED' : 'IDLE', fence_token: 0 };
+    if (fs.existsSync(cpPath)) {
+      try {
+        cp = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
+      } catch {}
+    }
+    cp.status = newStatus === 'PAUSED' ? 'PAUSED' : (cp.status === 'PAUSED' ? 'IDLE' : cp.status);
+    cp.last_run_at = cp.last_run_at || new Date().toISOString();
+    fs.writeFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
+  } catch (err) {
+    console.warn(`Could not sync scheduler checkpoint for ${id}:`, err.message);
   }
 
   return { ...canonical, ...updatedFields };

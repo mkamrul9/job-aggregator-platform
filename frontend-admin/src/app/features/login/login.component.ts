@@ -44,12 +44,17 @@ export class LoginComponent implements OnInit {
     this.router.navigate(['/overview']);
   }
 
-  onLoginLive(): void {
+  async onLoginLive(): Promise<void> {
     if (!this.liveToken.trim()) {
       this.errorMessage = 'Please provide an administrative bearer token or service key.';
       return;
     }
-    this.authService.loginLive(this.liveEmail, this.liveToken.trim());
-    this.router.navigate(['/overview']);
+    this.errorMessage = '';
+    try {
+      await this.authService.verifyAndLoginLive(this.liveToken.trim());
+      this.router.navigate(['/overview']);
+    } catch (err: any) {
+      this.errorMessage = err.message || 'Authentication failed: invalid operator credentials.';
+    }
   }
 }

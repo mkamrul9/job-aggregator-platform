@@ -8,6 +8,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   ServiceUnavailableException,
+  InternalServerErrorException,
   Logger,
   OnModuleInit,
   OnModuleDestroy,
@@ -267,6 +268,39 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         reason: f.reason,
         created_at: f.createdAt.toISOString(),
       })),
+      resumes: (comprehensive.resumes || []).map((r) => ({
+        id: r.id,
+        file_name: r.fileName,
+        file_size_bytes: r.fileSizeBytes,
+        mime_type: r.mimeType,
+        status: r.status,
+        is_active: r.isActive,
+        created_at:
+          r.createdAt instanceof Date
+            ? r.createdAt.toISOString()
+            : r.createdAt
+              ? new Date(r.createdAt).toISOString()
+              : new Date().toISOString(),
+        parse_results: (r.parseResults || []).map((p) => ({
+          id: p.id,
+          status: p.status,
+          extracted_skills: p.extractedSkills,
+          reviewed_skills: p.reviewedSkills,
+          reviewed_at:
+            p.reviewedAt instanceof Date
+              ? p.reviewedAt.toISOString()
+              : p.reviewedAt
+                ? new Date(p.reviewedAt).toISOString()
+                : null,
+          processing_time_ms: p.processingTimeMs,
+          created_at:
+            p.createdAt instanceof Date
+              ? p.createdAt.toISOString()
+              : p.createdAt
+                ? new Date(p.createdAt).toISOString()
+                : new Date().toISOString(),
+        })),
+      })),
     };
 
     try {
@@ -274,20 +308,34 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         JSON.stringify(exportResult, null, 2),
         'utf-8',
       );
+      if (buffer.length > 25 * 1024 * 1024) {
+        throw new Error('Export exceeds maximum allowed archive size of 25MB');
+      }
       await this.storageService.putObject(
         `exports/${userId}/export-${exportRecord.id}.json`,
         buffer,
         { skipPdfCheck: true },
       );
+      const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
       await this.userRepository.updateExportRequest(exportRecord.id, {
         archiveUrl,
         completedAt: new Date(),
         status: 'READY',
+        sizeBytes: buffer.length,
+        checksum,
       });
-    } catch (storageErr) {
-      this.logger.warn(
-        `Could not persist export archive to storage: ${storageErr}`,
+      exportResult.status = 'READY';
+    } catch (storageErr: any) {
+      this.logger.error(
+        `Could not persist export archive to storage: ${storageErr?.message || storageErr}`,
       );
+      await this.userRepository.updateExportRequest(exportRecord.id, {
+        status: 'FAILED',
+      });
+      throw new InternalServerErrorException({
+        code: 'EXPORT_STORAGE_FAILED',
+        message: 'Could not persist export archive to storage.',
+      });
     }
 
     return exportResult;
@@ -312,11 +360,20 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
+    if (exportRecord.status !== 'READY') {
+      throw new BadRequestException({
+        code: 'EXPORT_NOT_READY',
+        message: `Export archive is not ready for download (status: ${exportRecord.status}).`,
+      });
+    }
+
     const key = `exports/${userId}/export-${exportId}.json`;
-    let buffer = await this.storageService.getObject(key);
+    const buffer = await this.storageService.getObject(key);
     if (!buffer) {
-      const comprehensive = await this.exportUserData(userId);
-      buffer = Buffer.from(JSON.stringify(comprehensive, null, 2), 'utf-8');
+      throw new NotFoundException({
+        code: 'ARCHIVE_FILE_NOT_FOUND',
+        message: `Export archive file is missing from storage. Please request a fresh export.`,
+      });
     }
 
     return {
@@ -366,16 +423,27 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       if (!claimed) continue;
 
       try {
-        const { userId, resumeStorageKeys } =
-          await this.userRepository.purgeAccount(req.userId);
+        // 1. Get all private storage keys (resumes and export archives)
+        const storageKeys =
+          typeof this.userRepository.getStorageKeysForPurge === 'function'
+            ? await this.userRepository.getStorageKeysForPurge(req.userId)
+            : [];
 
-        for (const storageKey of resumeStorageKeys) {
-          try {
+        // 2. Delete private objects from storage FIRST
+        for (const storageKey of storageKeys) {
+          await this.storageService.deleteObject(storageKey);
+        }
+
+        // 3. Atomically anonymize support reports, record durable erasure, and delete user row
+        const purgeResult =
+          await this.userRepository.purgeAccount(req.userId);
+        const userId = purgeResult?.userId || req.userId;
+        const fallbackKeys = purgeResult?.resumeStorageKeys || [];
+
+        // If getStorageKeysForPurge wasn't used but purgeAccount returned keys
+        if (storageKeys.length === 0 && fallbackKeys.length > 0) {
+          for (const storageKey of fallbackKeys) {
             await this.storageService.deleteObject(storageKey);
-          } catch (storageErr) {
-            this.logger.warn(
-              `Failed to delete resume object ${storageKey} during purge: ${storageErr}`,
-            );
           }
         }
 

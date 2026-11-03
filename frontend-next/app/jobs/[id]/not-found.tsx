@@ -4,6 +4,8 @@ import Link from 'next/link';
 export default function JobNotFound() {
   return (
     <main
+      id="main-content"
+      tabIndex={-1}
       style={{
         minHeight: '100vh',
         backgroundColor: 'var(--seekers-bg-base)',

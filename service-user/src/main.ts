@@ -11,9 +11,31 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS for frontend clients
+  // Strict origin whitelist for CORS (prevent reflection of arbitrary origins)
+  const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : [];
+
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+    'http://localhost:3003',
+    'http://127.0.0.1:3003',
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    ...configuredOrigins,
+  ];
+
   app.enableCors({
-    origin: true,
+    origin: (requestOrigin, callback) => {
+      if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS origin '${requestOrigin}' not allowed by Seekers Security Policy.`));
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',

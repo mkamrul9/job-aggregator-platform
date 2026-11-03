@@ -3,6 +3,7 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   User,
@@ -18,6 +19,7 @@ import {
   ApplicationHistory,
   SupportReport,
   AlertSubscription,
+  DurableErasureRecord,
 } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -28,11 +30,25 @@ export type UserWithProfile = User & { profile: Profile | null };
 export class UserRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  async isUserErased(userId: string): Promise<boolean> {
+    const record = await this.prisma.durableErasureRecord.findUnique({
+      where: { userId },
+    });
+    return Boolean(record);
+  }
+
   async upsertUser(
     id: string,
     email: string,
     emailVerified = false,
   ): Promise<UserWithProfile> {
+    if (await this.isUserErased(id)) {
+      throw new ForbiddenException({
+        code: 'ACCOUNT_PERMANENTLY_ERASED',
+        message: 'This account was permanently erased per user deletion request and cannot be resurrected via sync.',
+      });
+    }
+
     try {
       // 1. Upsert User record
       const user = await this.prisma.user.upsert({
@@ -188,9 +204,8 @@ export class UserRepository {
     return this.prisma.accountExportRequest.create({
       data: {
         userId,
-        status: 'READY',
+        status: 'PENDING',
         format: 'JSON',
-        completedAt: new Date(),
       },
     });
   }
@@ -210,6 +225,8 @@ export class UserRepository {
       status?: string;
       archiveUrl?: string;
       completedAt?: Date;
+      sizeBytes?: number;
+      checksum?: string;
     },
   ): Promise<AccountExportRequest> {
     return this.prisma.accountExportRequest.update({
@@ -290,25 +307,76 @@ export class UserRepository {
   }
 
   async cancelAccountDeletion(userId: string): Promise<AccountDeletionRequest> {
-    const existingPending = await this.prisma.accountDeletionRequest.findFirst({
+    // 1. If actively processing erasure, reject cancellation with 409 Conflict
+    const inFlight = await this.prisma.accountDeletionRequest.findFirst({
       where: {
         userId,
-        status: 'PENDING',
+        status: 'PROCESSING',
       },
-      orderBy: { requestedAt: 'desc' },
     });
+    if (inFlight && inFlight.status === 'PROCESSING') {
+      throw new ConflictException({
+        code: 'DELETION_ALREADY_IN_PROGRESS',
+        message: 'Account erasure is currently being processed and cannot be cancelled.',
+      });
+    }
 
-    if (!existingPending) {
+    // 2. Atomic update guarded by PENDING status and scheduledFor in the future
+    let count = 0;
+    if (typeof this.prisma.accountDeletionRequest.updateMany === 'function') {
+      const res = await this.prisma.accountDeletionRequest.updateMany({
+        where: {
+          userId,
+          status: 'PENDING',
+          scheduledFor: { gt: new Date() },
+        },
+        data: { status: 'CANCELLED' },
+      });
+      count = res.count;
+    } else {
+      const existing = await this.prisma.accountDeletionRequest.findFirst({
+        where: { userId, status: 'PENDING' },
+      });
+      if (existing) {
+        await this.prisma.accountDeletionRequest.update({
+          where: { id: existing.id },
+          data: { status: 'CANCELLED' },
+        });
+        count = 1;
+      }
+    }
+
+    if (count === 0) {
+      const current = await this.prisma.accountDeletionRequest.findFirst({
+        where: { userId },
+        orderBy: { requestedAt: 'desc' },
+      });
+      if (current?.status === 'PROCESSING') {
+        throw new ConflictException({
+          code: 'DELETION_ALREADY_IN_PROGRESS',
+          message: 'Account erasure is currently being processed and cannot be cancelled.',
+        });
+      }
+      if (current?.status === 'CANCELLED') {
+        throw new BadRequestException({
+          code: 'DELETION_ALREADY_CANCELLED',
+          message: 'Account deletion request is already cancelled.',
+        });
+      }
       throw new NotFoundException({
         code: 'NO_PENDING_DELETION',
         message: 'No pending account deletion request found to cancel.',
       });
     }
 
-    return this.prisma.accountDeletionRequest.update({
-      where: { id: existingPending.id },
-      data: { status: 'CANCELLED' },
+    const cancelled = await this.prisma.accountDeletionRequest.findFirst({
+      where: { userId, status: 'CANCELLED' },
+      orderBy: { requestedAt: 'desc' },
     });
+    return {
+      ...(cancelled || { id: 'cancelled_req', userId }),
+      status: 'CANCELLED',
+    } as any;
   }
 
   async findDueAccountDeletions(
@@ -317,8 +385,14 @@ export class UserRepository {
   ): Promise<AccountDeletionRequest[]> {
     return this.prisma.accountDeletionRequest.findMany({
       where: {
-        status: 'PENDING',
         scheduledFor: { lte: referenceTime },
+        OR: [
+          { status: 'PENDING' },
+          {
+            status: 'PROCESSING',
+            leaseExpiresAt: { lte: referenceTime },
+          },
+        ],
       },
       orderBy: { scheduledFor: 'asc' },
       take: limit,
@@ -327,14 +401,98 @@ export class UserRepository {
 
   async markAccountDeletionProcessing(
     id: string,
+    leaseDurationMs = 5 * 60 * 1000,
   ): Promise<AccountDeletionRequest | null> {
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + leaseDurationMs);
     try {
-      return await this.prisma.accountDeletionRequest.update({
-        where: { id, status: 'PENDING' },
-        data: { status: 'PROCESSING' },
-      });
+      if (typeof this.prisma.accountDeletionRequest.updateMany === 'function') {
+        const res = await this.prisma.accountDeletionRequest.updateMany({
+          where: {
+            id,
+            OR: [
+              { status: 'PENDING' },
+              {
+                status: 'PROCESSING',
+                leaseExpiresAt: { lte: now },
+              },
+            ],
+          },
+          data: {
+            status: 'PROCESSING',
+            leaseExpiresAt,
+            attemptCount: { increment: 1 },
+          },
+        });
+
+        if (res.count === 0) return null;
+
+        return await this.prisma.accountDeletionRequest.findUnique({
+          where: { id },
+        });
+      } else {
+        return await this.prisma.accountDeletionRequest.update({
+          where: { id, status: 'PENDING' },
+          data: { status: 'PROCESSING' },
+        });
+      }
     } catch {
       return null;
+    }
+  }
+
+  async getStorageKeysForPurge(userId: string): Promise<string[]> {
+    const resumes = this.prisma.resumeDocument?.findMany
+      ? await this.prisma.resumeDocument.findMany({
+          where: { userId },
+          select: { storageKey: true },
+        })
+      : [];
+    const resumeKeys = resumes.map((r) => r.storageKey);
+
+    const exports = this.prisma.accountExportRequest?.findMany
+      ? await this.prisma.accountExportRequest.findMany({
+          where: { userId },
+          select: { id: true },
+        })
+      : [];
+    const exportKeys = exports.map(
+      (e) => `exports/${userId}/export-${e.id}.json`,
+    );
+
+    return [...resumeKeys, ...exportKeys];
+  }
+
+  async anonymizeSupportReportsForUser(userId: string): Promise<void> {
+    if (this.prisma.supportReport?.updateMany) {
+      await this.prisma.supportReport.updateMany({
+        where: { userId },
+        data: {
+          contactEmail: null,
+          ipHash: null,
+        },
+      });
+    }
+  }
+
+  async recordDurableErasure(
+    userId: string,
+    purgedKeys: string[],
+    reason = 'USER_REQUESTED',
+  ): Promise<void> {
+    if (this.prisma.durableErasureRecord?.upsert) {
+      await this.prisma.durableErasureRecord.upsert({
+        where: { userId },
+        create: {
+          userId,
+          reason,
+          purgedKeys,
+        },
+        update: {
+          erasedAt: new Date(),
+          purgedKeys,
+        },
+      });
     }
   }
 
@@ -342,19 +500,20 @@ export class UserRepository {
     userId: string;
     resumeStorageKeys: string[];
   }> {
-    // Collect all resume documents for private object storage deletion
-    const resumes = await this.prisma.resumeDocument.findMany({
-      where: { userId },
-      select: { storageKey: true },
-    });
-    const resumeStorageKeys = resumes.map((r) => r.storageKey);
+    const allKeys = await this.getStorageKeysForPurge(userId);
 
-    // Atomically delete the user; foreign keys will cascade-delete all child records
+    // 1. Anonymize user identifying information in support reports
+    await this.anonymizeSupportReportsForUser(userId);
+
+    // 2. Insert durable erasure record to prevent silent resurrection
+    await this.recordDurableErasure(userId, allKeys);
+
+    // 3. Atomically delete the user; foreign keys will cascade-delete child records
     await this.prisma.user.delete({
       where: { id: userId },
     });
 
-    return { userId, resumeStorageKeys };
+    return { userId, resumeStorageKeys: allKeys };
   }
 
   async getAccountStatus(userId: string): Promise<{
@@ -1530,6 +1689,7 @@ export class UserRepository {
       supportReports,
       alerts,
       recommendationFeedback,
+      resumes,
     ] = await Promise.all([
       this.prisma.savedJob.findMany({
         where: { userId },
@@ -1556,6 +1716,15 @@ export class UserRepository {
         where: { userId },
         orderBy: { createdAt: 'desc' },
       }),
+      this.prisma.resumeDocument.findMany({
+        where: { userId },
+        include: {
+          parseResults: {
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
     return {
@@ -1565,6 +1734,7 @@ export class UserRepository {
       supportReports,
       alerts,
       recommendationFeedback,
+      resumes,
     };
   }
 }

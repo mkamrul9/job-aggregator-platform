@@ -1,6 +1,7 @@
 // service-ingestion/test/admin-router.test.js
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert');
+const crypto = require('crypto');
 const request = require('supertest');
 const { createIngestionApp } = require('../index');
 
@@ -14,11 +15,25 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
 
   const validKey = 'seekers-internal-admin-p12';
 
-  // Helper to create synthetic JWT token with specific role
-  function createRoleToken(role, uid = 'usr_test_123', email = 'test@seekers.internal') {
-    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ uid, email, role, admin: role === 'ADMIN' })).toString('base64url');
-    return `${header}.${payload}.sig`;
+  // Helper to create synthetic signed HS256 JWT token with specific role
+  function createRoleToken(role, uid = 'usr_test_123', email = 'test@seekers.internal', secret = validKey, overrides = {}) {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const nowSec = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(JSON.stringify({
+      uid,
+      email,
+      role,
+      admin: role === 'ADMIN',
+      exp: nowSec + 3600,
+      iss: 'seekers-auth',
+      aud: 'seekers-admin',
+      ...overrides
+    })).toString('base64url');
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(`${header}.${payload}`)
+      .digest('base64url');
+    return `${header}.${payload}.${signature}`;
   }
 
   beforeEach(() => {
@@ -206,7 +221,14 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
       deadLettersCollection,
       auditCollection,
       sourcesCollection,
-      crawlRunsCollection
+      crawlRunsCollection,
+      null,
+      async (src) => ({
+        status: 'SUCCESS',
+        itemsCollected: 5,
+        itemsRejected: 0,
+        durationMs: 320
+      })
     );
   });
 
@@ -434,5 +456,111 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     } finally {
       process.env.NODE_ENV = origEnv;
     }
+  });
+
+  it('rejects unsigned or alg: none token with 401 Unauthorized', async () => {
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ uid: 'usr_hacker', role: 'ADMIN', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+    const forgedToken = `${header}.${payload}.unsigned`;
+
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${forgedToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'UNSUPPORTED_ALGORITHM');
+  });
+
+  it('rejects token with tampered signature with 401 Unauthorized', async () => {
+    const validToken = createRoleToken('ADMIN');
+    const parts = validToken.split('.');
+    const tamperedToken = `${parts[0]}.${parts[1]}.tampered_signature_xyz`;
+
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${tamperedToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_TOKEN_SIGNATURE');
+  });
+
+  it('rejects expired token with 401 Unauthorized', async () => {
+    const expiredToken = createRoleToken('ADMIN', 'usr_exp', 'exp@seekers.internal', validKey, {
+      exp: Math.floor(Date.now() / 1000) - 100
+    });
+
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${expiredToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'TOKEN_EXPIRED');
+  });
+
+  it('rejects token with untrusted issuer with 401 Unauthorized', async () => {
+    const untrustedToken = createRoleToken('ADMIN', 'usr_evil', 'evil@seekers.internal', validKey, {
+      iss: 'untrusted-source'
+    });
+
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${untrustedToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'UNTRUSTED_ISSUER');
+  });
+
+  it('rejects token with wrong audience with 401 Unauthorized', async () => {
+    const wrongAudToken = createRoleToken('ADMIN', 'usr_aud', 'aud@seekers.internal', validKey, {
+      aud: 'wrong-audience'
+    });
+
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${wrongAudToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_AUDIENCE');
+  });
+
+  it('rejects hardcoded role tokens (admin_secret_token) in production mode', async () => {
+    const origEnv = process.env.NODE_ENV;
+    const origKey = process.env.INGESTION_ADMIN_KEY;
+    process.env.NODE_ENV = 'production';
+    process.env.INGESTION_ADMIN_KEY = 'production-custom-secret-key-12345';
+
+    try {
+      const resAdmin = await request(app)
+        .get('/api/v1/admin/auth/me')
+        .set('Authorization', 'Bearer admin_secret_token');
+
+      assert.strictEqual(resAdmin.status, 401);
+      assert.strictEqual(resAdmin.body.error, 'UNAUTHORIZED_ACCESS');
+
+      const resOp = await request(app)
+        .get('/api/v1/admin/auth/me')
+        .set('Authorization', 'Bearer operator_secret_token');
+
+      assert.strictEqual(resOp.status, 401);
+      assert.strictEqual(resOp.body.error, 'UNAUTHORIZED_ACCESS');
+    } finally {
+      process.env.NODE_ENV = origEnv;
+      if (origKey) process.env.INGESTION_ADMIN_KEY = origKey;
+      else delete process.env.INGESTION_ADMIN_KEY;
+    }
+  });
+
+  it('returns honest 502 error and records failure when crawl execution fails or has no dispatcher', async () => {
+    const appWithoutDispatcher = createIngestionApp(
+      null, null, null, null, null, null, null, null
+    );
+
+    const res = await request(appWithoutDispatcher)
+      .post('/api/v1/admin/sources/greenhouse-feed/crawl')
+      .set('x-admin-key', validKey);
+
+    assert.strictEqual(res.status, 502);
+    assert.strictEqual(res.body.status, 'FAILED');
+    assert.strictEqual(res.body.itemsCollected, 0);
   });
 });
