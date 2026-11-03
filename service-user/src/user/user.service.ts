@@ -325,9 +325,11 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         checksum,
       });
       exportResult.status = 'READY';
-    } catch (storageErr: any) {
+    } catch (storageErr: unknown) {
+      const errMsg =
+        storageErr instanceof Error ? storageErr.message : String(storageErr);
       this.logger.error(
-        `Could not persist export archive to storage: ${storageErr?.message || storageErr}`,
+        `Could not persist export archive to storage: ${errMsg}`,
       );
       await this.userRepository.updateExportRequest(exportRecord.id, {
         status: 'FAILED',
@@ -435,8 +437,7 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         }
 
         // 3. Atomically anonymize support reports, record durable erasure, and delete user row
-        const purgeResult =
-          await this.userRepository.purgeAccount(req.userId);
+        const purgeResult = await this.userRepository.purgeAccount(req.userId);
         const userId = purgeResult?.userId || req.userId;
         const fallbackKeys = purgeResult?.resumeStorageKeys || [];
 

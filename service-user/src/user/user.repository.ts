@@ -19,7 +19,6 @@ import {
   ApplicationHistory,
   SupportReport,
   AlertSubscription,
-  DurableErasureRecord,
 } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -45,7 +44,8 @@ export class UserRepository {
     if (await this.isUserErased(id)) {
       throw new ForbiddenException({
         code: 'ACCOUNT_PERMANENTLY_ERASED',
-        message: 'This account was permanently erased per user deletion request and cannot be resurrected via sync.',
+        message:
+          'This account was permanently erased per user deletion request and cannot be resurrected via sync.',
       });
     }
 
@@ -317,7 +317,8 @@ export class UserRepository {
     if (inFlight && inFlight.status === 'PROCESSING') {
       throw new ConflictException({
         code: 'DELETION_ALREADY_IN_PROGRESS',
-        message: 'Account erasure is currently being processed and cannot be cancelled.',
+        message:
+          'Account erasure is currently being processed and cannot be cancelled.',
       });
     }
 
@@ -354,7 +355,8 @@ export class UserRepository {
       if (current?.status === 'PROCESSING') {
         throw new ConflictException({
           code: 'DELETION_ALREADY_IN_PROGRESS',
-          message: 'Account erasure is currently being processed and cannot be cancelled.',
+          message:
+            'Account erasure is currently being processed and cannot be cancelled.',
         });
       }
       if (current?.status === 'CANCELLED') {
@@ -373,10 +375,18 @@ export class UserRepository {
       where: { userId, status: 'CANCELLED' },
       orderBy: { requestedAt: 'desc' },
     });
+    const record = cancelled || {
+      id: 'cancelled_req',
+      userId,
+      requestedAt: new Date(),
+      scheduledFor: new Date(),
+      attemptCount: 0,
+      leaseExpiresAt: null,
+    };
     return {
-      ...(cancelled || { id: 'cancelled_req', userId }),
+      ...record,
       status: 'CANCELLED',
-    } as any;
+    } as unknown as AccountDeletionRequest;
   }
 
   async findDueAccountDeletions(

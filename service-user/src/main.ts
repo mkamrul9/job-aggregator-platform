@@ -29,11 +29,18 @@ async function bootstrap() {
   ];
 
   app.enableCors({
-    origin: (requestOrigin, callback) => {
+    origin: (
+      requestOrigin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
       if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS origin '${requestOrigin}' not allowed by Seekers Security Policy.`));
+        callback(
+          new Error(
+            `CORS origin '${requestOrigin}' not allowed by Seekers Security Policy.`,
+          ),
+        );
       }
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
