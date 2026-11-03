@@ -47,6 +47,7 @@ describe('UserService', () => {
   const mockUserRepository = {
     upsertUser: jest.fn(),
     findById: jest.fn(),
+    countUsers: jest.fn().mockResolvedValue(0),
     updateProfile: jest.fn(),
     updateProfileResumeUrl: jest.fn(),
     createExportRequest: jest.fn(),
@@ -174,6 +175,65 @@ describe('UserService', () => {
         'candidate@seekers.example',
         true,
       );
+    });
+
+    it('should reject unlisted user when BETA_ALLOWLIST_ENABLED is true', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'unlisted-uid',
+            email: 'random@other.com',
+            emailVerified: true,
+          }),
+        ).rejects.toThrow('An invitation is required');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should allow allowlisted user when BETA_ALLOWLIST_ENABLED is true', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
+      mockUserRepository.findById.mockResolvedValue(null);
+      mockUserRepository.countUsers.mockResolvedValue(5);
+      mockUserRepository.upsertUser.mockResolvedValue(mockUserWithProfile);
+
+      try {
+        const result = await service.syncUser({
+          id: 'approved-uid',
+          email: 'approved@seekers.example',
+          emailVerified: true,
+        });
+        expect(result.message).toContain('synchronized');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should reject registration when BETA_MAX_PARTICIPANTS ceiling is reached', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_MAX_PARTICIPANTS = '50';
+      mockUserRepository.findById.mockResolvedValue(null);
+      mockUserRepository.countUsers.mockResolvedValue(50);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'new-uid',
+            email: 'any@seekers.example',
+            emailVerified: true,
+          }),
+        ).rejects.toThrow('Beta cohort capacity (50 participants) has been reached');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_MAX_PARTICIPANTS;
+      }
     });
   });
 

@@ -398,6 +398,19 @@ function createNotificationRouter({ store, dispatcher, metrics = {} }) {
     });
   });
 
+  router.post('/suppressions', requireAdminOrServiceAuth, (req, res) => {
+    const { email, reason, source } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required for suppression' });
+    }
+    const record = store.addGlobalSuppression({
+      email,
+      reason: reason || 'OPERATOR_SUPPRESSION',
+      source: source || 'API',
+    });
+    res.status(200).json({ success: true, suppression: record });
+  });
+
   router.post('/evaluate', requireAdminOrServiceAuth, async (req, res) => {
     const job = req.body;
     if (!job || !job.id) {

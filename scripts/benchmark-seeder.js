@@ -160,50 +160,41 @@ function generateDeterministicCandidate(index, rng = new DeterministicRng(5000 +
 
 function generateSyntheticResumePdf(candidate) {
   const headline = candidate.profile ? candidate.profile.headline : 'Software Engineer';
-  const skills = candidate.profile ? candidate.profile.skills.join(', ') : 'Go, Python, TypeScript';
-  const content = `%PDF-1.4
-1 0 obj
-<< /Title (${candidate.email} - CV)
-   /Author (${candidate.id})
-   /Subject (Technical Resume)
->>
-endobj
-2 0 obj
-<< /Type /Catalog /Pages 3 0 R >>
-endobj
-3 0 obj
-<< /Type /Pages /Kids [4 0 R] /Count 1 >>
-endobj
-4 0 obj
-<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Contents 5 0 R >>
-endobj
-5 0 obj
-<< /Length 200 >>
-stream
-BT
-/F1 12 Tf
-72 712 Td (${candidate.email}) Tj
-0 -20 Td (${headline}) Tj
-0 -20 Td (Core Competencies: ${skills}) Tj
-0 -20 Td (Work Experience: Senior Distributed Systems Architect at TechCorp) Tj
-0 -20 Td (Education: B.Sc. in Computer Science & Engineering) Tj
-ET
-endstream
-endobj
-xref
-0 6
-0000000000 65535 f
-0000000009 00000 n
-0000000100 00000 n
-0000000150 00000 n
-0000000215 00000 n
-0000000295 00000 n
-trailer
-<< /Size 6 /Root 2 0 R >>
-startxref
-550
-%%EOF`;
-  return Buffer.from(content, 'utf8');
+  const skills = candidate.profile ? candidate.profile.skills.join(', ') : 'Go, Python, TypeScript, Docker, Kubernetes';
+  const title = `${candidate.email || 'Candidate'} - CV`;
+  const text = `Headline: ${headline} | Skills: ${skills} | Experience: Senior Distributed Systems Architect at TechCorp`;
+
+  const content = `BT /F1 12 Tf 50 720 Td (${title.replace(/[()\\]/g, '')}) Tj /F1 10 Tf 0 -20 Td (${text.replace(/[()\\]/g, '')}) Tj ET`;
+  const contentBuf = Buffer.from(content, 'latin1');
+  const streamLen = contentBuf.length;
+
+  const obj1 = Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  const obj2 = Buffer.from('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  const obj3 = Buffer.from('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n');
+  const obj4 = Buffer.from('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n');
+  const obj5Header = Buffer.from(`5 0 obj\n<< /Length ${streamLen} >>\nstream\n`);
+  const obj5Footer = Buffer.from('\nendstream\nendobj\n');
+  const obj5 = Buffer.concat([obj5Header, contentBuf, obj5Footer]);
+
+  const header = Buffer.from('%PDF-1.4\n');
+  const offsets = [0];
+  let curr = header.length;
+  offsets.push(curr); curr += obj1.length;
+  offsets.push(curr); curr += obj2.length;
+  offsets.push(curr); curr += obj3.length;
+  offsets.push(curr); curr += obj4.length;
+  offsets.push(curr); curr += obj5.length;
+
+  const xref = Buffer.from(
+    'xref\n0 6\n0000000000 65535 f \n' +
+    String(offsets[1]).padStart(10, '0') + ' 00000 n \n' +
+    String(offsets[2]).padStart(10, '0') + ' 00000 n \n' +
+    String(offsets[3]).padStart(10, '0') + ' 00000 n \n' +
+    String(offsets[4]).padStart(10, '0') + ' 00000 n \n' +
+    String(offsets[5]).padStart(10, '0') + ' 00000 n \n'
+  );
+  const trailer = Buffer.from(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${curr}\n%%EOF\n`);
+  return Buffer.concat([header, obj1, obj2, obj3, obj4, obj5, xref, trailer]);
 }
 
 async function seedBenchmarkDataset(options = {}) {

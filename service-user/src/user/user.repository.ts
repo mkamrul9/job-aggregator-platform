@@ -111,6 +111,10 @@ export class UserRepository {
     });
   }
 
+  async countUsers(): Promise<number> {
+    return this.prisma.user.count();
+  }
+
   async findByEmail(email: string): Promise<UserWithProfile | null> {
     return this.prisma.user.findUnique({
       where: { email },

@@ -10,13 +10,13 @@ A reviewer or hiring team evaluating a specific stack (e.g., Python, Angular, Go
 
 | Project | Subsystem Directory | Primary Stack & Baseline | Architectural Role | Standalone Mode & Reviewer Quickstart |
 |---|---|---|---|---|
-| **1. Candidate Web App** | [`frontend-next/`](frontend-next/README.md) | Next.js 14.2, React 18, TypeScript, Tailwind CSS | Candidate discovery, faceted search, resume upload, and responsive workspace | Standalone Mock Adapter (`NEXT_PUBLIC_API_MOCK=true`) — [Quickstart](frontend-next/README.md#standalone-preview-mode) |
-| **2. Operations Console** | [`frontend-admin/`](frontend-admin/README.md) | Angular 17.3, TypeScript, RxJS, Standalone Components | Platform monitoring, crawler control, catalog moderation, and audit logging | In-Memory Simulation Engine with zero backend credentials — [Quickstart](frontend-admin/README.md#standalone-demo-mode) |
-| **3. Resume Extractor** | [`service-resume/`](service-resume/README.md) | Python 3.11, pdfplumber, FastAPI, gRPC, Pydantic | Privacy-first PDF resume parsing, schema extraction, and ATS scoring | Native Python Web UI (`uvicorn app.server:app`) & CLI parser — [Quickstart](service-resume/README.md#standalone-python-web-viewer-no-node--docker) |
-| **4. Distributed Collector** | [`service-scraper/`](service-scraper/README.md) | Go 1.22, standard library `net/http`, rod, kafka-go | High-throughput web crawling, SSRF protection, rate limiting, and canonicalization | Standalone CLI (`go run main.go test-run`) with offline fixtures — [Quickstart](service-scraper/README.md#quickstart) |
-| **5. Identity & Workspace** | [`service-user/`](service-user/README.md) | NestJS 10, TypeScript, Prisma ORM, PostgreSQL 16 | Authentication, candidate profiles, application tracking, and GDPR tombstone erasure | Isolated PostgreSQL with forward Prisma migrations — [Quickstart](service-user/README.md#3-verification--qualification-suite) |
-| **6. Catalog & Search** | [`service-ingestion/`](service-ingestion/README.md) | Node.js 20, Express 5, MongoDB 7, Elasticsearch 8.13 | Canonical job storage, keyset cursor pagination, and zero-downtime index alias swaps | Standalone Search API with 12 curated South Asian seed jobs — [Quickstart](service-ingestion/README.md#5-standalone-quickstart-zero-kafka-dependency) |
-| **7. Notification Engine** | [`service-notification/`](service-notification/README.md) | Node.js 20, Socket.io 4, KafkaJS, Express 5, Nodemailer | Real-time WebSocket broadcasting, preference matching, and RFC 8058 one-click unsubscribe | Standalone Event Replay CLI with local mailbox capture — [Quickstart](service-notification/README.md#5-standalone-cli--event-replay-showcase) |
+| **1. Candidate Web App** | [`frontend-next/`](frontend-next/README.md) | Next.js 16.3, React 19.2, TypeScript 5.8, Tailwind CSS | Candidate discovery, faceted search, resume upload, and responsive workspace | Standalone Development Preview (`npm run dev`) with built-in demo fixtures — [Quickstart](frontend-next/README.md#4-setup--local-execution) |
+| **2. Operations Console** | [`frontend-admin/`](frontend-admin/README.md) | Angular 19.2, TypeScript 5.8, RxJS 7.8, Standalone Components | Platform monitoring, crawler control, catalog moderation, and audit logging | In-Memory Simulation Engine with zero backend credentials (`npm start`) — [Quickstart](frontend-admin/README.md#standalone-demo-mode) |
+| **3. Resume Extractor** | [`service-resume/`](service-resume/README.md) | Python 3.11+, spaCy, pypdf, FastAPI, gRPC, Pydantic | Privacy-first PDF resume parsing, schema extraction, and ATS scoring | Native Python Web UI (`uvicorn main:app --port 8000`) & CLI parser — [Quickstart](service-resume/README.md#standalone-python-web-viewer-no-node--docker) |
+| **4. Distributed Collector** | [`service-scraper/`](service-scraper/README.md) | Go 1.23, standard library `net/http`, rod, kafka-go | High-throughput web crawling, SSRF protection, rate limiting, and canonicalization | Standalone CLI (`go run . -mode=cli -fixture=fixtures/greenhouse_sample.json -format=json`) with offline fixtures — [Quickstart](service-scraper/README.md#4-standalone-cli--local-demonstration) |
+| **5. Identity & Workspace** | [`service-user/`](service-user/README.md) | NestJS 11, TypeScript, Prisma ORM, PostgreSQL 16 | Authentication, candidate profiles, application tracking, and GDPR tombstone erasure | Isolated PostgreSQL with forward Prisma migrations (`npm test`) — [Quickstart](service-user/README.md#3-verification--qualification-suite) |
+| **6. Catalog & Search** | [`service-ingestion/`](service-ingestion/README.md) | Node.js 20, Express 5, MongoDB 7, Elasticsearch 8.13 | Canonical job storage, keyset cursor pagination, and zero-downtime index alias swaps | Standalone Search API with 12 curated South Asian seed jobs (`npm run start:standalone`) — [Quickstart](service-ingestion/README.md#5-standalone-quickstart-zero-kafka-dependency) |
+| **7. Notification Engine** | [`service-notification/`](service-notification/README.md) | Node.js 20, Socket.io 4, KafkaJS, Express 5, Nodemailer | Real-time WebSocket broadcasting, preference matching, and RFC 8058 one-click unsubscribe | Standalone Event Replay CLI with local mailbox capture (`node cli.js replay`) — [Quickstart](service-notification/README.md#5-standalone-cli--event-replay-showcase) |
 
 ---
 
@@ -29,7 +29,7 @@ A reviewer or hiring team evaluating a specific stack (e.g., Python, Angular, Go
                                                  | (HTTP / Headless)
                                                  v
                                   +-----------------------------+
-                                  | service-scraper (Go 1.22)   |
+                                  | service-scraper (Go 1.23)   |
                                   | Rate Limiter, SSRF Guard    |
                                   +--------------+--------------+
                                                  | Kafka: jobs.raw.v1
@@ -53,7 +53,7 @@ A reviewer or hiring team evaluating a specific stack (e.g., Python, Angular, Go
                                 |  | REST / Keyset Search API
                                 v  v
 +-------------------------------+  +-----------------------------+
-| frontend-next (Next.js 14.2)  |  | frontend-admin (Angular 17) |
+| frontend-next (Next.js 16.3)  |  | frontend-admin (Angular 19) |
 | - Candidate Job Search        |  | - Operations Dashboard      |
 | - Application Tracker         |  | - Source Health & Controls  |
 | - Resume Upload & Feedback    |  | - Catalog Moderation        |
@@ -62,9 +62,9 @@ A reviewer or hiring team evaluating a specific stack (e.g., Python, Angular, Go
                 | gRPC (Port 50051)
                 v
 +-------------------------------+
-| service-resume (Python 3.11)  |
-| - pdfplumber Schema Extraction|
-| - Private Memory Processing   |
+| service-resume (Python 3.11+) |
+| - spaCy & pypdf Extraction    |
+| - In-Memory Byte Parsing      |
 | - Skills & Match Analysis     |
 +-------------------------------+
 ```
@@ -74,23 +74,23 @@ A reviewer or hiring team evaluating a specific stack (e.g., Python, Angular, Go
 ## 3. Technology CV Summaries & Walkthrough Highlights
 
 ### Next.js & React Frontend (`frontend-next`)
-- **CV Bullet:** Built a high-performance candidate web application using Next.js 14.2 (App Router), React 18, and Tailwind CSS. Implemented faceted search with keyset cursor pagination, interactive application tracking board, private PDF resume upload with real-time feedback, and full accessibility compliance (WCAG 2.1 AA).
+- **CV Bullet:** Built a high-performance candidate web application using Next.js 16.3 (App Router), React 19.2, and Tailwind CSS. Implemented faceted search with keyset cursor pagination, interactive application tracking Kanban, private PDF resume upload with real-time feedback, and accessible keyboard navigation with semantic ARIA landmarking.
 - **Core Interview Topic:** State synchronization between URL search parameters, keyset pagination cursors, and responsive filter drawers without race conditions or extraneous re-renders.
 
 ### Angular Operations Console (`frontend-admin`)
-- **CV Bullet:** Architected an enterprise operational administration console using Angular 17.3 with standalone components, RxJS reactive streams, and Angular Signals. Implemented crawler status controls, job catalog moderation queues, and an in-memory simulation engine operating with zero backend credentials.
+- **CV Bullet:** Architected an enterprise operational administration console using Angular 19.2 with standalone components, RxJS reactive streams, and Angular Signals. Implemented crawler status controls, job catalog moderation queues, and an in-memory simulation engine operating with zero backend credentials.
 - **Core Interview Topic:** Enforcing strict separation between in-memory simulation mode and protected live operator modes, backed by unidirectional data flow and observable state stores.
 
 ### Python Resume Extraction Microservice (`service-resume`)
-- **CV Bullet:** Engineered a privacy-first resume extraction service in Python 3.11 using `pdfplumber`, Pydantic validation, and dual gRPC/FastAPI servers. Implemented deterministic section extraction, PII redaction, and in-memory parsing with zero persistent document retention.
+- **CV Bullet:** Engineered a privacy-first resume extraction service in Python 3.11+ using `pypdf`, spaCy NLP entity matching, Pydantic validation, and dual gRPC/FastAPI servers. Implemented deterministic section extraction, PII redaction, and in-memory parsing with zero persistent document retention.
 - **Core Interview Topic:** Structuring resilient PDF layout parsing across multi-column formats and dual-protocol exposure (gRPC for high-throughput internal microservices; FastAPI for standalone local inspection).
 
 ### Go Distributed Collector (`service-scraper`)
-- **CV Bullet:** Developed a concurrent web scraper and CLI in Go 1.22 using standard library `net/http`, Rod headless browsing, and KafkaJS ingestion. Built SSRF protection preventing private CIDR IP leakage, token-bucket rate limiting, and canonical schema mapping.
+- **CV Bullet:** Developed a concurrent web scraper and CLI in Go 1.23 using standard library `net/http`, Rod headless browsing, and KafkaJS ingestion. Built SSRF protection preventing private CIDR IP leakage, token-bucket rate limiting, and canonical schema mapping.
 - **Core Interview Topic:** Safeguarding outbound web crawlers against SSRF vectors and DNS rebinding attacks while enforcing robust HTTP client timeouts and connection pool bounds.
 
 ### NestJS Identity & Workspace Microservice (`service-user`)
-- **CV Bullet:** Built an enterprise identity, application tracking, and workspace API using NestJS 10, TypeScript, Prisma ORM, and PostgreSQL 16. Implemented role-based access control, cryptographic session handling, GDPR-compliant data export, and 30-day deletion grace periods with durable tombstone fencing.
+- **CV Bullet:** Built an enterprise identity, application tracking, and workspace API using NestJS 11, TypeScript, Prisma ORM, and PostgreSQL 16. Implemented role-based access control, cryptographic session handling, server-enforced beta allowlists, GDPR-compliant data export, and 30-day deletion grace periods with durable tombstone fencing.
 - **Core Interview Topic:** Implementing durable erasure tombstones to enforce GDPR right-to-be-forgotten compliance and prevent background user-synchronization jobs from reviving deleted records.
 
 ### Node.js Ingestion & Search Microservice (`service-ingestion`)
@@ -120,7 +120,7 @@ node scripts/test-benchmark-accounting.js
 # 4. Multi-Node Resilience & Fault-Injection Suite
 node scripts/run-resilience-faults.js
 
-# 5. Candidate & Operator End-to-End Beta Journey Qualification (9 Scenarios)
+# 5. Live Loopback HTTP & Python NLP Beta Journey Qualification Suite (9 Scenarios)
 node scripts/qualify-beta-journeys.js
 
 # 6. Service Unit Test Suites

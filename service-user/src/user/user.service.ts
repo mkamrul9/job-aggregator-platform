@@ -7,6 +7,7 @@ import {
   NotFoundException,
   BadRequestException,
   UnauthorizedException,
+  ForbiddenException,
   ServiceUnavailableException,
   InternalServerErrorException,
   Logger,
@@ -145,6 +146,40 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     email: string;
     emailVerified?: boolean;
   }): Promise<{ message: string; user: UserProfileResponseDto }> {
+    if (process.env.BETA_ALLOWLIST_ENABLED === 'true') {
+      const existingUser = await this.userRepository.findById(data.id);
+      if (!existingUser) {
+        // Enforce cohort capacity ceiling
+        const maxParticipants = parseInt(
+          process.env.BETA_MAX_PARTICIPANTS || '50',
+          10,
+        );
+        const currentCount = await this.userRepository.countUsers();
+        if (currentCount >= maxParticipants) {
+          throw new ForbiddenException({
+            code: 'BETA_CAPACITY_REACHED',
+            message: `Beta cohort capacity (${maxParticipants} participants) has been reached.`,
+          });
+        }
+        // Enforce allowlist if configured
+        const allowlistStr = process.env.BETA_INVITE_ALLOWLIST || '';
+        const allowedEmails = allowlistStr
+          .split(',')
+          .map((e) => e.trim().toLowerCase())
+          .filter(Boolean);
+        if (
+          allowedEmails.length > 0 &&
+          !allowedEmails.includes(data.email.toLowerCase())
+        ) {
+          throw new ForbiddenException({
+            code: 'BETA_INVITE_REQUIRED',
+            message:
+              'Public registration is restricted during bounded beta. An invitation is required.',
+          });
+        }
+      }
+    }
+
     const user = await this.userRepository.upsertUser(
       data.id,
       data.email,
