@@ -3,20 +3,21 @@
 
 /**
  * scripts/benchmark-workloads.js
- * Seekers High-Fidelity Performance, Capacity & Latency Benchmark Harness (P15)
+ * Seekers High-Fidelity Performance, Capacity & Latency Microbenchmark Harness (P15)
  *
- * Measures workload limits, latency percentiles (p50, p95, p99), error rates,
- * and throughput (RPS) across all 7 projects and integrated candidate/operator journeys.
- * Evaluates outcomes strictly against Section 7 SLA targets:
- *  - Search p95 <= 500 ms
- *  - Non-file API reads/writes p95 <= 300 ms
- *  - Resume accepted-to-result p95 <= 30 s
- *  - Notification alert pipeline throughput & SLA
+ * Measures in-process function execution, latency percentiles (p50, p95, p99),
+ * error rates, and completed throughput across core platform domains.
+ *
+ * Invariant Accounting Rules (P15 Repair):
+ *  - Strict accounting: tracks offered, attempted, completed, errors, timeouts, and error budgets.
+ *  - Completed throughput: throughput is calculated strictly from completed successful operations, never attempted.
+ *  - Fail-closed percentiles: empty or failed sample sets return null percentiles, never 0 ms success.
+ *  - Gating enforcement: sla_met requires meeting sample coverage, respecting error budgets, and achieving p95 <= SLA.
+ *  - Clear labelling: explicitly marked as IN_PROCESS_MICROBENCHMARK (not live multi-node cluster qualification).
  */
 
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
 const crypto = require('crypto');
 const { performance } = require('perf_hooks');
 
@@ -26,12 +27,21 @@ const { evaluateJobMatch } = require('../service-notification/src/matcher');
 const { DeliveryDispatcher } = require('../service-notification/src/dispatcher');
 const { DurableNotificationStore } = require('../service-notification/src/storage');
 const { processMessage } = require('../service-ingestion/src/pipeline');
+const { normalizeCanonicalUrl } = require('../service-ingestion/src/models/job');
 
+/**
+ * Calculates percentiles strictly from valid latency samples.
+ * Returns null percentiles if samples are empty or invalid, preventing false 0 ms PASS results.
+ */
 function calculatePercentiles(latencies) {
-  if (!latencies || latencies.length === 0) {
-    return { p50: 0, p90: 0, p95: 0, p99: 0, min: 0, max: 0, count: 0 };
+  if (!latencies || !Array.isArray(latencies) || latencies.length === 0) {
+    return { p50: null, p90: null, p95: null, p99: null, min: null, max: null, count: 0 };
   }
-  const sorted = [...latencies].sort((a, b) => a - b);
+  const validNumbers = latencies.filter(n => typeof n === 'number' && !isNaN(n) && isFinite(n));
+  if (validNumbers.length === 0) {
+    return { p50: null, p90: null, p95: null, p99: null, min: null, max: null, count: 0 };
+  }
+  const sorted = [...validNumbers].sort((a, b) => a - b);
   const getP = (p) => {
     const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
     return parseFloat(sorted[idx].toFixed(2));
@@ -52,9 +62,13 @@ function calculatePercentiles(latencies) {
 // ----------------------------------------------------------------------------
 async function benchmarkSearchWorkload(listings) {
   console.log('\n--- Benchmark 1: Public Job Search & Browsing Workload ---');
-  console.log('Testing full-text search, multi-facet filtering, sorting, and deep pagination...');
+  console.log('Testing full-text search, multi-facet filtering, sorting, and deep pagination (In-Process)...');
 
-  // Create an in-memory index or query against seeded listings
+  const iterations = 200;
+  const minSamplesRequired = 180; // 90% required sample coverage
+  const maxAllowedErrors = 0;
+  const targetSlaMs = 500;
+
   const testQueries = [
     { q: 'Go', location: 'Dhaka', remote: 'HYBRID' },
     { q: 'Python', location: '', remote: 'REMOTE' },
@@ -63,11 +77,10 @@ async function benchmarkSearchWorkload(listings) {
     { q: 'Machine Learning', location: 'San Francisco', remote: 'REMOTE' },
     { q: 'Senior', location: '', remote: '' },
     { q: 'Distributed', location: '', remote: '' },
-    { q: 'UnicornRareSkill999', location: 'NonExistentCity', remote: '' } // Rare/Zero results
+    { q: 'UnicornRareSkill999', location: 'NonExistentCity', remote: '' }
   ];
 
   const latencies = [];
-  const iterations = 200;
   let errorCount = 0;
   const startTotal = performance.now();
 
@@ -76,17 +89,25 @@ async function benchmarkSearchWorkload(listings) {
     const t0 = performance.now();
 
     try {
-      // Simulate Elasticsearch boolean search execution over seeded dataset
+      if (!Array.isArray(listings) || listings.length === 0) {
+        throw new Error('Invalid listings dataset provided to search benchmark');
+      }
+
+      // Simulate boolean search execution over indexed listings
       const results = listings.filter(item => {
+        if (!item || typeof item !== 'object') {
+          throw new Error('Null or malformed listing in dataset');
+        }
         if (item.moderation_status !== 'ACTIVE') return false;
         if (query.q) {
-          const matchTitle = item.title.toLowerCase().includes(query.q.toLowerCase());
-          const matchSkills = item.skills.some(s => s.toLowerCase().includes(query.q.toLowerCase()));
-          const matchDesc = item.description.toLowerCase().includes(query.q.toLowerCase());
+          const qLower = query.q.toLowerCase();
+          const matchTitle = (item.title || '').toLowerCase().includes(qLower);
+          const matchSkills = Array.isArray(item.skills) && item.skills.some(s => (s || '').toLowerCase().includes(qLower));
+          const matchDesc = (item.description || '').toLowerCase().includes(qLower);
           if (!matchTitle && !matchSkills && !matchDesc) return false;
         }
-        if (query.remote && item.location.remote_type !== query.remote) return false;
-        if (query.location && !item.location.raw.toLowerCase().includes(query.location.toLowerCase())) return false;
+        if (query.remote && item.location && item.location.remote_type !== query.remote) return false;
+        if (query.location && item.location && !(item.location.raw || '').toLowerCase().includes(query.location.toLowerCase())) return false;
         return true;
       });
 
@@ -100,22 +121,32 @@ async function benchmarkSearchWorkload(listings) {
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 500;
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} requests in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} requests/sec`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms (Min: ${stats.min} ms, Max: ${stats.max} ms)`);
-  console.log(`  Target Gate:  p95 <= 500 ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = errorCount <= maxAllowedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed req/sec in ${(durationSec * 1000).toFixed(1)} ms`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms (Min: ${stats.min} ms, Max: ${stats.max} ms)`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Search & Catalog Browsing',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
     errors: errorCount,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxAllowedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 500,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
@@ -125,23 +156,34 @@ async function benchmarkSearchWorkload(listings) {
 // ----------------------------------------------------------------------------
 async function benchmarkWorkspaceWorkload(candidates) {
   console.log('\n--- Benchmark 2: Identity & Candidate Workspace Operations ---');
-  console.log('Testing profile reads/updates, application tracking, and quota checks...');
+  console.log('Testing profile reads/updates, application tracking, and quota checks (In-Process)...');
+
+  const iterations = 150;
+  const minSamplesRequired = 135; // 90% required sample coverage
+  const maxAllowedErrors = 0;
+  const targetSlaMs = 300;
 
   const latencies = [];
-  const iterations = 150;
   let errorCount = 0;
   const startTotal = performance.now();
 
   for (let i = 0; i < iterations; i++) {
-    const candidate = candidates[i % candidates.length];
     const t0 = performance.now();
 
     try {
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        throw new Error('Invalid candidates dataset provided to workspace benchmark');
+      }
+      const candidate = candidates[i % candidates.length];
+      if (!candidate || typeof candidate !== 'object' || !candidate.id) {
+        throw new Error('Null or malformed candidate record');
+      }
+
       // 1. Authenticated Profile Read
       const profileCopy = { ...candidate.profile, email: candidate.email };
 
-      // 2. Profile Skill / Salary Expectation Mutation
-      profileCopy.skills = [...profileCopy.skills, 'Prometheus'];
+      // 2. Profile Skill / Preference Mutation
+      profileCopy.skills = [...(profileCopy.skills || []), 'Prometheus'];
       profileCopy.updated_at = new Date().toISOString();
 
       // 3. Application Tracking State Transition
@@ -161,22 +203,32 @@ async function benchmarkWorkspaceWorkload(candidates) {
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 300;
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} operations in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} ops/sec`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
-  console.log(`  Target Gate:  p95 <= 300 ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = errorCount <= maxAllowedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed ops/sec`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Identity & Workspace Operations',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
     errors: errorCount,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxAllowedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 300,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
@@ -186,94 +238,122 @@ async function benchmarkWorkspaceWorkload(candidates) {
 // ----------------------------------------------------------------------------
 async function benchmarkIngestionPipeline(listings) {
   console.log('\n--- Benchmark 3: Event Ingestion & Deduplication Pipeline ---');
-  console.log('Testing Kafka envelope ingestion, idempotency deduplication, and DLQ filtering...');
+  console.log('Testing Kafka envelope ingestion, idempotency deduplication, and DLQ filtering (In-Process)...');
+
+  const iterations = 100;
+  const minSamplesRequired = 90; // 90% required sample coverage
+  const maxUnexpectedErrors = 0;
+  const targetSlaMs = 100;
 
   const mockMongoDb = new Map();
   const mockEsIndex = new Map();
   const mockDlq = [];
 
   const latencies = [];
-  const iterations = 100;
-  let errorCount = 0;
+  let unexpectedErrors = 0;
+  let dlqQuarantineCount = 0;
   const startTotal = performance.now();
 
-  const { normalizeCanonicalUrl } = require('../service-ingestion/src/models/job');
-
   for (let i = 0; i < iterations; i++) {
-    const listing = listings[i % listings.length];
+    const t0 = performance.now();
     const isPoison = i % 20 === 0; // 5% intentional poison messages to test DLQ
 
-    let eventPayload;
-    if (isPoison) {
-      eventPayload = { malformed: true, error_trigger: 'schema_violation' };
-    } else {
-      const normalizedUrl = normalizeCanonicalUrl(listing.destination_url);
-      const sourceUrlHash = crypto.createHash('sha256').update(normalizedUrl).digest('hex');
-      eventPayload = {
-        event_id: crypto.randomUUID(),
-        event_type: 'job.collected.v1',
-        schema_version: '1.0.0',
-        producer: 'service-scraper',
-        timestamp: new Date().toISOString(),
-        correlation_id: crypto.randomUUID(),
-        payload: {
-          source: listing.source_id || 'greenhouse',
-          source_job_id: `job_bench_src_${i}`,
-          url: listing.destination_url,
-          source_url_hash: sourceUrlHash,
-          title: listing.title,
-          company: listing.company,
-          location: listing.location.raw,
-          description: listing.description,
-          collected_at: new Date().toISOString()
-        }
-      };
-    }
-
-    const t0 = performance.now();
     try {
+      if (!Array.isArray(listings) || listings.length === 0) {
+        throw new Error('Invalid listings dataset provided to ingestion benchmark');
+      }
+      const listing = listings[i % listings.length];
+      if (!listing || !listing.destination_url) {
+        throw new Error('Null or malformed listing in ingestion dataset');
+      }
+
+      let eventPayload;
+      if (isPoison) {
+        eventPayload = { malformed: true, error_trigger: 'schema_violation' };
+      } else {
+        const normalizedUrl = normalizeCanonicalUrl(listing.destination_url);
+        const sourceUrlHash = crypto.createHash('sha256').update(normalizedUrl).digest('hex');
+        eventPayload = {
+          event_id: crypto.randomUUID(),
+          event_type: 'job.collected.v1',
+          schema_version: '1.0.0',
+          producer: 'service-scraper',
+          timestamp: new Date().toISOString(),
+          correlation_id: crypto.randomUUID(),
+          payload: {
+            source: listing.source_id || 'greenhouse',
+            source_job_id: `job_bench_src_${i}`,
+            url: listing.destination_url,
+            source_url_hash: sourceUrlHash,
+            title: listing.title,
+            company: listing.company,
+            location: listing.location?.raw || 'Remote',
+            description: listing.description || 'Valid description',
+            collected_at: new Date().toISOString()
+          }
+        };
+      }
+
       const result = await processMessage(JSON.stringify(eventPayload), {
         jobsCollection: {
-          findOne: async (q) => mockMongoDb.get(q.id) || mockMongoDb.get(q.url) || null,
-          updateOne: async (q, u, opts) => {
-            const key = q.id || q.url || `job_${i}`;
-            mockMongoDb.set(key, { ...u.$set });
+          findOne: async (q) => mockMongoDb.get(q.id) || mockMongoDb.get(q.canonical_url) || null,
+          updateOne: async (q, u) => {
+            const key = q.id || q.canonical_url || `job_${i}`;
+            const existing = mockMongoDb.get(key) || {};
+            mockMongoDb.set(key, { ...existing, ...u.$set, ...u.$setOnInsert });
             return { acknowledged: true };
           }
         },
         deadLettersCollection: {
-          insertOne: async (doc) => { mockDlq.push(doc); return { insertedId: 'dlq_1' }; }
+          insertOne: async (doc) => {
+            mockDlq.push(doc);
+            return { insertedId: `dlq_${mockDlq.length}` };
+          }
         },
         esClient: {
           index: async (doc) => { mockEsIndex.set(doc.id, doc.body); return { result: 'created' }; }
         }
       });
 
+      if (result && result.quarantined) {
+        dlqQuarantineCount++;
+      }
+
       const elapsed = performance.now() - t0;
       latencies.push(elapsed);
     } catch (err) {
-      errorCount++;
+      unexpectedErrors++;
     }
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 100; // Target: < 100ms per event ingestion
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} events in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} events/sec (DLQ quarantined: ${mockDlq.length})`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
-  console.log(`  Target Gate:  p95 <= 100 ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = unexpectedErrors <= maxUnexpectedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Unexpected Errors: ${unexpectedErrors} | DLQ Quarantined: ${dlqQuarantineCount}`);
+  console.log(`  Throughput:        ${throughputRps} completed events/sec`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Ingestion & Deduplication Pipeline',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
-    quarantined_dlq: mockDlq.length,
-    errors: errorCount,
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
+    quarantined_dlq: dlqQuarantineCount,
+    errors: unexpectedErrors,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxUnexpectedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 100,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
@@ -283,60 +363,54 @@ async function benchmarkIngestionPipeline(listings) {
 // ----------------------------------------------------------------------------
 async function benchmarkRecommendationEngine(candidates, listings) {
   console.log('\n--- Benchmark 4: Candidate Recommendation & Matching Engine ---');
-  console.log('Testing explainable scoring, hard exclusion evaluation, and candidate ranking...');
+  console.log('Testing criteria filtering, remote bounds, and candidate ranking (In-Process)...');
 
-  function scoreCandidateJob(candidate, job) {
-    // 1. Hard Exclusions
-    if (job.moderation_status !== 'ACTIVE') return null;
-    if (candidate.preferences.remote_only && job.location.remote_type === 'ONSITE') {
-      return null; // Excluded by remote constraint
-    }
-    const candMinSalary = candidate.profile.salary_expectation ? candidate.profile.salary_expectation.min : null;
-    if (candMinSalary && job.salary && job.salary.max && job.salary.max < candMinSalary) {
-      return null; // Excluded by compensation floor
-    }
-
-    // 2. Skill Scoring
-    const candSkills = (candidate.profile.skills || []).map(s => s.toLowerCase());
-    const jobSkills = (job.skills || []).map(s => s.toLowerCase());
-    const matched = candSkills.filter(cs => jobSkills.includes(cs));
-
-    const skillScore = candSkills.length > 0 ? (matched.length / candSkills.length) * 70 : 0;
-    const locationScore = candidate.profile.location && job.location.raw.includes(candidate.profile.location.split(',')[0]) ? 20 : 0;
-    const remoteScore = job.location.remote_type === 'REMOTE' ? 10 : 0;
-    const totalScore = Math.min(100, Math.round(skillScore + locationScore + remoteScore));
-
-    const explanations = [];
-    if (matched.length > 0) explanations.push(`Matches ${matched.length} verified candidate skills (${matched.slice(0, 3).join(', ')})`);
-    if (locationScore > 0) explanations.push(`Aligned with candidate regional location preference`);
-    if (remoteScore > 0) explanations.push(`Fully remote listing meets flexible work preference`);
-
-    return { score: totalScore, explanations };
-  }
+  const iterations = 50;
+  const minSamplesRequired = 45; // 90% required sample coverage
+  const maxAllowedErrors = 0;
+  const targetSlaMs = 150;
 
   const latencies = [];
-  const iterations = 50;
   let errorCount = 0;
   const startTotal = performance.now();
 
   for (let i = 0; i < iterations; i++) {
-    const candidate = candidates[i % candidates.length];
     const t0 = performance.now();
 
     try {
-      // Evaluate matching across 100 active jobs for this candidate
+      if (!Array.isArray(candidates) || candidates.length === 0 || !Array.isArray(listings) || listings.length === 0) {
+        throw new Error('Invalid candidates or listings dataset');
+      }
+      const candidate = candidates[i % candidates.length];
+      if (!candidate || !candidate.id) {
+        throw new Error('Null or malformed candidate record');
+      }
+
+      const subscriptionCriteria = {
+        id: `sub_${candidate.id}`,
+        email: candidate.email,
+        email_verified: true,
+        query: candidate.preferences?.preferred_skills?.[0] || 'Go',
+        remote_preference: candidate.preferences?.remote_only ? 'FULLY_REMOTE' : 'ANY',
+        location: candidate.profile?.location || '',
+        active: true
+      };
+
+      // Evaluate matching across 100 active jobs for this candidate using the shipped matching engine
       const rankedMatches = [];
       for (const job of listings.slice(0, 100)) {
-        const scoreResult = scoreCandidateJob(candidate, job);
-        if (scoreResult && scoreResult.score >= 30) {
+        if (!job || typeof job !== 'object') {
+          throw new Error('Null job listing in matching iteration');
+        }
+        const matchResult = evaluateJobMatch(job, subscriptionCriteria);
+        if (matchResult && matchResult.matches) {
           rankedMatches.push({
             job_id: job.id,
-            score: scoreResult.score,
-            explanations: scoreResult.explanations
+            matched: true,
+            score: 85
           });
         }
       }
-      rankedMatches.sort((a, b) => b.score - a.score);
 
       const elapsed = performance.now() - t0;
       latencies.push(elapsed);
@@ -346,22 +420,32 @@ async function benchmarkRecommendationEngine(candidates, listings) {
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 150;
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} ranking cycles (100 jobs/candidate) in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} candidate scorings/sec`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
-  console.log(`  Target Gate:  p95 <= 150 ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = errorCount <= maxAllowedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed ranking cycles/sec`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Candidate Matcher & Recommendation Scoring',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
     errors: errorCount,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxAllowedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 150,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
@@ -371,22 +455,31 @@ async function benchmarkRecommendationEngine(candidates, listings) {
 // ----------------------------------------------------------------------------
 async function benchmarkNotificationWorkload(candidates, listings) {
   console.log('\n--- Benchmark 5: Notification Evaluation & Dispatch Pipeline ---');
-  console.log('Testing preference matching, HMAC unsubscribe generation, and CAPTURE outbox...');
+  console.log('Testing preference matching, HMAC unsubscribe generation, and CAPTURE outbox (In-Process)...');
+
+  const iterations = 80;
+  const minSamplesRequired = 70; // ~90% required sample coverage
+  const maxAllowedErrors = 0;
+  const targetSlaMs = 50;
 
   const testStore = new DurableNotificationStore({ inMemoryOnly: true });
-  testStore.data = {
-    deliveries: [],
-    suppressions: { global: [], subscriptions: [] },
-    subscriptions: candidates.map(c => ({
-      id: `sub_${c.id}`,
-      email: c.email,
-      active: true,
-      email_verified: true,
-      query: c.preferences.preferred_skills[0] || 'Go',
-      remote_only: c.preferences.remote_only,
-      created_at: new Date().toISOString()
-    }))
-  };
+
+  // Populate candidate subscriptions through the store's authoritative saveSubscription method
+  if (Array.isArray(candidates)) {
+    candidates.forEach((c, idx) => {
+      if (c && c.id) {
+        testStore.saveSubscription({
+          id: `sub_${c.id}`,
+          candidateId: c.id,
+          email: c.email || `candidate_${idx}@seekers.work`,
+          active: true,
+          email_verified: true,
+          query: c.preferences?.preferred_skills?.[0] || 'Go',
+          remote_preference: c.preferences?.remote_only ? 'FULLY_REMOTE' : 'ANY'
+        });
+      }
+    });
+  }
 
   const dispatcher = new DeliveryDispatcher({
     store: testStore,
@@ -396,18 +489,24 @@ async function benchmarkNotificationWorkload(candidates, listings) {
     }
   });
 
+  const subsList = testStore.listSubscriptions({ activeOnly: true });
   const latencies = [];
-  const iterations = 80;
   let errorCount = 0;
   const startTotal = performance.now();
 
   for (let i = 0; i < iterations; i++) {
-    const job = listings[i % listings.length];
-    const sub = testStore.data.subscriptions[i % testStore.data.subscriptions.length];
-
     const t0 = performance.now();
     try {
-      // 1. Preference Evaluation (job is 1st param, sub is 2nd param)
+      if (!Array.isArray(listings) || listings.length === 0 || subsList.length === 0) {
+        throw new Error('Invalid listings or empty subscription store');
+      }
+      const job = listings[i % listings.length];
+      const sub = subsList[i % subsList.length];
+      if (!job || !sub) {
+        throw new Error('Null job or subscription in iteration');
+      }
+
+      // 1. Preference Evaluation
       const matchResult = evaluateJobMatch(job, sub);
 
       // 2. Dispatch if matched
@@ -428,23 +527,36 @@ async function benchmarkNotificationWorkload(candidates, listings) {
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 50;
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} evaluations & dispatches in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} alert cycles/sec (Captured in store: ${testStore.data.deliveries.length})`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
-  console.log(`  Target Gate:  p95 <= 50 ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const storeStats = testStore.getStats();
+  const capturedCount = storeStats.totalCapturedEmails || 0;
+
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = errorCount <= maxAllowedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed alert cycles/sec (Authoritative Store Captured: ${capturedCount})`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Notification Pipeline & Delivery Dispatch',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
-    captured_deliveries: testStore.data.deliveries.length,
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
+    captured_deliveries: capturedCount,
     errors: errorCount,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxAllowedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 50,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
@@ -452,24 +564,53 @@ async function benchmarkNotificationWorkload(candidates, listings) {
 // ----------------------------------------------------------------------------
 // BENCHMARK 6: Python Resume Extraction Latency (FastAPI / spaCy Simulation)
 // ----------------------------------------------------------------------------
+const TECH_SKILLS_MOCK = ['Go', 'Python', 'TypeScript', 'Node.js', 'React', 'Kubernetes', 'Docker'];
+
 async function benchmarkResumeExtractor(fixtureDir) {
   console.log('\n--- Benchmark 6: Resume Extraction Processing & NLP Workload ---');
-  console.log('Testing PDF text parsing, entity extraction, and threadpool bounds...');
+  console.log('Testing PDF text parsing, entity extraction, and threadpool bounds (In-Process Microbenchmark)...');
+
+  const iterations = 30;
+  const minSamplesRequired = 25; // >80% required sample coverage
+  const maxAllowedErrors = 0;
+  const targetSlaMs = 30000; // SLA Target: p95 <= 30 seconds (30,000 ms)
+
+  if (!fixtureDir || typeof fixtureDir !== 'string') {
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: 'Missing or invalid fixture directory'
+    };
+  }
 
   const samplePdfPath = path.join(fixtureDir, 'resumes', 'usr_bench_00000_resume.pdf');
-  const pdfBuffer = fs.existsSync(samplePdfPath)
-    ? fs.readFileSync(samplePdfPath)
-    : Buffer.from('%PDF-1.4 Mock Candidate Resume Data', 'utf8');
-
   const latencies = [];
-  const iterations = 30;
   let errorCount = 0;
   const startTotal = performance.now();
 
   for (let i = 0; i < iterations; i++) {
     const t0 = performance.now();
     try {
-      // Simulate PDF parsing and NLP entity extraction
+      // Must enforce real fixture existence - fail closed if fixture is missing!
+      if (!fs.existsSync(samplePdfPath)) {
+        throw new Error(`Required benchmark resume fixture missing: ${samplePdfPath}`);
+      }
+      const pdfBuffer = fs.readFileSync(samplePdfPath);
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        throw new Error('Empty resume PDF fixture buffer');
+      }
+
+      // Parse PDF byte stream and extract technical skills
       const content = pdfBuffer.toString('utf8');
       const lines = content.split('\n');
       const extractedSkills = TECH_SKILLS_MOCK.filter(skill =>
@@ -491,27 +632,35 @@ async function benchmarkResumeExtractor(fixtureDir) {
   }
 
   const durationSec = (performance.now() - startTotal) / 1000;
-  const throughputRps = (iterations / durationSec).toFixed(1);
   const stats = calculatePercentiles(latencies);
-  const targetMet = stats.p95 <= 30000; // Target: p95 <= 30 seconds (30,000 ms)
+  const throughputRps = (durationSec > 0 && latencies.length > 0)
+    ? parseFloat((latencies.length / durationSec).toFixed(1))
+    : 0;
 
-  console.log(`  Completed:    ${iterations} resume extractions in ${(durationSec * 1000).toFixed(1)} ms`);
-  console.log(`  Throughput:   ${throughputRps} resumes/sec`);
-  console.log(`  Latency p50:  ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
-  console.log(`  Target Gate:  p95 <= 30,000 ms (30s) -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms)`);
+  const hasRequiredSamples = stats.count >= minSamplesRequired;
+  const withinErrorBudget = errorCount <= maxAllowedErrors;
+  const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
+
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed resumes/sec`);
+  console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
+  console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms (30s) -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
   return {
     workload: 'Python Resume NLP Extractor',
-    iterations,
-    throughput_rps: parseFloat(throughputRps),
+    mode: 'IN_PROCESS_MICROBENCHMARK',
+    offered: iterations,
+    attempted: iterations,
+    completed: latencies.length,
     errors: errorCount,
+    min_samples_required: minSamplesRequired,
+    error_budget: maxAllowedErrors,
+    throughput_rps: throughputRps,
     percentiles_ms: stats,
-    target_sla_ms: 30000,
+    target_sla_ms: targetSlaMs,
     sla_met: targetMet
   };
 }
-
-const TECH_SKILLS_MOCK = ['Go', 'Python', 'TypeScript', 'Node.js', 'React', 'Kubernetes', 'Docker'];
 
 // ----------------------------------------------------------------------------
 // MASTER HARNESS EXECUTION
@@ -520,6 +669,7 @@ async function runAllBenchmarks() {
   console.log('========================================================================');
   console.log('[BENCHMARK-HARNESS] Seekers Platform Workload Benchmark Suite (P15)');
   console.log('Measuring p50, p95, p99 Latencies, Throughput (RPS), and Headroom SLA Targets');
+  console.log('Mode: IN_PROCESS_MICROBENCHMARK (Simulated single-host domain microbenchmarks)');
   console.log('========================================================================');
 
   const startTime = Date.now();
@@ -540,26 +690,25 @@ async function runAllBenchmarks() {
   results.push(await benchmarkResumeExtractor(targetDir));
 
   const totalDurationMs = Date.now() - startTime;
-  const allSlasMet = results.every(r => r.sla_met);
+  const allSlasMet = results.every(r => r.sla_met === true);
 
   console.log('\n========================================================================');
   console.log('[BENCHMARK-HARNESS] COMPREHENSIVE PERFORMANCE SUMMARY:');
   console.log('========================================================================');
   results.forEach(r => {
     const status = r.sla_met ? 'PASS' : 'FAIL';
-    console.log(`  - ${r.workload.padEnd(42)} [p95: ${String(r.percentiles_ms.p95).padStart(6)} ms / Target: ${r.target_sla_ms} ms] -> ${status}`);
+    const p95Display = r.percentiles_ms.p95 !== null ? `${r.percentiles_ms.p95} ms` : 'N/A';
+    console.log(`  - ${r.workload.padEnd(42)} [p95: ${p95Display.padStart(9)} / Target: ${r.target_sla_ms} ms] -> ${status}`);
   });
   console.log(`\nOverall SLA Gate Status: ${allSlasMet ? 'ALL TARGETS PASSED' : 'SLA TARGET BREACHED'}`);
   console.log(`Total Benchmark Suite Duration: ${totalDurationMs} ms`);
   console.log('========================================================================');
 
-  if (!allSlasMet) {
-    throw new Error('[BENCHMARK-HARNESS] One or more workload SLA targets failed.');
-  }
-
   const report = {
     benchmark_id: `bench_${new Date().toISOString().replace(/[:.]/g, '-')}`,
     timestamp: new Date().toISOString(),
+    benchmark_type: 'IN_PROCESS_MICROBENCHMARK',
+    disclaimer: 'These results represent in-process function execution timings on local synthetic fixtures. They do not constitute distributed multi-node production capacity certification.',
     hardware_context: {
       platform: process.platform,
       arch: process.arch,
@@ -573,7 +722,7 @@ async function runAllBenchmarks() {
       resumes_generated: 20
     },
     results,
-    overall_status: 'PASS',
+    overall_status: allSlasMet ? 'PASS' : 'FAILED',
     all_slas_met: allSlasMet
   };
 
@@ -581,6 +730,10 @@ async function runAllBenchmarks() {
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf8');
   console.log(`[BENCHMARK-HARNESS] Report saved -> ${reportPath}`);
+
+  if (!allSlasMet) {
+    throw new Error('[BENCHMARK-HARNESS] One or more workload SLA targets or error budgets failed.');
+  }
 
   return report;
 }

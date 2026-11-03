@@ -171,14 +171,17 @@ function evaluateJobMatch(job, sub, context = {}) {
   if (subLocation && subRemote !== 'FULLY_REMOTE') {
     // If the job is on-site or hybrid, candidate location must match job location
     if (!isJobRemote) {
-      const jobLoc = (job.location || '').toLowerCase();
+      const rawLocation = typeof job.location === 'object' && job.location !== null
+        ? (job.location.raw || job.location.city || '')
+        : (job.location || '');
+      const jobLoc = String(rawLocation).toLowerCase();
       const targetLoc = subLocation.toLowerCase();
       const locRegex = new RegExp(`\\b${escapeRegex(targetLoc)}\\b`, 'i');
       if (!locRegex.test(jobLoc) && !jobLoc.includes(targetLoc)) {
         return {
           matches: false,
           reason: 'LOCATION_MISMATCH',
-          details: { expected: subLocation, actual: job.location },
+          details: { expected: subLocation, actual: rawLocation },
         };
       }
     }

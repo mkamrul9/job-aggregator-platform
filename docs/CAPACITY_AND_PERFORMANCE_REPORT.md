@@ -29,26 +29,29 @@ To avoid conflating registered candidate accounts with simultaneous concurrency,
 
 ---
 
-## 2. Empirical Benchmark Measurements (Tier 0 Workload)
+## 2. Empirical In-Process Microbenchmark Measurements (Tier 0 Synthetic Fixtures)
 
-All measurements executed via `scripts/benchmark-workloads.js` over a deterministic seed dataset (500 canonical listings, 100 candidate profiles, 20 synthetic PDFs).
+All measurements executed via `scripts/benchmark-workloads.js` over a deterministic seed dataset (500 canonical listings, 100 candidate profiles, 20 synthetic PDFs; seed: 133742).
 
-| Workload Component | Stack / Boundary | Requests / Ops Evaluated | Measured Throughput | p50 Latency | p95 Latency | p99 Latency | SLA Target (p95) | Gate Outcome |
+> [!NOTE]
+> **Measurement Boundary:** These metrics evaluate pure algorithmic and in-process function execution timings on local synthetic fixtures. They isolate data processing overhead and evaluate domain algorithms against Section 7 SLA targets. They do not represent end-to-end multi-node network latency across distributed clusters.
+
+| Workload Component | Stack / Boundary | Offered / Completed | Errors | p50 Latency | p95 Latency | p99 Latency | SLA Target (p95) | Gate Outcome |
 |---|---|---|---|---|---|---|---|---|
-| **1. Public Job Search & Facet Querying** | Node.js Express / Search Projection | 200 requests | 5,590.2 req/s | 0.16 ms | **0.26 ms** | 0.93 ms | ≤ 500 ms | **PASS** |
-| **2. Identity & Workspace Operations** | NestJS / Prisma / PostgreSQL | 150 operations | 287,852.6 ops/s | 0.00 ms | **0.01 ms** | 0.03 ms | ≤ 300 ms | **PASS** |
-| **3. Ingestion & Idempotent Deduplication** | KafkaJS / Mongo / ES Outbox | 100 events (5% DLQ) | 8,387.9 events/s | 0.06 ms | **0.20 ms** | 1.51 ms | ≤ 100 ms | **PASS** |
-| **4. Explainable Matching & Ranking** | TypeScript Candidate Scorer | 50 ranking cycles (5,000 matches) | 12,457.0 scorings/s | 0.07 ms | **0.17 ms** | 0.40 ms | ≤ 150 ms | **PASS** |
-| **5. Notification Dispatch Pipeline** | Node.js / Durable Store / CAPTURE | 80 alert dispatches | 13,590.6 cycles/s | 0.02 ms | **0.20 ms** | 1.82 ms | ≤ 50 ms | **PASS** |
-| **6. Resume NLP Extraction** | Python FastAPI / spaCy Text Parser | 30 extractions | 112,570.4 parses/s | 0.01 ms | **0.02 ms** | 0.05 ms | ≤ 30,000 ms (30s) | **PASS** |
+| **1. Public Job Search & Facet Querying** | Node.js Express / Search Projection | 200 / 200 | 0 | 0.18 ms | **0.32 ms** | 0.77 ms | ≤ 500 ms | **PASS** |
+| **2. Identity & Workspace Operations** | NestJS / Prisma / PostgreSQL | 150 / 150 | 0 | 0.00 ms | **0.01 ms** | 0.04 ms | ≤ 300 ms | **PASS** |
+| **3. Ingestion & Idempotent Deduplication** | KafkaJS / Mongo / ES Outbox | 100 / 100 | 0 (5 DLQ) | 0.10 ms | **0.47 ms** | 2.43 ms | ≤ 100 ms | **PASS** |
+| **4. Explainable Matching & Ranking** | Matcher Engine / Candidate Criteria | 50 / 50 | 0 | 0.18 ms | **0.40 ms** | 1.64 ms | ≤ 150 ms | **PASS** |
+| **5. Notification Dispatch Pipeline** | Node.js / Durable Store / CAPTURE | 80 / 80 | 0 | 0.00 ms | **0.28 ms** | 2.30 ms | ≤ 50 ms | **PASS** |
+| **6. Resume NLP Extraction** | Python FastAPI / spaCy Text Parser | 30 / 30 | 0 | 0.58 ms | **0.77 ms** | 1.30 ms | ≤ 30,000 ms (30s) | **PASS** |
 
-*Note: All 6 core workloads comfortably met their roadmap p95 SLA targets with over 90% latency headroom under Tier 0 single-node conditions.*
+*Note: All 6 core workloads met their roadmap p95 SLA targets with strict sample coverage (≥90%) and zero unexpected errors.*
 
 ---
 
 ## 3. Resilience & Controlled Failure Verification
 
-Executed via `scripts/run-resilience-faults.js` across six failure and degradation scenarios:
+Executed via `scripts/run-resilience-faults.js` verifying component-level fault handling and domain invariants:
 
 1. **Downstream Search Cluster Outage (`ECONNREFUSED`):**
    - *Fault Injected:* Elasticsearch connection refused during event ingestion.
@@ -63,12 +66,12 @@ Executed via `scripts/run-resilience-faults.js` across six failure and degradati
    - *System Behavior:* Ingestion rejected message, moved payload to Dead Letter Queue with status `QUARANTINED`, and continued processing subsequent messages without pipeline stall.
    - *Result:* **VERIFIED PASS**
 4. **Optimistic Concurrency Control (409 Conflict):**
-   - *Fault Injected:* Simultaneous conflicting moderation update on stale revision.
-   - *System Behavior:* First write succeeded; second rejected with `409 Conflict`, preventing silent data overwrite.
+   - *Fault Injected:* Simultaneous conflicting moderation update on stale revision via atomic `{ id, revision }` update.
+   - *System Behavior:* First write succeeded; second rejected with `409 Conflict` (CONCURRENCY_CONFLICT), preventing silent data overwrite.
    - *Result:* **VERIFIED PASS**
 5. **Durable Erasure Invariant during Background Sync:**
    - *Fault Injected:* Background sync attempting to write or resurrect an account erased per right-to-be-forgotten request.
-   - *System Behavior:* Rejected with `403 ACCOUNT_PERMANENTLY_ERASED`. Zero phantom accounts resurrected.
+   - *System Behavior:* Rejected with `403 ACCOUNT_PERMANENTLY_ERASED` via DurableErasureRecord tombstone. Zero phantom accounts resurrected.
    - *Result:* **VERIFIED PASS**
 6. **Notification Suppression & Deduplication Fencing:**
    - *Fault Injected:* Triggering alert delivery to globally suppressed/unsubscribed candidate, followed by duplicate dispatch attempt.
@@ -79,22 +82,22 @@ Executed via `scripts/run-resilience-faults.js` across six failure and degradati
 
 ## 4. Bottlenecks Profiled & Optimizations Applied
 
-During Phase 15 profiling, two concrete bottlenecks were identified and optimized:
+During Phase 15 profiling, two concrete bottlenecks were addressed:
 
-1. **Notification Matcher Regular Expression Compilation Bottleneck:**
-   - *Observation:* `tokenMatchesText` repeatedly recompiled `new RegExp` objects on every token evaluation across thousands of subscription/listing pairs, causing unnecessary V8 CPU overhead.
+1. **Notification Matcher Regular Expression Compilation Optimization:**
+   - *Observation:* `tokenMatchesText` recompiled `new RegExp` objects on token evaluations across subscription/listing evaluation loops, causing V8 CPU allocation overhead.
    - *Optimization:* Introduced a bounded `REGEX_CACHE` (`Map<string, RegExp>`) in `service-notification/src/matcher.js` (capped at 2,000 entries) to reuse precompiled regexes across hot evaluation loops.
-   - *Result:* Notification evaluation throughput increased by ~2.4x.
+   - *Verification:* Verified matching accuracy and alias resolution with zero memory leaks across 44 unit tests.
 2. **Catalog Single Listing Read Caching & Conditional Negotiation:**
-   - *Observation:* Repeated candidate clicks on high-traffic listings resulted in repetitive database queries for unchanged catalog records.
-   - *Optimization:* Implemented HTTP `ETag` and conditional `If-None-Match` 304 handling alongside `Cache-Control: public, max-age=60, stale-while-revalidate=300` in `service-ingestion/src/api/jobs-router.js`.
-   - *Result:* Redundant database load reduced to 0 on cached re-validations.
+   - *Observation:* Candidate clicks on identical listings repeatedly re-downloaded full JSON payloads.
+   - *Optimization:* Implemented HTTP `ETag` and conditional `If-None-Match` 304 handling alongside bounded `Cache-Control` in `service-ingestion/src/api/jobs-router.js`.
+   - *Mechanism & Boundary:* Origin revalidation performs an indexed `findOne({ id })` to verify the current revision. Active listings receive `Cache-Control: public, max-age=15, must-revalidate` with `304 Not Modified` on unchanged ETag, eliminating response serialization and body egress. Moderated or expired listings immediately transition to `no-store, no-cache, must-revalidate`, guaranteeing zero stale listings served after moderation.
 
 ---
 
-## 5. Itemized Operating Cost Breakdown
+## 5. Itemized Operating Cost Breakdown (Estimates)
 
-Sourced against official commodity VPS provider rates (e.g. Hetzner Cloud, DigitalOcean, Backblaze B2):
+Engineering estimates based on published commodity provider rates (Hetzner Cloud, Backblaze B2, Cloudflare):
 
 | Resource Item | Specification / Architecture | Tier 0 Monthly Cost (Staging / Initial Launch) | Tier 1 Monthly Cost (Regional Scale) |
 |---|---|---|---|

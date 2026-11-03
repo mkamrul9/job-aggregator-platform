@@ -215,6 +215,58 @@ async function runNegativeTests() {
     if (origDbUrl) process.env.DATABASE_URL = origDbUrl;
   }
 
+  // 4.4: Manifest HMAC verification fails when nested properties inside files[] are tampered
+  {
+    const nestedTamperedManifest = JSON.parse(JSON.stringify(manifest));
+    nestedTamperedManifest.files[0].sha256_checksum = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+    const isTamperValid = verifyManifestHmac(nestedTamperedManifest);
+    assert.strictEqual(isTamperValid, false, 'verifyManifestHmac must return false when nested file checksum is tampered');
+
+    nestedTamperedManifest.files[0].name = 'malicious_injected.json';
+    assert.strictEqual(verifyManifestHmac(nestedTamperedManifest), false, 'verifyManifestHmac must return false when nested file name is tampered');
+
+    nestedTamperedManifest.files[0].size_bytes = 999999999;
+    assert.strictEqual(verifyManifestHmac(nestedTamperedManifest), false, 'verifyManifestHmac must return false when nested file size is tampered');
+
+    console.log('  ✓ [PASS] Manifest HMAC strictly authenticates complete nested files structure.');
+    passedTests++;
+  }
+
+  // 4.5: verifyManifestHmac handles malformed, truncated, or non-hex signatures safely
+  {
+    assert.strictEqual(verifyManifestHmac(null), false);
+    assert.strictEqual(verifyManifestHmac({}), false);
+    assert.strictEqual(verifyManifestHmac({ hmac_signature: 12345 }), false);
+    assert.strictEqual(verifyManifestHmac({ hmac_signature: 'short' }), false);
+    assert.strictEqual(verifyManifestHmac({ hmac_signature: 'not_a_valid_hex_string_xyz_1234567890123456789012345678901234567890' }), false);
+    console.log('  ✓ [PASS] verifyManifestHmac safely handles malformed and truncated signatures.');
+    passedTests++;
+  }
+
+  // 4.6: Production default secret rejection
+  {
+    const origEnv = process.env.NODE_ENV;
+    const origSecret = process.env.BACKUP_HMAC_SECRET;
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.BACKUP_HMAC_SECRET;
+
+      let secretRejected = false;
+      try {
+        computeManifestHmac({ backup_id: 'test' });
+      } catch (err) {
+        secretRejected = true;
+        assert(err.message.includes('BACKUP_HMAC_SECRET is required in production'));
+      }
+      assert(secretRejected, 'computeManifestHmac must reject default fallback secret in production');
+      console.log('  ✓ [PASS] Backup pipeline rejects insecure default fallback secret in production.');
+      passedTests++;
+    } finally {
+      process.env.NODE_ENV = origEnv;
+      if (origSecret) process.env.BACKUP_HMAC_SECRET = origSecret;
+    }
+  }
+
   // Clean up scratch directory
   try {
     fs.rmSync(scratchDir, { recursive: true, force: true });

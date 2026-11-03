@@ -236,7 +236,13 @@ function createJobsRouter({ jobsCollection, esClient }) {
 
       const etag = `W/"${job.id}-r${job.revision || 1}"`;
       res.setHeader('ETag', etag);
-      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+
+      // Bound cache duration and ensure immediate revalidation for non-active/moderated listings
+      if (!isListingAvailable(job)) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+      }
 
       if (req.headers['if-none-match'] === etag) {
         return res.status(304).end();

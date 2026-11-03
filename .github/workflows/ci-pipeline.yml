@@ -29,6 +29,9 @@ jobs:
       - name: Run Operational Deployment & Disaster Recovery Verification Suite
         run: node scripts/test-recovery-failure.js
 
+      - name: Run Benchmark Accounting & Fail-Closed Gate Suite
+        run: node scripts/test-benchmark-accounting.js
+
       - name: Run Workload Performance & Latency Benchmark Suite
         run: node scripts/benchmark-workloads.js
 

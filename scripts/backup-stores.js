@@ -25,17 +25,69 @@ function computeSha256(filePath) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function computeManifestHmac(manifestObject, secret = DEFAULT_HMAC_SECRET) {
-  const shallowCopy = { ...manifestObject };
-  delete shallowCopy.hmac_signature;
-  const canonicalString = JSON.stringify(shallowCopy, Object.keys(shallowCopy).sort());
-  return crypto.createHmac('sha256', secret).update(canonicalString).digest('hex');
+/**
+ * Canonically serializes an object with recursively sorted keys at all nested levels.
+ * Prevents replacer array property filtering defects and ensures consistent HMAC representations.
+ */
+function canonicalJsonStringify(obj) {
+  if (obj === null || typeof obj !== 'object') {
+    return JSON.stringify(obj);
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(item => canonicalJsonStringify(item)).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  const entries = keys.map(key => JSON.stringify(key) + ':' + canonicalJsonStringify(obj[key]));
+  return '{' + entries.join(',') + '}';
 }
 
-function verifyManifestHmac(manifestObject, secret = DEFAULT_HMAC_SECRET) {
-  if (!manifestObject || !manifestObject.hmac_signature) return false;
-  const expected = computeManifestHmac(manifestObject, secret);
-  return crypto.timingSafeEqual(Buffer.from(manifestObject.hmac_signature, 'hex'), Buffer.from(expected, 'hex'));
+function resolveHmacSecret(secret) {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const effectiveSecret = secret || process.env.BACKUP_HMAC_SECRET || DEFAULT_HMAC_SECRET;
+
+  if (isProduction && (!effectiveSecret || effectiveSecret === 'seekers_backup_hmac_secret_p14_durable_key' || effectiveSecret.trim().length < 16)) {
+    throw new Error('BACKUP_HMAC_SECRET is required in production with minimum 16 characters. Default fallback secrets are strictly prohibited.');
+  }
+
+  return effectiveSecret;
+}
+
+function computeManifestHmac(manifestObject, secret = null) {
+  if (!manifestObject || typeof manifestObject !== 'object') {
+    throw new Error('computeManifestHmac requires a valid manifest object');
+  }
+
+  const effectiveSecret = resolveHmacSecret(secret);
+  const shallowCopy = { ...manifestObject };
+  delete shallowCopy.hmac_signature;
+
+  const canonicalString = canonicalJsonStringify(shallowCopy);
+  return crypto.createHmac('sha256', effectiveSecret).update(canonicalString).digest('hex');
+}
+
+function verifyManifestHmac(manifestObject, secret = null) {
+  if (!manifestObject || typeof manifestObject !== 'object') return false;
+  if (!manifestObject.hmac_signature || typeof manifestObject.hmac_signature !== 'string') return false;
+
+  try {
+    const effectiveSecret = resolveHmacSecret(secret);
+    const expected = computeManifestHmac(manifestObject, effectiveSecret);
+
+    const sigBuf = Buffer.from(manifestObject.hmac_signature, 'hex');
+    const expBuf = Buffer.from(expected, 'hex');
+
+    // SHA-256 HMAC in hex is 64 characters (32 raw bytes)
+    if (sigBuf.length !== 32 || expBuf.length !== 32) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch (err) {
+    if (err.message && err.message.includes('BACKUP_HMAC_SECRET is required in production')) {
+      throw err;
+    }
+    return false;
+  }
 }
 
 async function runBackup(options = {}) {
