@@ -244,8 +244,18 @@ try {
   assert.strictEqual(expiredBody.title, 'Listing Unavailable');
   console.log('✔ [PASS] Problem details content-type and 404 payload preserved through proxy\n');
 
+  // Test 9: Health probe check
+  console.log('Test 9: Verifying GET /api/health probe...');
+  const { GET: healthHandler } = await import('../app/api/health/route.ts');
+  const healthRes = await healthHandler();
+  assert.strictEqual(healthRes.status, 200);
+  const healthData = await healthRes.json();
+  assert.strictEqual(healthData.status, 'UP');
+  assert.strictEqual(healthData.service, 'frontend-next');
+  console.log('✔ [PASS] Next.js native /api/health probe returns 200 UP\n');
+
   console.log('----------------------------------------------------');
-  console.log('✔ All 8 Next.js search and catalog proxy regressions passed!');
+  console.log('✔ All 9 Next.js search and catalog proxy regressions passed!');
 } finally {
   server.close();
 }

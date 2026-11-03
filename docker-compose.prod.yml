@@ -38,6 +38,7 @@ services:
     environment:
       - KAFKA_BROKER=kafka:9092
       - SCHEDULER_CHECKPOINT_DIR=/app/data/scheduler
+      - STATE_DIR=/app/data/scheduler
     volumes:
       - scraper_data:/app/data/scheduler
     networks:
@@ -103,7 +104,7 @@ services:
       resume-grpc:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/users/health || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/users/health', (r) => { if (r.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -169,6 +170,8 @@ services:
       - MONGO_URI=mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@job-mongo:27017/job_aggregator?authSource=admin
       - ES_NODE=http://elasticsearch:9200
       - ADMIN_TOKEN_SECRET=${ADMIN_TOKEN_SECRET}
+      - INGESTION_ADMIN_KEY=${ADMIN_TOKEN_SECRET}
+      - INTERNAL_SERVICE_KEY=${ADMIN_TOKEN_SECRET}
     networks:
       - microservices-net
     restart: always
@@ -180,7 +183,7 @@ services:
       elasticsearch:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/health', (r) => { if (r.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -192,13 +195,14 @@ services:
     environment:
       - NODE_ENV=production
       - KAFKA_BROKER=kafka:9092
-      - NOTIFICATION_MODE=${NOTIFICATION_MODE:-PRODUCTION}
+      - NOTIFICATION_MODE=${NOTIFICATION_MODE:-SMTP}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
       - SMTP_FROM=${SMTP_FROM:-no-reply@seekers.careers}
-      - SUPPRESSION_STORE_PATH=/app/data/suppressions.json
+      - NOTIFICATIONS_STORE_PATH=/app/data/notifications_store.json
+      - SUPPRESSION_STORE_PATH=/app/data/notifications_store.json
     volumes:
       - notification_data:/app/data
     networks:
@@ -208,7 +212,7 @@ services:
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => { if (r.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -245,7 +249,7 @@ services:
     depends_on:
       - ingestion-service
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 0"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => { if (r.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -308,3 +312,4 @@ volumes:
   shared_uploads:
   scraper_data:
   notification_data:
+

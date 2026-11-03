@@ -24,6 +24,7 @@ class DurableNotificationStore {
     this.filePath =
       filePath ||
       process.env.NOTIFICATIONS_STORE_PATH ||
+      process.env.SUPPRESSION_STORE_PATH ||
       path.join(__dirname, '..', 'data', 'notifications_store.json');
 
     this.isCorrupted = false;

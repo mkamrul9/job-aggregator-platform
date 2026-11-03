@@ -26,6 +26,9 @@ jobs:
       - name: Run Contract Validation Suite
         run: node contracts/validate-contracts.js
 
+      - name: Run Operational Deployment & Disaster Recovery Verification Suite
+        run: node scripts/test-recovery-failure.js
+
   # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------

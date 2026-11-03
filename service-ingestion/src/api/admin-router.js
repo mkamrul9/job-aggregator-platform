@@ -27,10 +27,17 @@ function createAdminRouter({
   // Helper: Extract and authenticate caller identity
   function authenticateOperator(req) {
     const isProduction = process.env.NODE_ENV === 'production';
-    const configuredKey = process.env.INGESTION_ADMIN_KEY || process.env.INTERNAL_SERVICE_KEY;
+    const configuredKey =
+      process.env.ADMIN_TOKEN_SECRET ||
+      process.env.INGESTION_ADMIN_KEY ||
+      process.env.INTERNAL_SERVICE_KEY;
 
     if (isProduction && (!configuredKey || configuredKey === 'seekers-internal-admin-p12')) {
-      return { error: 'CONFIGURATION_ERROR', status: 500, message: 'INGESTION_ADMIN_KEY or INTERNAL_SERVICE_KEY must be configured in production.' };
+      return {
+        error: 'CONFIGURATION_ERROR',
+        status: 500,
+        message: 'ADMIN_TOKEN_SECRET, INGESTION_ADMIN_KEY, or INTERNAL_SERVICE_KEY must be configured in production.',
+      };
     }
 
     const expectedKey = configuredKey || 'seekers-internal-admin-p12';

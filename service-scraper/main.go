@@ -16,6 +16,14 @@ import (
 
 func main() {
 	// Parse CLI flags
+	defaultStateDir := os.Getenv("SCHEDULER_CHECKPOINT_DIR")
+	if defaultStateDir == "" {
+		defaultStateDir = os.Getenv("STATE_DIR")
+	}
+	if defaultStateDir == "" {
+		defaultStateDir = "./data/state"
+	}
+
 	var (
 		modeFlag        = flag.String("mode", "", "Execution mode: 'cli' or 'daemon' (auto-detected if unset)")
 		sourceFlag      = flag.String("source", "", "Source connector ID (e.g., 'greenhouse-feed', 'lever-feed', 'all')")
@@ -26,7 +34,7 @@ func main() {
 		outputFileFlag  = flag.String("output-file", "", "Target file path when -output=file")
 		dryRunFlag      = flag.Bool("dry-run", false, "Parse and validate jobs without publishing")
 		concurrencyFlag = flag.Int("concurrency", 3, "Maximum concurrent worker goroutines")
-		stateDirFlag    = flag.String("state-dir", "./data/state", "Directory for durable scheduler checkpoints and leases")
+		stateDirFlag    = flag.String("state-dir", defaultStateDir, "Directory for durable scheduler checkpoints and leases")
 		listSourcesFlag = flag.Bool("list-sources", false, "Print all registered sources and exit")
 	)
 	flag.Parse()

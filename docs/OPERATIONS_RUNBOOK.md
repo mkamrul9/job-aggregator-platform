@@ -119,56 +119,72 @@ Prometheus scrapes all backend services at 15-second intervals via `config-prome
 - **RTO (Recovery Time Objective):** <= 60 minutes (maximum acceptable restoration duration)
 
 ### Backup Procedure
-Execute authoritative snapshot script:
+Execute authoritative snapshot pipeline:
 ```bash
-node scripts/backup-stores.js
+# Real Mode (requires DATABASE_URL and MONGO_URI)
+node scripts/backup-stores.js --real
+
+# Local Fixture Demonstration Mode (synthetic staging baseline)
+node scripts/backup-stores.js --demo
 ```
 The script:
-1. Dumps PostgreSQL authoritative schema and rows (users, profiles, applications, durable erasures).
-2. Dumps MongoDB canonical job catalog and dead letter quarantine.
-3. Archives private object storage (resumes and export zips).
+1. In real mode: dumps PostgreSQL authoritative schema and rows (users, profiles, applications, durable erasures) and MongoDB canonical collections.
+2. In fixture demo mode: exports structured synthetic staging state explicitly labeled `FIXTURE_DEMO_NON_PRODUCTION`.
+3. Archives private object storage (resumes and export archives).
 4. Computes SHA-256 cryptographic checksums for every artifact.
-5. Emits `manifest.json` with timestamp and file metadata.
+5. Emits `manifest.json` authenticated with an HMAC-SHA256 signature to guarantee tamper-resistant provenance.
 
 ### Restoration Drill Procedure
 Execute verified restore drill:
 ```bash
-node scripts/restore-drill.js
+# Real Mode (verifies live restored instances)
+node scripts/restore-drill.js --real
+
+# Local Fixture Demonstration Mode
+node scripts/restore-drill.js --demo
 ```
 The restoration pipeline validates:
-1. **Pre-flight Integrity:** Verifies SHA-256 checksum of every artifact before unpacking.
-2. **Privacy & Durable Erasure Invariant:** Confirms that any account in `DurableErasureRecord` is NOT resurrected and remains permanently blocked (`403 ACCOUNT_PERMANENTLY_ERASED`).
-3. **Private Object Storage Containment:** Confirms purged resumes are absent from active storage.
-4. **Search Rebuild:** Rebuilds Elasticsearch projection directly from the restored canonical MongoDB collection.
-5. **Measures Actual RPO & RTO:** Records timing and asserts `RTO <= 60m` and `RPO <= 15m`.
+1. **Cryptographic Authenticity & Integrity:** Verifies manifest HMAC signature and individual artifact SHA-256 checksums before unpacking.
+2. **Post-Backup Tombstone Replay:** Replays durable erasure tombstones recorded AFTER the backup snapshot timestamp, ensuring deletions made after a backup are never resurrected.
+3. **Resurrection Rejection Invariant:** Validates that active directory lookups and sync probes for erased users are rejected with `403 ACCOUNT_PERMANENTLY_ERASED`.
+4. **Private Storage Containment:** Automatically purges restored resume assets belonging to erased users.
+5. **Search Rebuild:** Rebuilds Elasticsearch projection directly from the restored canonical MongoDB collection.
+6. **SLA Targets:** Verifies that operational targets (`RTO <= 60m` and `RPO <= 15m`) are maintained.
 
 ---
 
 ## 5. Automated Rollback Rehearsal
 
-To safely revert a failed deployment without losing durable state:
+To safely test reverting a deployment while verifying state preservation:
 ```bash
-node scripts/rollback-staging.js
+# Real Mode
+node scripts/rollback-staging.js --real
+
+# Local Fixture Demonstration Mode
+node scripts/rollback-staging.js --demo
 ```
 The rollback rehearsal verifies:
-1. **Forward Schema Compatibility:** Migrations are non-destructive and backward-compatible with the target image.
-2. **Durable State Preservation:** In-flight job listings, durable erasure records, and suppression lists remain 100% intact.
-3. **Service Health Recovery:** All 7 services respond with 200 OK to health probes under the rolled-back version.
+1. **OCI Image Digest Validation:** Strictly validates target image digest syntax (`sha256:[a-f0-9]{64}`) to prevent rolling back to invalid or non-immutable tags.
+2. **Forward Schema Compatibility:** Confirms that applied database migrations are non-destructive and backward-compatible with the target image.
+3. **Durable State Preservation:** Confirms zero data loss across active job catalog items, durable erasure records, and suppression lists.
+4. **Service Health Probes:** Evaluates health probe contracts across all 7 services under the rolled-back target.
 
 ---
 
 ## 6. Basic Operating Cost Analysis
 
-The Seekers platform is engineered for high capital efficiency using standard container virtualization:
+The Seekers platform is engineered for resource efficiency using containerized services. Below is an itemized baseline infrastructure estimate for a single-node staging or initial regional production deployment:
 
-| Component | Self-Hosted Linux VPS (Recommended Tier) | AWS / GCP Cloud Equivalent | Monthly Cost (VPS) |
+| Component | Architecture / Specification | Provider Benchmark (e.g. Hetzner, DO, Linode) | Estimated Monthly Cost |
 |---|---|---|---|
-| **Compute & Memory** | 1x Dedicated or Cloud VPS (4 vCPU, 8GB RAM, 160GB NVMe) | 2x t4g.medium / e2-standard-2 | $12.00 / month |
-| **Database Tier** | Containerized PostgreSQL 15 + MongoDB 7.0 (local NVMe volumes) | AWS RDS Postgres + MongoDB Atlas M10 | $0.00 (included in VPS) vs ~$120/mo cloud |
-| **Message Broker** | Apache Kafka 3.8.0 KRaft mode (zero Zookeeper overhead) | AWS MSK or Confluent Cloud | $0.00 (included in VPS) vs ~$150/mo cloud |
-| **Search Engine** | Elasticsearch 8.10.2 (capped to 1GB JVM Heap) | AWS OpenSearch Service | $0.00 (included in VPS) vs ~$60/mo cloud |
-| **Object Storage** | Local Private Volume mount or Cloudflare R2 / MinIO ($0 tier) | AWS S3 Standard | $0.00 / month |
-| **Observability** | Prometheus v2.54 + Grafana 11.2 (containerized) | Datadog / NewRelic | $0.00 (included in VPS) |
-| **Total Estimated Cost**| **~$12.00 – $20.00 / month** | **~$350.00 – $500.00 / month** | **96% Cost Reduction** |
+| **Compute & Host** | 1x Dedicated/Cloud VPS (4 vCPU, 8–16 GB RAM, 80–160 GB NVMe) | Hetzner CPX31 / DO Basic Droplet | ~$14.00 – $24.00 / mo |
+| **Database Tier** | Containerized PostgreSQL 15 + MongoDB 7.0 on isolated private bridge | Included in host compute/storage | $0.00 additional |
+| **Message Broker** | Containerized Kafka 3.8.0 KRaft mode | Included in host compute/storage | $0.00 additional |
+| **Search Engine** | Containerized Elasticsearch 8.10.2 (1GB JVM heap limit) | Included in host compute/storage | $0.00 additional |
+| **Off-Site Backups** | Encrypted S3-compatible snapshot storage (e.g. Backblaze B2, Cloudflare R2) | 100 GB storage + egress | ~$1.00 – $5.00 / mo |
+| **Domain & Edge TLS** | Registered domain + Cloudflare free DNS / automated Let's Encrypt | Standard TLD registrar | ~$1.00 – $2.00 / mo |
+| **Observability** | Prometheus v2.54 + Grafana 11.2 (containerized on-node) | Included in host compute/storage | $0.00 additional |
+| **Total Estimated Baseline** | **Single-Host Staging / Small-Scale Topology** | **Standard VPS + Off-Site Backups** | **~$16.00 – $31.00 / month** |
 
-*Note: For the portfolio showcase and initial regional launch, the $0 Free Tier local/developer setup and a single $12/month VPS comfortably support up to 5,000 active candidates with 15-minute RPO and sub-second search response.*
+*Disclaimer: These figures represent estimated baseline infrastructure costs using commodity VPS providers and do not constitute capacity guarantees or production service level agreements. Production capacity, latency thresholds, concurrency limits, and scaling requirements are empirically measured during Phase 15 performance testing.*
+

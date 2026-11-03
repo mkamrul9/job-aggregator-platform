@@ -23,7 +23,7 @@ groups:
           runbook: "docs/OPERATIONS_RUNBOOK.md#dlq-quarantine-triage"
 
       - alert: NotificationDeliveryFailureHigh
-        expr: rate(notification_deliveries_total{status="failed"}[5m]) > 0.05
+        expr: (sum(rate(notification_deliveries_total{status="failed"}[5m])) or vector(0)) / (sum(rate(notification_deliveries_total[5m])) > 0) > 0.05
         for: 2m
         labels:
           severity: warning
@@ -33,7 +33,7 @@ groups:
           runbook: "docs/OPERATIONS_RUNBOOK.md#delivery-failures"
 
       - alert: KafkaConsumerLagHigh
-        expr: kafka_consumer_lag > 500
+        expr: (sum(kafka_consumer_lag) or vector(0)) > 500
         for: 3m
         labels:
           severity: warning
@@ -43,7 +43,7 @@ groups:
           runbook: "docs/OPERATIONS_RUNBOOK.md#kafka-consumer-lag"
 
       - alert: BackupDrillOverdue
-        expr: time() - seekers_backup_last_timestamp_seconds > 86400
+        expr: (time() - (seekers_backup_last_timestamp_seconds or vector(0))) > 86400
         for: 1h
         labels:
           severity: warning
@@ -51,3 +51,4 @@ groups:
           summary: "Disaster recovery backup drill is overdue"
           description: "No verified backup restoration drill has been recorded in the past 24 hours."
           runbook: "docs/OPERATIONS_RUNBOOK.md#backup-and-restore-drills"
+

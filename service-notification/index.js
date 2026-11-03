@@ -23,6 +23,12 @@ const SOCKET_CORS_ORIGIN = (
 ).split(',');
 const NOTIFICATION_MODE = (process.env.NOTIFICATION_MODE || 'CAPTURE').toUpperCase();
 
+if (process.env.NODE_ENV === 'production') {
+  if (!['CAPTURE', 'SMTP'].includes(NOTIFICATION_MODE)) {
+    throw new Error(`Invalid NOTIFICATION_MODE "${NOTIFICATION_MODE}". Expected CAPTURE or SMTP.`);
+  }
+}
+
 // 1. Prometheus Metrics Setup
 const register = new promClient.Registry();
 promClient.collectDefaultMetrics({ register });
@@ -59,6 +65,9 @@ function createTransporter() {
         pass: process.env.SMTP_PASS || '',
       },
     });
+  }
+  if (NOTIFICATION_MODE === 'SMTP' && process.env.NODE_ENV === 'production') {
+    throw new Error('SMTP_HOST is required in production when NOTIFICATION_MODE=SMTP.');
   }
   // Safe default: JSON transport for non-production environments to avoid accidental real sends
   return nodemailer.createTransport({
