@@ -237,6 +237,119 @@ describe('UserService', () => {
         delete process.env.BETA_MAX_PARTICIPANTS;
       }
     });
+
+    it('should fail closed and reject new registrations when BETA_ALLOWLIST_ENABLED is true and allowlist is empty', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = '';
+      mockUserRepository.findById.mockResolvedValue(null);
+      mockUserRepository.countUsers.mockResolvedValue(10);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'unlisted-uid',
+            email: 'anyone@example.com',
+            emailVerified: true,
+          }),
+        ).rejects.toThrow('An invitation is required');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should atomically serialize concurrent new registrations and prevent exceeding capacity limit', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_MAX_PARTICIPANTS = '50';
+      process.env.BETA_INVITE_ALLOWLIST = 'user1@example.com,user2@example.com';
+
+      let currentUsers = 49;
+      mockUserRepository.findById.mockResolvedValue(null);
+      mockUserRepository.countUsers.mockImplementation(() =>
+        Promise.resolve(currentUsers),
+      );
+      mockUserRepository.upsertUser.mockImplementation(
+        (id: string, email: string) => {
+          currentUsers++;
+          return Promise.resolve({
+            ...mockUserWithProfile,
+            id,
+            email,
+          });
+        },
+      );
+
+      try {
+        const results = await Promise.allSettled([
+          service.syncUser({
+            id: 'uid-1',
+            email: 'user1@example.com',
+            emailVerified: true,
+          }),
+          service.syncUser({
+            id: 'uid-2',
+            email: 'user2@example.com',
+            emailVerified: true,
+          }),
+        ]);
+
+        const fulfilled = results.filter((r) => r.status === 'fulfilled');
+        const rejected = results.filter((r) => r.status === 'rejected');
+
+        expect(fulfilled.length).toBe(1);
+        expect(rejected.length).toBe(1);
+        expect(currentUsers).toBe(50);
+        const firstRejected = rejected[0];
+        if (firstRejected && firstRejected.status === 'rejected') {
+          const err = firstRejected.reason as Error;
+          expect(err.message).toContain(
+            'capacity (50 participants) has been reached',
+          );
+        }
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_MAX_PARTICIPANTS;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should allow existing user resync even when cohort capacity is reached', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_MAX_PARTICIPANTS = '50';
+      mockUserRepository.findById.mockResolvedValue(mockUserWithProfile);
+      mockUserRepository.upsertUser.mockResolvedValue(mockUserWithProfile);
+
+      try {
+        const res = await service.syncUser({
+          id: mockUserWithProfile.id,
+          email: mockUserWithProfile.email,
+          emailVerified: true,
+        });
+        expect(res.user.id).toBe(mockUserWithProfile.id);
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_MAX_PARTICIPANTS;
+      }
+    });
+
+    it('should enforce beta allowlist in findOrCreateUser for new users', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = '';
+      mockUserRepository.findById.mockResolvedValue(null);
+      mockUserRepository.countUsers.mockResolvedValue(10);
+
+      try {
+        await expect(
+          service.findOrCreateUser({
+            id: 'new-uid',
+            email: 'uninvited@example.com',
+          }),
+        ).rejects.toThrow('An invitation is required');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
   });
 
   describe('getProfile', () => {

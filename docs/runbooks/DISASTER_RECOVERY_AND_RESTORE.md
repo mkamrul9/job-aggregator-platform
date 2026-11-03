@@ -82,3 +82,4 @@ If the restored version is found to be incompatible with subsequent event schema
 node scripts/rollback-staging.js --real
 ```
 Verify that rollback image conforms to `sha256:64hex` format and that all 7 microservice health probes return HTTP 200.
+

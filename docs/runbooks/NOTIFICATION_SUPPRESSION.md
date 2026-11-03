@@ -61,3 +61,4 @@ In `CAPTURE` mode, emails are written exclusively to the local JSON store (`data
    node service-notification/cli.js stats
    ```
 4. Confirm audit record in the notification durable store.
+

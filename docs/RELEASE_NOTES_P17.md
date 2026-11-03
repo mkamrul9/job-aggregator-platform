@@ -2,7 +2,7 @@
 
 **Release:** Seekers Microservices Job Aggregator & Candidate Intelligence Platform  
 **Version:** `v1.0.0-rc1` (Release Candidate 1)  
-**Baseline Git SHA:** `c96b080caf7f01b35aea1b540e40aca8fb04c5f5`  
+**Branch:** `codex/production-p17-qualified-production-launch`  
 **License:** MIT  
 
 ---
@@ -37,3 +37,4 @@ node scripts/launch-production.js --demo
 # 3. Verify Docker topology:
 docker compose -f docker-compose.staging.yml config
 ```
+

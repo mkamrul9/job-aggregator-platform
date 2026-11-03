@@ -65,3 +65,4 @@ Then restart the ingestion and scheduler services.
    curl -s http://localhost:4000/api/v1/admin/audit -H "x-admin-key: $ADMIN_API_KEY"
    ```
 4. Perform root cause analysis (RCA) and adjust connector rate limits in `service-scraper/registry.go` before re-enabling the source.
+

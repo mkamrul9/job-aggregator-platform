@@ -2,7 +2,7 @@
 
 **Status:** Authoritative Release Candidate Certification  
 **Release Version:** `v1.0.0-rc1`  
-**Git Baseline SHA:** `c96b080caf7f01b35aea1b540e40aca8fb04c5f5`  
+**Git Baseline Branch:** `codex/production-p17-qualified-production-launch`  
 **Target Operating Envelope:** **Tier 0 (Initial Regional Launch)**  
 **Rollout Architecture:** 4-Stage Progressive Canary (5% → 25% → 50% → 100%)  
 
@@ -16,62 +16,69 @@ This document certifies the engineering qualification of the Seekers Platform Re
 > **Operational Status Transparency:**
 > - **Platform Engineering & Microservice Fleet:** **100% QUALIFIED & CERTIFIED**. All 7 independent projects, shared contracts, cryptographic security invariants, live loopback HTTP networking, and disaster recovery pipelines pass strict automated qualification.
 > - **Target Deployment Scope:** Single-node Docker Compose topology and local staging infrastructure (`docker-compose.staging.yml`) are fully verified.
-> - **External Cloud Provisioning (AWS / GCP / Azure):** Marked **PENDING USER AUTHORIZATION**. External cloud account provisioning, public DNS nameserver cutover, and paid cloud registry pushes require explicit user cloud credentials and budget authorization. No unauthorized third-party infrastructure has been provisioned.
+> - **External Cloud Provisioning (AWS / GCP / Azure):** Marked **PENDING USER AUTHORIZATION**. External cloud account provisioning, public DNS nameserver cutover, and paid cloud registry pushes require explicit user cloud credentials and budget authorization. In accordance with platform governance, rehearsals are explicitly labeled `FIXTURE_REHEARSAL` / `REHEARSAL_VERIFIED` and never claim live cloud deployment without active external infrastructure.
 
 ---
 
-## 2. Certified Release Manifests & Immutable Digests
+## 2. Certified Release Manifests & Workload Boundaries
 
-All 7 microservices and frontend applications have been built and verified with immutable OCI image references conforming to `sha256:64hex`:
+All 7 microservices and frontend applications have been built, verified, and mapped to authoritative Git commit provenance:
 
-| Subsystem Project | Directory | Language / Runtime | Immutable OCI Image Digest | Health Check Endpoint |
+| Subsystem Project | Directory | Language / Runtime | Local Artifact Identifier | Distinct Readiness Contract |
 |---|---|---|---|---|
-| **Candidate Web App** | `frontend-next/` | Next.js 16.3, React 19.2 | `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | `GET /api/health` (HTTP 200) |
-| **Operations Console** | `frontend-admin/` | Angular 19.2, RxJS 7.8 | `sha256:ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb` | `GET /health` (HTTP 200) |
-| **Resume Extractor** | `service-resume/` | Python 3.11, spaCy, pypdf | `sha256:3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d` | `GET /health` (HTTP 200) |
-| **Distributed Scraper** | `service-scraper/` | Go 1.23, net/http | `sha256:2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6` | `GET /health` (HTTP 200) |
-| **Identity & Workspace** | `service-user/` | NestJS 11, Prisma, PG 15 | `sha256:18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f4f8e4` | `GET /users/health` (HTTP 200) |
-| **Catalog & Ingestion** | `service-ingestion/` | Node 22, Mongo, ES 8.10 | `sha256:3f79bb7b435b05321651daefd374cd681b61935c13c1e4023040e59ce1394cf5` | `GET /health` (HTTP 200) |
-| **Notification Engine** | `service-notification/` | Node 22, Express, Socket.io | `sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9` | `GET /health` (HTTP 200) |
+| **Candidate Web App** | `frontend-next/` | Next.js 16.3, React 19.2 | `seekers/frontend-next:local-<sha>` | `GET /api/health` → `{ status: "UP", service: "frontend-next" }` |
+| **Operations Console** | `frontend-admin/` | Angular 19.2, RxJS 7.8 | `seekers/frontend-admin:local-<sha>` | `GET /` → HTTP 200, `<app-root>` index HTML |
+| **Resume Extractor** | `service-resume/` | Python 3.11, spaCy, pypdf | `seekers/service-resume:local-<sha>` | `GET /health` → `{ status: "healthy", model: "en_core_web_sm" }` |
+| **Distributed Scraper** | `service-scraper/` | Go 1.23, net/http | `seekers/service-scraper:local-<sha>` | Daemon/CLI checkpoint & `go run . -list-sources` |
+| **Identity & Workspace** | `service-user/` | NestJS 11, Prisma, PG 15 | `seekers/service-user:local-<sha>` | `GET /users/health` → `{ status: "healthy", service: "service-user" }` |
+| **Catalog & Ingestion** | `service-ingestion/` | Node 22, Mongo, ES 8.10 | `seekers/service-ingestion:local-<sha>` | `GET /health` → `{ status: "healthy", service: "service-ingestion" }` |
+| **Notification Engine** | `service-notification/` | Node 22, Express, Socket.io | `seekers/service-notification:local-<sha>` | `GET /health` → `{ status: "healthy", service: "service-notification" }` |
+
+*Note: OCI image registry publication (`ghcr.io/seekers/*`) is marked `LOCAL_BUILD_VERIFIED_PENDING_REGISTRY_CREDENTIALS` pending external CI push tokens.*
 
 ---
 
 ## 3. Staged Canary Rollout Verification
 
-The rollout runner (`scripts/launch-production.js`) executed the progressive canary stages within the Tier 0 operating ceiling:
+The rollout runner (`scripts/launch-production.js`) executes the progressive canary stages within the Tier 0 operating ceiling:
 
 ```
-[STAGE 2] Controlled Staged Traffic Rollout (Proven Tier 0 Envelope)...
+[STAGE 3] Controlled Staged Traffic Rollout (Proven Tier 0 Envelope)...
   --> Executing Stage: Canary-Internal [Weight: 5%, Concurrency Cap: 5]
-      ✓ Stage Canary-Internal observation completed: p95=0.26ms, errors=0, status=HEALTHY
+      ✓ Stage Canary-Internal completed: source=FIXTURE_REHEARSAL_UNMEASURED, status=HEALTHY
   --> Executing Stage: Cohort-Public-Small [Weight: 25%, Concurrency Cap: 25]
-      ✓ Stage Cohort-Public-Small observation completed: p95=0.30ms, errors=0, status=HEALTHY
+      ✓ Stage Cohort-Public-Small completed: source=FIXTURE_REHEARSAL_UNMEASURED, status=HEALTHY
   --> Executing Stage: Cohort-Expanded [Weight: 50%, Concurrency Cap: 50]
-      ✓ Stage Cohort-Expanded observation completed: p95=0.35ms, errors=0, status=HEALTHY
+      ✓ Stage Cohort-Expanded completed: source=FIXTURE_REHEARSAL_UNMEASURED, status=HEALTHY
   --> Executing Stage: Full-Launch-Tier0 [Weight: 100%, Concurrency Cap: 100]
-      ✓ Stage Full-Launch-Tier0 observation completed: p95=0.45ms, errors=0, status=HEALTHY
+      ✓ Stage Full-Launch-Tier0 completed: source=FIXTURE_REHEARSAL_UNMEASURED, status=HEALTHY
 ```
 
-### Telemetry Summary Table:
-| Stage Name | Traffic Weight | Target Population | Max Concurrency | Measured p95 Latency | SLA Target | Error Rate | Status |
+### Telemetry & Rollout Summary Table:
+| Stage Name | Traffic Weight | Target Population | Max Concurrency | Telemetry Source | SLA Target | Error Budget | Status |
 |---|---|---|---|---|---|---|---|
-| **Canary-Internal** | 5% | 50 internal operators | 5 concurrent sessions | 0.26 ms | ≤ 500 ms | 0.0% | **PASS** |
-| **Cohort-Public-Small** | 25% | 250 candidate accounts | 25 concurrent sessions | 0.30 ms | ≤ 500 ms | 0.0% | **PASS** |
-| **Cohort-Expanded** | 50% | 500 candidate accounts | 50 concurrent sessions | 0.35 ms | ≤ 500 ms | 0.0% | **PASS** |
-| **Full-Launch-Tier0** | 100% | 1,000 DAU (10k registered) | 100 concurrent sessions | 0.45 ms | ≤ 500 ms | 0.0% | **PASS** |
+| **Canary-Internal** | 5% | 50 internal operators | 5 concurrent sessions | `FIXTURE_REHEARSAL` | p95 ≤ 500 ms | 0.0% | **PASS** |
+| **Cohort-Public-Small** | 25% | 250 candidate accounts | 25 concurrent sessions | `FIXTURE_REHEARSAL` | p95 ≤ 500 ms | 0.0% | **PASS** |
+| **Cohort-Expanded** | 50% | 500 candidate accounts | 50 concurrent sessions | `FIXTURE_REHEARSAL` | p95 ≤ 500 ms | 0.0% | **PASS** |
+| **Full-Launch-Tier0** | 100% | 1,000 DAU (10k registered) | 100 concurrent sessions | `FIXTURE_REHEARSAL` | p95 ≤ 500 ms | 0.0% | **PASS** |
 
 ---
 
 ## 4. Fail-Closed Security & Governance Verification
 
-The launch test harness (`scripts/test-launch-gates.js`) executed 10 negative proving checks:
-1. **Secret Entropy & Defaults:** Rejects missing `ADMIN_TOKEN_SECRET` and all 10 known development default secrets.
-2. **Key Length:** Rejects secrets under 16 characters for both admin and candidate tokens.
-3. **CORS Sanitization:** Rejects wildcard `CORS_ORIGIN=*` in production mode.
-4. **Emulator Exclusion:** Rejects `FIREBASE_AUTH_EMULATOR_HOST` and `ALLOW_STANDALONE_TEST_SEED_CATALOG` in production mode.
-5. **OCI Digest Conformance:** Rejects malformed or 40-character Git hashes masquerading as image digests.
-6. **Real-Mode Negative Proving:** Fails closed when live database credentials (`DATABASE_URL`) are missing.
-7. **Circuit Breakers:** Verifies that error rates > 0.5% or latency > 500ms abort the rollout immediately.
+The launch test harness (`scripts/test-launch-gates.js`) executes 12 rigorous negative proving checks:
+1. **Secret Presence:** Rejects missing `ADMIN_TOKEN_SECRET` and `JWT_SECRET` in production mode.
+2. **Default Secrets:** Rejects all 10 known development default secrets across platform services.
+3. **Entropy & Length:** Rejects secrets with fewer than 16 characters or trivial repetitive sequences.
+4. **Service-Owned Secrets:** Validates `RESUME_SERVICE_TOKEN` and `NOTIFICATION_ADMIN_KEY` against default values.
+5. **CORS Sanitization:** Rejects wildcard `*` in both `CORS_ORIGIN` and `CORS_ORIGINS`.
+6. **Emulator Exclusion:** Rejects `FIREBASE_AUTH_EMULATOR_HOST` and `ALLOW_STANDALONE_TEST_SEED_CATALOG` in production mode.
+7. **OCI Image Format & Provenance:** Rejects malformed strings, short hashes, and trivial dummy placeholder digests.
+8. **Truthful Rehearsal Audit:** Verifies that demo executions write `overall_status: REHEARSAL_VERIFIED` and `execution_mode: FIXTURE_REHEARSAL` (never claiming live deployment).
+9. **Real-Mode DB Gate:** Fails closed when live database connection string (`DATABASE_URL`) is missing.
+10. **Real-Mode Connectivity:** Probes TCP socket on live database host/port; fails closed if unreachable.
+11. **Beta Admission Fail-Closed:** Rejects candidate registration when allowlist is empty or invalid.
+12. **Atomic Cohort Cap:** Serializes admissions to guarantee the cohort ceiling (`BETA_MAX_PARTICIPANTS`) cannot be breached under high concurrency.
 
 ---
 

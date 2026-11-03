@@ -95,6 +95,26 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
   private workerLoopTimer: NodeJS.Timeout | null = null;
   private readonly workerId = `worker-${process.pid}-${randomUUID().slice(0, 6)}`;
   private isShuttingDown = false;
+  private admissionMutex: Promise<void> = Promise.resolve();
+
+  private async acquireAdmissionLock<T>(action: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const waitLock = this.admissionMutex;
+    this.admissionMutex = nextLock;
+    try {
+      await waitLock;
+    } catch {
+      // Continue even if previous waiter threw
+    }
+    try {
+      return await action();
+    } finally {
+      release();
+    }
+  }
 
   constructor(
     private readonly userRepository: UserRepository,
@@ -148,8 +168,36 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
   }): Promise<{ message: string; user: UserProfileResponseDto }> {
     if (process.env.BETA_ALLOWLIST_ENABLED === 'true') {
       const existingUser = await this.userRepository.findById(data.id);
-      if (!existingUser) {
-        // Enforce cohort capacity ceiling
+      if (existingUser) {
+        // Existing user resync is idempotent; update profile without consuming new capacity
+        const user = await this.userRepository.upsertUser(
+          data.id,
+          data.email,
+          data.emailVerified ?? false,
+        );
+        return {
+          message: 'User synchronized successfully with PostgreSQL',
+          user: mapToUserProfileResponse(user, user.profile),
+        };
+      }
+
+      // Serialize new candidate admissions to prevent concurrent race conditions
+      return this.acquireAdmissionLock(async () => {
+        // Double check existence inside serialized lock
+        const existingInside = await this.userRepository.findById(data.id);
+        if (existingInside) {
+          const user = await this.userRepository.upsertUser(
+            data.id,
+            data.email,
+            data.emailVerified ?? false,
+          );
+          return {
+            message: 'User synchronized successfully with PostgreSQL',
+            user: mapToUserProfileResponse(user, user.profile),
+          };
+        }
+
+        // 1. Enforce cohort capacity ceiling atomically
         const maxParticipants = parseInt(
           process.env.BETA_MAX_PARTICIPANTS || '50',
           10,
@@ -161,14 +209,16 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
             message: `Beta cohort capacity (${maxParticipants} participants) has been reached.`,
           });
         }
-        // Enforce allowlist if configured
+
+        // 2. Enforce allowlist: FAIL-CLOSED if allowlist is empty or email not present
         const allowlistStr = process.env.BETA_INVITE_ALLOWLIST || '';
         const allowedEmails = allowlistStr
           .split(',')
           .map((e) => e.trim().toLowerCase())
           .filter(Boolean);
+
         if (
-          allowedEmails.length > 0 &&
+          allowedEmails.length === 0 ||
           !allowedEmails.includes(data.email.toLowerCase())
         ) {
           throw new ForbiddenException({
@@ -177,7 +227,18 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
               'Public registration is restricted during bounded beta. An invitation is required.',
           });
         }
-      }
+
+        const user = await this.userRepository.upsertUser(
+          data.id,
+          data.email,
+          data.emailVerified ?? false,
+        );
+
+        return {
+          message: 'User synchronized successfully with PostgreSQL',
+          user: mapToUserProfileResponse(user, user.profile),
+        };
+      });
     }
 
     const user = await this.userRepository.upsertUser(
@@ -193,7 +254,16 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
   }
 
   async findOrCreateUser(data: { id: string; email: string }) {
-    return this.userRepository.upsertUser(data.id, data.email, false);
+    const existing = await this.userRepository.findById(data.id);
+    if (existing) {
+      return this.userRepository.upsertUser(data.id, data.email, false);
+    }
+    await this.syncUser({
+      id: data.id,
+      email: data.email,
+      emailVerified: false,
+    });
+    return (await this.userRepository.findById(data.id))!;
   }
 
   async getProfile(userId: string): Promise<UserProfileResponseDto> {
