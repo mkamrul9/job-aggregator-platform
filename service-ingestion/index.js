@@ -16,6 +16,7 @@ const { startProjectionWorker } = require('./src/search/projection-worker');
 const { validateIncomingEvent } = require('./src/events/validator');
 const { createJobsRouter } = require('./src/api/jobs-router');
 const { createAdminRouter } = require('./src/api/admin-router');
+const { processMessage } = require('./src/pipeline');
 
 // Environment variables
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
@@ -110,56 +111,6 @@ function createIngestionApp(
   return app;
 }
 
-/**
- * Processes incoming Kafka message or event buffer.
- * Performs schema validation, dead-letter quarantine for poison events,
- * atomic MongoDB persistence with revision tracking, and ES projection.
- */
-async function processMessage(messageValue, { jobsCollection, deadLettersCollection = null, esClient } = {}) {
-  if (!messageValue) return null;
-
-  // 1. Validate envelope and payload
-  const validation = validateIncomingEvent(messageValue);
-  if (!validation.valid) {
-    console.warn(`⚠️ Poison/Malformed event detected: ${validation.errors.join('; ')}`);
-    if (!deadLettersCollection) {
-      throw new Error(
-        `Durable quarantine unavailable: deadLettersCollection is missing. Rejected event errors: ${validation.errors.join('; ')}`
-      );
-    }
-    const deadLetter = await quarantineDeadLetter(
-      deadLettersCollection,
-      messageValue,
-      validation.errors,
-      validation.envelope || validation.parsed
-    );
-    return { quarantined: true, errors: validation.errors, dead_letter_id: deadLetter?.id };
-  }
-
-  let canonicalJob = null;
-
-  // 2. Upsert into MongoDB canonical collection
-  if (jobsCollection) {
-    canonicalJob = await upsertJobDocument(jobsCollection, validation.payload, {
-      eventTimestamp: validation.envelope?.timestamp,
-      isEnvelope: Boolean(validation.isEnvelope),
-    });
-  } else {
-    const { toCanonicalJob } = require('./src/models/job');
-    canonicalJob = toCanonicalJob(validation.payload);
-  }
-
-  // 3. Project to Elasticsearch if available
-  if (esClient && canonicalJob) {
-    try {
-      await indexJobToEs(esClient, canonicalJob);
-    } catch (esErr) {
-      console.error(`⚠️ Elasticsearch indexing failed for "${canonicalJob.title}":`, esErr.message);
-    }
-  }
-
-  return canonicalJob;
-}
 
 async function run() {
   const mongoClient = new MongoClient(MONGO_URI);

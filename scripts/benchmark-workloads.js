@@ -25,7 +25,7 @@ const { seedBenchmarkDataset, generateDeterministicListing, generateDeterministi
 const { evaluateJobMatch } = require('../service-notification/src/matcher');
 const { DeliveryDispatcher } = require('../service-notification/src/dispatcher');
 const { DurableNotificationStore } = require('../service-notification/src/storage');
-const { processMessage } = require('../service-ingestion/index');
+const { processMessage } = require('../service-ingestion/src/pipeline');
 
 function calculatePercentiles(latencies) {
   if (!latencies || latencies.length === 0) {

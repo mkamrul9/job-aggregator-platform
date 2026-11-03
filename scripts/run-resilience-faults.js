@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { processMessage } = require('../service-ingestion/index');
+const { processMessage } = require('../service-ingestion/src/pipeline');
 const { normalizeCanonicalUrl } = require('../service-ingestion/src/models/job');
 const { DurableNotificationStore } = require('../service-notification/src/storage');
 const { DeliveryDispatcher } = require('../service-notification/src/dispatcher');
