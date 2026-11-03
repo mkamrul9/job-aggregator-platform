@@ -110,3 +110,23 @@ The candidate web application supports both real Firebase authentication and iso
   - `768px` (tablet portrait): Reflowed 2-column grid and clean slide-in drawers
   - `1280px+` (desktop): Dense 3-column scannable workspace layout
 - **Outbound Aggregator Notice:** Clearly states that an outbound click is not a completed job application; applications are managed externally by original employer job boards.
+
+---
+
+## 6. Engineering Tradeoffs & Known Limitations
+
+- **Next.js App Router SSR vs SPA:** Selected Next.js App Router to deliver high-performance Server-Side Rendered (SSR) job listings for public SEO and instantaneous initial page load, while utilizing React Client Components for interactive workspace tracking and resume uploads.
+- **Aggregator Model vs Direct Hiring:** Seekers operates strictly as an aggregator; outbound links direct candidates to official employer applicant tracking systems (Greenhouse, Lever, Workday) with tracking parameters safely stripped.
+- **Client Cache Revalidation:** Job detail pages leverage ETag-based 304 revalidation and bounded HTTP cache headers, ensuring candidate clicks do not repeatedly transfer unchanged JSON payloads.
+
+---
+
+## 7. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **Lead Frontend Engineer — Next.js Candidate Portal:** Architected a production-ready candidate job portal using Next.js 14 (App Router), React, TypeScript, and TailwindCSS. Engineered fast server-side rendered search with keyset pagination, multi-facet filtering, drag-and-drop resume uploading with client-side byte validation, and an interactive job tracking workspace. Implemented responsive layouts qualified across 320px–1280px+ viewports with zero horizontal overflow.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Job seekers experience slow catalog browsing, bloated client bundles, and disjointed mobile layouts on traditional aggregator sites.
+2. **Solution Architecture:** Leveraged Next.js 14 Server Components for search discovery to optimize First Contentful Paint (FCP) and SEO, alongside isolated Client Components for interactive workspace tracking.
+3. **Privacy & UX:** Built GDPR-compliant data export and deletion workflows with a 30-day grace period, transparent outbound employer link disclosure, and verified WCAG 2.1 AA accessibility.

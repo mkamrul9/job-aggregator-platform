@@ -141,7 +141,22 @@ npm test
 
 ---
 
-## 7. Operational Limitations
+## 7. Engineering Tradeoffs & Known Limitations
 
-1. **Storage Concurrency:** The atomic JSON storage adapter coordinates local multi-instance processes via on-disk synchronization. High-throughput distributed clustering across distinct machines requires a PostgreSQL or Redis storage adapter.
-2. **SMTP Provider:** In `CAPTURE` mode, emails are stored locally for verification and are not transmitted over the wire. In `SMTP` mode, external mail delivery requires a reachable SMTP host with valid authentication and non-empty `ALERT_UNSUBSCRIBE_SECRET`.
+- **Atomic File-backed JSON Storage vs Distributed DBMS:** Implemented `DurableNotificationStore` featuring cross-process exclusive file locking (`_withLock`), atomic rename swaps, and automatic corruption isolation (`.corrupt-<timestamp>`) for zero-dependency standalone operation, lightweight local verification, and predictable test execution. High-throughput distributed clustering across multi-region server fleets would swap this store for a managed PostgreSQL or Redis adapter.
+- **Double Suppression Scoping:** Separated global suppressions (`global_suppressions` for hard bounces, spam complaints, and global opt-outs) from per-subscription suppressions (`subscription_suppressions`). This ensures unsubscribing from one specific search alert never unintentionally deactivates other unrelated active career notifications.
+- **Two-Phase Unsubscribe (Link Prefetch Protection):** Implemented strict RFC 8058 compliance where `POST /unsubscribe` executes state mutation and suppression recording, while `GET /unsubscribe` displays a confirmation web form. This prevents corporate mail scanners and email prefetch bots from accidentally terminating candidate subscriptions.
+- **Safe Capture vs Live SMTP:** Default `CAPTURE` mode buffers full email envelopes locally without external network dependencies, guaranteeing zero accidental test emails during local verification or CI runs. `SMTP` mode is safely gated behind non-empty secret and relay configuration.
+
+---
+
+## 8. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **Node.js Backend Engineer — Real-Time Notification & Matching Service:** Built an event-driven job alert microservice using Node.js 20, Express, Socket.io 4, and KafkaJS. Engineered token-boundary candidate preference matching with currency normalization, crash-safe multi-worker delivery state machines with atomic file locking and corruption quarantine, and RFC 8058 one-click unsubscribe with HMAC-SHA256 signature verification.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Broadcasting live job events and delivering candidate email alerts requires token-accurate matching, strict multi-worker delivery deduplication, rock-solid bounce/complaint suppression, and tamper-proof unsubscribe links that resist automated prefetch bots.
+2. **Solution Architecture:** Engineered an event-driven consumer processing `job.ingested.v1` Kafka streams, evaluating jobs against candidate subscriptions using boundary-safe regex matching and salary normalization. Broadcasts sanitized real-time events via Socket.io and queues outbound email deliveries into an idempotent state machine.
+3. **Resilience & Security:** Designed crash-resilient atomic storage with cross-process lock files, automated corrupt state isolation, and dedicated HMAC-SHA256 unsubscribe tokens with 90-day finite expiration and purpose binding. Tested with standalone CLI replay and comprehensive automated test suites.
+

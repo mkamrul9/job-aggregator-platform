@@ -38,6 +38,9 @@ jobs:
       - name: Run Fault Injection & Resilience Recovery Suite
         run: node scripts/run-resilience-faults.js
 
+      - name: Run Bounded Beta Candidate & Operator Journey Qualification Suite
+        run: node scripts/qualify-beta-journeys.js
+
   # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------

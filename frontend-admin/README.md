@@ -123,3 +123,23 @@ The application supports both independent root hosting and Nginx reverse proxy s
 - **Direct root deployment:** Accessed at `http://localhost:4200/` or `http://localhost/` (`<base href="/">`)
 - **Gateway deployment:** Accessed behind Nginx at `http://localhost/admin/` (`<base href="/admin/">`)
 - **Dynamic detection script** in `src/index.html` resolves the correct base href at runtime before Angular bootstraps, ensuring deep links, relative assets, and client routing function seamlessly across environments.
+
+---
+
+## 7. Engineering Tradeoffs & Known Limitations
+
+- **Dual Adapter Architecture vs Monolithic API Client:** Implementing a formal `OperationsAdapter` interface decoupled from concrete backends enables zero-backend portfolio review with interactive streaming simulation, while preserving 100% genuine REST contracts for live fleet operations.
+- **Client-Side Simulation vs Real Fleet:** Standalone demo mode executes all moderation and DLQ replays in memory; changes reset upon browser reload or clicking `Reset`.
+- **RBAC in Browser vs Gateway Security:** Persona switcher is intended for local role auditioning; in production mode, Nginx and the Node Ingestion API enforce cryptographic JWT verification and reject unauthorized roles.
+
+---
+
+## 8. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **Angular Senior Frontend Engineer — Operations Console:** Engineered an enterprise administrative dashboard using Angular 19, TypeScript, RxJS, and TailwindCSS for real-time crawler orchestration, Kafka queue telemetry, and catalog moderation. Designed a dual-adapter pattern enabling 100% zero-dependency in-memory simulation for portfolio evaluation alongside authenticated REST gateway integration, verified by 58 passing Karma tests.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Platform operators need real-time observability and moderation controls over asynchronous ingestion, Kafka dead-letters, and source crawlers without accessing raw databases or production terminals.
+2. **Solution Architecture:** Created a reactive Angular 19 dashboard utilizing RxJS observables to manage live stream telemetry, pipeline health metrics, and audit trails. Implemented clean base href detection allowing seamless operation under both root (`/`) and subpath gateway routing (`/admin/`).
+3. **Resilience & RBAC:** Enforced role-based capability boundaries (`ADMIN`, `OPERATOR`, `READ_ONLY`) across UI controls, preventing destructive actions (e.g. index rebuilds, source pausing) by unauthorized operators.

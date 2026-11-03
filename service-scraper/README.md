@@ -120,3 +120,23 @@ go test -v ./...
 # Run code hygiene checks
 go vet ./...
 ```
+
+---
+
+## 6. Engineering Tradeoffs & Known Limitations
+
+- **Lightweight HTTP/JSON vs Headless Browsers:** Prioritizes direct public ATS JSON feeds (Greenhouse/Lever) for speed and sub-second collection latency. Heavy Playwright headless browser rendering is reserved strictly for complex JavaScript SPAs.
+- **SSRF Protection:** Enforces strict DNS resolution checks that reject loopback (`127.0.0.1`), private RFC 1918 subnets (`10.0.0.0/8`, `192.168.0.0/16`), and AWS metadata endpoints (`169.254.169.254`), preventing server-side request forgery attacks.
+- **Legal Source Governance:** Inactive or unpartnered source connectors are disabled by default (`DISABLED`), ensuring ethical scraping compliance and preventing IP bans or terms of service violations.
+
+---
+
+## 7. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **Go Systems & Distributed Scraping Engineer — Collector Service:** Engineered an autonomous, ethical web scraping microservice in Go 1.23 with rate budgeting, SSRF DNS validation, and Kafka event publishing (`job.collected.v1`). Built standalone CLI execution modes with deterministic exit codes and verified parser drift detection across 8 test suites.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Web scraping at scale risks server IP bans, SSRF vulnerabilities, schema drift on employer site changes, and uncoordinated duplicate crawls.
+2. **Solution Architecture:** Developed a modular Go collector featuring leaky-bucket rate limiters per domain, strict URL normalization with SHA-256 deduplication hashing, and standard `SeekersEventEnvelope` JSON schemas.
+3. **Resilience & Safety:** Guarded all outbound HTTP requests with private IP filtering, built deterministic exit codes (0, 1, 2) for automated pipeline orchestration, and verified zero-dependency offline fixture execution.

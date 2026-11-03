@@ -145,3 +145,23 @@ npm test
 # Run strict integration tests (live MongoDB and Elasticsearch)
 npm run test:integration
 ```
+
+---
+
+## 7. Engineering Tradeoffs & Known Limitations
+
+- **Dual-Store Architecture (MongoDB + Elasticsearch):** Employs MongoDB as the canonical document store of record and Elasticsearch as an optimized search projection. The transactional outbox pattern guarantees that search indexing failures never lose canonical catalog entries.
+- **Keyset Pagination vs Deep Offsets:** Uses deterministic opaque keyset cursors (`v1.sortValues.id`) rather than SQL `OFFSET / LIMIT`, preventing $O(N)$ database query degradation on deep catalog pagination.
+- **Zero-Downtime Reindexing:** Uses Elasticsearch index aliases (`jobs_index -> jobs_v_<timestamp>`), enabling complete background index rebuilds and atomic pointer swaps with zero traffic interruption.
+
+---
+
+## 8. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **Node.js Data & Search Infrastructure Engineer — Ingestion Service:** Engineered an event-driven catalog ingestion and search projection microservice using Node.js 20, MongoDB 7, and Elasticsearch 8. Implemented transactional outbox pattern, poison message dead-letter quarantine (DLQ), and zero-downtime index reindexing with atomic alias swapping, validated across 80 automated unit tests.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Consuming high-throughput Kafka job streams risks data loss during search cluster outages, duplicate record insertion on replay storms, and pipeline stalls from poison messages.
+2. **Solution Architecture:** Decoupled persistence into an atomic MongoDB write and an asynchronous outbox projection worker for Elasticsearch. Poison messages failing schema validation are automatically isolated to a Dead Letter Queue.
+3. **Resilience & Idempotency:** Implemented source URL hashing (`sha256`) and revision fences (`revision++`) ensuring duplicate event replaying leaves document revisions unchanged. Built an operator CLI for dry-run catalog reconciliation and atomic index rebuilding.

@@ -93,3 +93,23 @@ The service serves authenticated HTTP endpoints and communicates with backend se
   - 19. Cross-candidate status access rejection (Candidate B receives 404 for Candidate A's `parseId`)
   - 20. Candidate resume deletion (`DELETE /users/resume`)
 - **Database Migrations (`npx prisma migrate deploy`):** `[Verified]` — Clean forward migration history (`20261027000000_init`, `20261027100000_p05_identity_and_profiles`, `20261027180000_p05_scoped_deletion_idempotency`, `20261028000000_p08_resume_documents_and_lifecycle`).
+
+---
+
+## 4. Engineering Tradeoffs & Known Limitations
+
+- **Relational PostgreSQL vs Document Store:** Selected PostgreSQL with Prisma ORM for authoritative user identities, applications, and privacy records to leverage strict ACID transaction guarantees, foreign-key cascade deletions, and unique constraints.
+- **Durable Erasure Tombstones:** Implemented `DurableErasureRecord` to store cryptographic hashes and IDs of permanently erased candidates, strictly preventing asynchronous sync tasks from resurrecting deleted accounts.
+- **Asynchronous Resume Processing:** Upload endpoint returns `202 Accepted` with a tracking `parse_id`, offloading heavy parsing to `service-resume` and decoupling HTTP response latency from file extraction.
+
+---
+
+## 5. Portfolio Summary & Interview Walkthrough
+
+### Technology CV Bullet
+> **NestJS Backend Engineer — Identity & Workspace Microservice:** Built an enterprise identity, application tracking, and workspace API using NestJS 10, TypeScript, Prisma, and PostgreSQL 16. Implemented role-based access control, cryptographic session handling, GDPR-compliant data export and 30-day erasure grace periods with durable tombstone fencing, validated across 20 automated qualification checks.
+
+### Technical Interview Walkthrough
+1. **Core Problem:** Managing candidate profiles, multi-stage application state, and resume lifecycle requires strict multi-tenant data isolation and rigorous compliance with right-to-be-forgotten privacy mandates.
+2. **Solution Architecture:** Engineered a modular NestJS service backed by Prisma ORM and PostgreSQL with clean repository-service patterns, input validation pipes (`class-validator`), and gRPC communication with `service-resume`.
+3. **Privacy & Security:** Designed tombstone-based permanent erasure preventing background identity synchronization from recreating deleted user accounts, with complete cascade purging of resumes and workspace history.
