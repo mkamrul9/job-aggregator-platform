@@ -123,7 +123,11 @@ node scripts/run-resilience-faults.js
 # 5. Live Loopback HTTP & Python NLP Beta Journey Qualification Suite (9 Scenarios)
 node scripts/qualify-beta-journeys.js
 
-# 6. Service Unit Test Suites
+# 6. Production Launch & Staged Rollout Qualification Suite (10 Gates)
+node scripts/test-launch-gates.js
+node scripts/launch-production.js --demo
+
+# 7. Service Unit Test Suites
 cd service-notification && npm test && cd ..
 cd service-ingestion && npm test && cd ..
 cd service-user && npm test && cd ..

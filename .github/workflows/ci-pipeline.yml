@@ -53,6 +53,9 @@ jobs:
       - name: Run Bounded Beta Candidate & Operator Journey Qualification Suite
         run: node scripts/qualify-beta-journeys.js
 
+      - name: Run Production Launch & Staged Rollout Qualification Suite
+        run: node scripts/test-launch-gates.js
+
   # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------
