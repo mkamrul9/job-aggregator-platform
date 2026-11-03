@@ -229,7 +229,9 @@ describe('UserService', () => {
             email: 'any@seekers.example',
             emailVerified: true,
           }),
-        ).rejects.toThrow('Beta cohort capacity (50 participants) has been reached');
+        ).rejects.toThrow(
+          'Beta cohort capacity (50 participants) has been reached',
+        );
       } finally {
         delete process.env.BETA_ALLOWLIST_ENABLED;
         delete process.env.BETA_MAX_PARTICIPANTS;
