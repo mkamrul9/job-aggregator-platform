@@ -56,6 +56,9 @@ jobs:
       - name: Run Production Launch & Staged Rollout Qualification Suite
         run: node scripts/test-launch-gates.js
 
+      - name: Run Mobile Platform Prototype Benchmark & Comparison Suite (P18A)
+        run: node scripts/measure-mobile-slices.js
+
   # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------
