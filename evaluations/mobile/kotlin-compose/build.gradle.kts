@@ -9,3 +9,4 @@ plugins {
 
 // Subproject evaluation configuration
 description = "Seekers Android Native Evaluation Prototype (Kotlin + Jetpack Compose)"
+

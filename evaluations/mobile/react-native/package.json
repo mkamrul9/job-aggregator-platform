@@ -2,10 +2,10 @@
   "name": "@seekers/mobile-prototype-react-native",
   "version": "1.0.0",
   "description": "Seekers Platform Phase 18A React Native Vertical Slice Prototype",
-  "main": "src/index.ts",
+  "main": "src/index.js",
   "scripts": {
-    "test": "jest",
-    "benchmark": "node scripts/measure-rn-slice.js"
+    "test": "node ../../../scripts/measure-mobile-slices.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "react": "18.3.1",
@@ -18,3 +18,4 @@
     "typescript": "^5.6.3"
   }
 }
+

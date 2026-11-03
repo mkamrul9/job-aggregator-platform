@@ -1,18 +1,21 @@
 /**
  * evaluations/mobile/react-native/src/index.js
- * Seekers React Native Prototype: State Manager, Navigation, and Screens (CommonJS)
+ * CommonJS export for test harnesses and node scripts.
  */
 
-class SeekersReactNativeApp {
+const { BENCHMARK_FIXTURE_JOBS } = require('../../shared-contracts');
+
+class SeekersMobileStateHolder {
   constructor(apiClient) {
     this.api = apiClient;
     this.state = {
-      currentScreen: 'JOB_LIST',
+      currentScreen: 'LIST',
       selectedJobId: null,
       selectedJob: null,
       savedJobIds: new Set(),
-      searchQuery: '',
-      isFilterRemote: false,
+      items: [],
+      next_cursor: null,
+      total_count: 0,
       resumeStatus: null,
       isLoading: false,
       errorMessage: null
@@ -25,68 +28,67 @@ class SeekersReactNativeApp {
     const parts = path.split('/');
 
     if (parts[0] === 'jobs' && parts[1]) {
-      this.state.currentScreen = 'JOB_DETAIL';
+      this.state.currentScreen = 'DETAIL';
       this.state.selectedJobId = parts[1];
       return true;
     }
     if (parts[0] === 'resume') {
-      this.state.currentScreen = 'RESUME_UPLOAD';
+      this.state.currentScreen = 'RESUME';
       return true;
     }
     return false;
   }
 
+  async loadJobs(query = '', cursor = null) {
+    this.state.isLoading = true;
+    try {
+      const res = await this.api.searchJobs(query, cursor, 20);
+      this.state.items = cursor ? [...this.state.items, ...res.items] : res.items;
+      this.state.next_cursor = res.next_cursor;
+      this.state.total_count = res.total_count;
+      return res;
+    } finally {
+      this.state.isLoading = false;
+    }
+  }
+
   async selectJob(jobId) {
     this.state.isLoading = true;
-    this.state.errorMessage = null;
     try {
       const detail = await this.api.getJobDetail(jobId);
       this.state.selectedJobId = jobId;
       this.state.selectedJob = detail;
-      this.state.currentScreen = 'JOB_DETAIL';
+      this.state.currentScreen = 'DETAIL';
       return detail;
-    } catch (err) {
-      this.state.errorMessage = err.message;
-      throw err;
     } finally {
       this.state.isLoading = false;
     }
   }
 
   async toggleSaveJob(jobId) {
-    const isCurrentlySaved = this.state.savedJobIds.has(jobId);
-    const newSavedState = !isCurrentlySaved;
-
-    if (newSavedState) {
-      this.state.savedJobIds.add(jobId);
-    } else {
-      this.state.savedJobIds.delete(jobId);
-    }
+    const wasSaved = this.state.savedJobIds.has(jobId);
+    const newSaved = !wasSaved;
+    if (newSaved) this.state.savedJobIds.add(jobId); else this.state.savedJobIds.delete(jobId);
 
     try {
-      await this.api.toggleSaveJob(jobId, newSavedState);
-      return newSavedState;
+      await this.api.toggleSaveJob(jobId, newSaved);
+      return newSaved;
     } catch (err) {
-      if (isCurrentlySaved) {
-        this.state.savedJobIds.add(jobId);
-      } else {
-        this.state.savedJobIds.delete(jobId);
-      }
+      if (wasSaved) this.state.savedJobIds.add(jobId); else this.state.savedJobIds.delete(jobId);
       throw err;
     }
   }
 
   async uploadAndPollResume(fileName, fileBytes) {
     this.state.isLoading = true;
-    this.state.errorMessage = null;
     try {
       const uploadRes = await this.api.uploadResume(fileName, fileBytes);
       const parseId = uploadRes.parse_id;
 
       this.state.resumeStatus = {
-        parseId,
+        parse_id: parseId,
         status: 'PROCESSING',
-        extractedSkills: []
+        extracted_skills: []
       };
 
       for (let i = 0; i < 5; i++) {
@@ -99,24 +101,22 @@ class SeekersReactNativeApp {
       }
 
       return this.state.resumeStatus;
-    } catch (err) {
-      this.state.errorMessage = err.message;
-      throw err;
     } finally {
       this.state.isLoading = false;
     }
   }
 
-  getScreenAccessibilityLandmarks() {
+  getAccessibilityMetrics() {
     return {
       screenTitle: `Seekers - ${this.state.currentScreen}`,
       touchTargetMinDp: 48,
-      focusableElementsCount: this.state.currentScreen === 'JOB_LIST' ? 12 : 6,
+      focusableElementsCount: this.state.currentScreen === 'LIST' ? 12 : 6,
       hasAccessibleLabels: true
     };
   }
 }
 
 module.exports = {
-  SeekersReactNativeApp
+  SeekersMobileStateHolder,
+  SeekersReactNativeApp: SeekersMobileStateHolder
 };
