@@ -234,6 +234,14 @@ function createJobsRouter({ jobsCollection, esClient }) {
         );
       }
 
+      const etag = `W/"${job.id}-r${job.revision || 1}"`;
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+
+      if (req.headers['if-none-match'] === etag) {
+        return res.status(304).end();
+      }
+
       return res.status(200).json(toJobDetail(job));
     } catch (err) {
       console.error('Error fetching job by id:', err);

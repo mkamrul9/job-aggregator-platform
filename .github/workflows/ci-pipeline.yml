@@ -29,6 +29,12 @@ jobs:
       - name: Run Operational Deployment & Disaster Recovery Verification Suite
         run: node scripts/test-recovery-failure.js
 
+      - name: Run Workload Performance & Latency Benchmark Suite
+        run: node scripts/benchmark-workloads.js
+
+      - name: Run Fault Injection & Resilience Recovery Suite
+        run: node scripts/run-resilience-faults.js
+
   # -------------------------------------------------------------
   # JOB 1: Test the Golang Scraper
   # -------------------------------------------------------------

@@ -48,6 +48,23 @@ function toMonthlySalary(amount, period = 'MONTHLY') {
 }
 
 /**
+ * Bounded precompiled regular expression cache to eliminate repeated compilation overhead
+ * during high-throughput alert evaluations across candidate subscription pools (P15 Optimization).
+ */
+const REGEX_CACHE = new Map();
+function getCompiledRegex(token, hasPunctuation) {
+  let cached = REGEX_CACHE.get(token);
+  if (!cached) {
+    if (REGEX_CACHE.size > 2000) REGEX_CACHE.clear(); // Bounded memory ceiling
+    cached = hasPunctuation
+      ? new RegExp(`(?:^|[\\s,;()[\\]{}/<>])${escapeRegex(token)}(?:$|[\\s,;()[\\]{}/<>])`, 'i')
+      : new RegExp(`\\b${escapeRegex(token)}\\b`, 'i');
+    REGEX_CACHE.set(token, cached);
+  }
+  return cached;
+}
+
+/**
  * Checks if a token matches within a searchable text, accounting for punctuation-heavy tokens (C++, .NET, Node.js).
  */
 function tokenMatchesText(token, searchableText) {
@@ -56,12 +73,7 @@ function tokenMatchesText(token, searchableText) {
 
   // 1. Check direct token boundary
   const hasPunctuation = /[+#.]/.test(t);
-  let regex;
-  if (hasPunctuation) {
-    regex = new RegExp(`(?:^|[\\s,;()[\\]{}/<>])${escapeRegex(t)}(?:$|[\\s,;()[\\]{}/<>])`, 'i');
-  } else {
-    regex = new RegExp(`\\b${escapeRegex(t)}\\b`, 'i');
-  }
+  const regex = getCompiledRegex(t, hasPunctuation);
 
   if (regex.test(searchableText)) {
     return true;
@@ -71,9 +83,7 @@ function tokenMatchesText(token, searchableText) {
   const alias = SKILL_ALIASES[t];
   if (alias) {
     const aliasHasPunctuation = /[+#.]/.test(alias);
-    const aliasRegex = aliasHasPunctuation
-      ? new RegExp(`(?:^|[\\s,;()[\\]{}/<>])${escapeRegex(alias)}(?:$|[\\s,;()[\\]{}/<>])`, 'i')
-      : new RegExp(`\\b${escapeRegex(alias)}\\b`, 'i');
+    const aliasRegex = getCompiledRegex(alias, aliasHasPunctuation);
     if (aliasRegex.test(searchableText)) {
       return true;
     }
