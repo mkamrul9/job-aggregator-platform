@@ -1,7 +1,7 @@
 # Seekers Platform Service Catalog
 
-*Status: Authoritative Service Catalog — Responsive Design & Prototypes Complete for Phase 4 (P04)*  
-*Last Updated: 27 October 2026*  
+*Status: Authoritative Service Catalog — Production Infrastructure, Observability & Recovery Complete (P14)*  
+*Last Updated: November 2026*  
 *Architecture Pattern: Polyglot Microservices Monorepo with Independently Presentable Services*
 
 ---
@@ -15,9 +15,9 @@ A primary architectural invariant is that **each project is independently demons
 ### Global Command Status Taxonomy
 
 To maintain engineering honesty, all commands in this catalog are classified using three explicit tiers:
-- **`[Verified]`**: A reported local check or CI test passed in the reviewed baseline (P03 commit `269e508` / P04 prototypes); not proof of full-stack runtime integration.
+- **`[Verified]`**: A reported local check or CI test passed in the reviewed baseline (P13/P14 qualification); not proof of full-stack runtime integration.
 - **`[Observed-but-unverified]`**: Present in package scripts or configuration, executed but exhibiting known blockers/partial output or carried-forward runtime gaps.
-- **`[Planned]`**: Designed for implementation in the owning feature phase (P05–P18); not yet working or implemented.
+- **`[Planned]`**: Designed for implementation in the owning feature phase (P15–P18); not yet working or implemented.
 
 ---
 
@@ -25,13 +25,13 @@ To maintain engineering honesty, all commands in this catalog are classified usi
 
 | Identifier | Service Name | Primary Stack | Owning Phase | Status Baseline |
 |---|---|---|---|---|
-| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 | Pytest passes (16/16); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, threadpool offloading, and gRPC verified |
-| `frontend-admin` | Angular Operations Dashboard | Angular 19, TypeScript, SCSS, RxJS, Socket.io | P12 | Karma CI passes (58/58 tests); production build passes; standalone operations console with dual-adapter architecture, server-enforced RBAC, and real live operations verified across 6 operational routes (/overview, /sources, /catalog, /queues, /support, /audit) |
-| `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, standalone CLI (`-mode=cli`, `-fixture`) verified |
-| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 | ESLint passes (0 errors); tsc & Jest pass (59/59 across 7 suites); P09 candidate workspace, optimistic locking, saved searches, support triage verified |
-| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 | 43 unit tests pass; recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
-| `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 | 25 unit/crypto/matcher/storage/integration tests pass; Durable JSON store, preference matching, CAPTURE mailbox, HMAC-SHA256 unsubscribe verified |
-| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype verified |
+| `service-resume` | Python Resume Extractor | Python 3.11, FastAPI, spaCy, pypdf, gRPC | P08 / P14 | Pytest passes (17/17); standalone HTML app (`GET /`, `GET /demo`), real `/sample-resume.pdf` extraction, `/metrics` endpoint, threadpool offloading, and gRPC verified |
+| `frontend-admin` | Angular Operations Dashboard | Angular 19, TypeScript, SCSS, RxJS, Socket.io | P12 / P14 | Karma CI passes (60/60 tests); production build passes; standalone operations console with dual-adapter architecture, server-enforced RBAC, and real live operations verified across 6 operational routes (/overview, /sources, /catalog, /queues, /support, /audit) |
+| `service-scraper` | Go Job Collection Engine | Go 1.23, Kafka-Go, SSRF Guard | P07 / P14 | `go test` passes (8/8) & `go vet` clean; source registry, durable leases, scheduler pause check, standalone CLI (`-mode=cli`, `-fixture`) verified |
+| `service-user` | NestJS Identity & Profile API | NestJS 11, TypeScript, Prisma, PostgreSQL | P05 / P08 / P09 / P13 / P14 | ESLint clean (0 errors); tsc & Jest pass (118/118 across 11 suites); `/metrics`, durable erasure, export lifecycle, and private storage verified |
+| `service-ingestion` | Node.js Job Ingestion & Search API | Node.js 22, Express, KafkaJS, MongoDB, ES 8.x | P07 / P13 / P14 | 80 unit tests pass across 13 suites; `/metrics`, recoverable consumer, dead-letter quarantine, outbox worker, reconcile, reindex, standalone event-runner verified |
+| `service-notification`| Node.js Notification Delivery Service | Node.js 22, Express, Socket.io, KafkaJS, Nodemailer | P11 / P14 | 44 unit/crypto/matcher/storage/integration tests pass; Durable JSON store, preference matching, `/metrics`, CAPTURE mailbox, HMAC-SHA256 unsubscribe verified |
+| `frontend-next` | React/Next.js Candidate App | Next.js 16.3, React 19.2, TypeScript, ES 8.x | P06 / P13 / P14 | ESLint passes (0 errors); Turbopack build passes; complete responsive candidate prototype, accessible main skip links, and standalone Docker runner verified |
 
 ---
 

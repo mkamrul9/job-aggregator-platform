@@ -8,5 +8,7 @@ RUN npm ci --omit=dev
 
 COPY . .
 
+USER node
+
 EXPOSE 5000
 CMD ["node", "index.js"]

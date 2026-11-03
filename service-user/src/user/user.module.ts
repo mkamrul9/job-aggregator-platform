@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { UserController } from './user.controller';
 import { ReportsController } from './reports.controller';
+import { MetricsController } from './metrics.controller';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { PrismaService } from '../prisma.service';
@@ -42,7 +43,7 @@ const hasProto = existsSync(resolvedProtoPath);
         ]),
       ]
     : [],
-  controllers: [UserController, ReportsController],
+  controllers: [UserController, ReportsController, MetricsController],
   providers: [
     UserService,
     UserRepository,

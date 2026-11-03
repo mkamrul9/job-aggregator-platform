@@ -51,6 +51,43 @@ function createIngestionApp(
     res.status(200).json({ status: 'Ingestion Service is running.' });
   });
 
+  // Prometheus metrics endpoint
+  app.get('/metrics', async (req, res) => {
+    try {
+      const deadLetters = deadLettersCollection
+        ? await deadLettersCollection.countDocuments().catch(() => 0)
+        : 0;
+      const totalJobs = jobsCollection
+        ? await jobsCollection.countDocuments().catch(() => 0)
+        : 0;
+      const uptimeSec = Math.floor(process.uptime());
+      const memUsage = process.memoryUsage().rss;
+
+      const metrics = [
+        '# HELP ingestion_jobs_total Total job listings stored in MongoDB catalog',
+        '# TYPE ingestion_jobs_total gauge',
+        `ingestion_jobs_total ${totalJobs}`,
+        '# HELP ingestion_dead_letter_total Total unprocessable messages quarantined in DLQ',
+        '# TYPE ingestion_dead_letter_total gauge',
+        `ingestion_dead_letter_total ${deadLetters}`,
+        '# HELP process_uptime_seconds Process uptime in seconds',
+        '# TYPE process_uptime_seconds gauge',
+        `process_uptime_seconds ${uptimeSec}`,
+        '# HELP process_resident_memory_bytes Process resident memory size in bytes',
+        '# TYPE process_resident_memory_bytes gauge',
+        `process_resident_memory_bytes ${memUsage}`,
+        '# HELP seekers_ingestion_service_status Service healthy indicator (1 = healthy)',
+        '# TYPE seekers_ingestion_service_status gauge',
+        'seekers_ingestion_service_status 1'
+      ].join('\n') + '\n';
+
+      res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+      res.status(200).send(metrics);
+    } catch (_err) {
+      res.status(500).send('# ERROR\n');
+    }
+  });
+
   // Mount unified jobs router for both authoritative v1 and legacy paths
   const jobsRouter = createJobsRouter({ jobsCollection, esClient });
   app.use('/api/v1/jobs', jobsRouter);

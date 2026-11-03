@@ -10,6 +10,9 @@ import time
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
+START_TIME = time.time()
+PARSED_COUNTER = 0
+
 app = FastAPI(
     title="Seekers Resume Parsing & NLP Service",
     description="Stateless text-layer PDF parser extracting canonical technology skills using spaCy.",
@@ -229,7 +232,11 @@ def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50, timeout
     """Unified PDF text extraction and skill analysis with strict timeout and safety boundaries."""
     future = _executor.submit(_do_extract_skills, pdf_bytes, max_pages)
     try:
-        return future.result(timeout=timeout_seconds)
+        res = future.result(timeout=timeout_seconds)
+        if res.get("success"):
+            global PARSED_COUNTER
+            PARSED_COUNTER += 1
+        return res
     except FutureTimeoutError:
         return {
             "success": False,
@@ -238,6 +245,22 @@ def extract_skills_from_pdf_bytes(pdf_bytes: bytes, max_pages: int = 50, timeout
             "skills": [],
             "processing_time_ms": int(timeout_seconds * 1000)
         }
+
+@app.get("/metrics")
+def get_metrics():
+    uptime = int(time.time() - START_TIME)
+    lines = [
+        "# HELP resume_parser_uptime_seconds Process uptime in seconds",
+        "# TYPE resume_parser_uptime_seconds gauge",
+        f"resume_parser_uptime_seconds {uptime}",
+        "# HELP resume_parser_extractions_total Total resumes parsed",
+        "# TYPE resume_parser_extractions_total counter",
+        f"resume_parser_extractions_total {PARSED_COUNTER}",
+        "# HELP seekers_resume_service_status Service healthy indicator (1 = healthy)",
+        "# TYPE seekers_resume_service_status gauge",
+        "seekers_resume_service_status 1",
+    ]
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
 
 @app.get("/health")
 def health_check():

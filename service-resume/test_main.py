@@ -179,3 +179,10 @@ def test_grpc_servicer_enforces_auth_token(monkeypatch):
     assert res.success is False
     assert res.error_code == "UNAUTHENTICATED"
     assert len(res.skills) == 0
+
+def test_metrics_endpoint():
+    res = client.get("/metrics")
+    assert res.status_code == 200
+    assert "resume_parser_uptime_seconds" in res.text
+    assert "resume_parser_extractions_total" in res.text
+    assert "seekers_resume_service_status 1" in res.text

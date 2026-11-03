@@ -18,6 +18,8 @@ coverage/
 service-notification/data/
 service-ingestion/data/
 service-scraper/data/
+data/
+**/data/
 
 # Python caches and virtual environments
 __pycache__/

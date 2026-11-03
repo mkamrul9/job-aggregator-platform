@@ -1,0 +1,53 @@
+# config-prometheus/alerting-rules.yml
+groups:
+  - name: seekers_production_alerts
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service instance {{ $labels.instance }} is unreachable"
+          description: "Service {{ $labels.job }} has been unresponsive for > 1 minute on instance {{ $labels.instance }}."
+          runbook: "docs/OPERATIONS_RUNBOOK.md#service-down"
+
+      - alert: IngestionDeadLetterSpike
+        expr: ingestion_dead_letter_total > 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DLQ quarantine accumulation spike detected"
+          description: "Ingestion service has accumulated > 10 poison/unparseable messages in the dead letter queue."
+          runbook: "docs/OPERATIONS_RUNBOOK.md#dlq-quarantine-triage"
+
+      - alert: NotificationDeliveryFailureHigh
+        expr: rate(notification_deliveries_total{status="failed"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification delivery failure rate elevated (> 5%)"
+          description: "Failure rate for email delivery attempts exceeded 5% over 5 minutes."
+          runbook: "docs/OPERATIONS_RUNBOOK.md#delivery-failures"
+
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_lag > 500
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag detected"
+          description: "Message consumer lag behind producer exceeds 500 records on jobs topics."
+          runbook: "docs/OPERATIONS_RUNBOOK.md#kafka-consumer-lag"
+
+      - alert: BackupDrillOverdue
+        expr: time() - seekers_backup_last_timestamp_seconds > 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disaster recovery backup drill is overdue"
+          description: "No verified backup restoration drill has been recorded in the past 24 hours."
+          runbook: "docs/OPERATIONS_RUNBOOK.md#backup-and-restore-drills"

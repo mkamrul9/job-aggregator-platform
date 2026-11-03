@@ -27,6 +27,11 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/proto ./proto
 
+# Prepare private storage directory with node user ownership
+RUN mkdir -p /app/data/storage && chown -R node:node /app
+
+USER node
+
 EXPOSE 3000
 
 CMD ["sh", "-c", "npx prisma migrate deploy && npm run start:prod"]
