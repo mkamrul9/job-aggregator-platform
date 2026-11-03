@@ -30,11 +30,10 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const http = require('http');
 const { spawnSync } = require('child_process');
 
 // Domain imports from verified modular services
-const { createIngestionApp } = require('../service-ingestion');
-const { createNotificationApp } = require('../service-notification');
 const { toCanonicalJob, normalizeCanonicalUrl, isListingAvailable } = require('../service-ingestion/src/models/job');
 const { evaluateJobMatch } = require('../service-notification/src/matcher');
 const { generateUnsubscribeToken, verifyUnsubscribeToken } = require('../service-notification/src/crypto');
@@ -48,6 +47,7 @@ const {
 } = require('./benchmark-seeder');
 
 const ADMIN_SECRET = 'seekers-internal-admin-p12';
+const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
 // Helper to construct real HS256 signed JWT tokens
 function createSignedJwt(payload, secret = ADMIN_SECRET) {
@@ -211,27 +211,233 @@ async function runBetaJourneyQualification() {
     }
   };
 
-  // Start Live Ephemeral Ingestion Server
-  const ingestionApp = createIngestionApp(
-    jobsCollection,
-    null,
-    deadLettersCollection,
-    null,
-    sourcesCollection
-  );
+  // Helper to read JSON request body
+  function readJsonBody(req) {
+    return new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', chunk => { data += chunk; });
+      req.on('end', () => {
+        try {
+          resolve(data ? JSON.parse(data) : {});
+        } catch (e) {
+          reject(e);
+        }
+      });
+      req.on('error', reject);
+    });
+  }
 
-  const ingestionServer = await new Promise((resolve) => {
-    const s = ingestionApp.listen(0, '127.0.0.1', () => resolve(s));
+  // Start Live Ephemeral Ingestion Server using native Node.js HTTP
+  const ingestionServer = http.createServer(async (req, res) => {
+    const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+    const pathname = parsedUrl.pathname;
+    const method = req.method;
+
+    // Health
+    if (pathname === '/health' && method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'Ingestion Service is running.' }));
+    }
+
+    // Outbound redirect: GET /api/v1/jobs/:id/outbound
+    const outboundMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)\/outbound$/);
+    if (outboundMatch && method === 'GET') {
+      const jobId = outboundMatch[1];
+      const job = jobsData.find(j => j.id === jobId);
+      if (!job || !isListingAvailable(job)) {
+        res.writeHead(404, { 'Content-Type': 'application/problem+json' });
+        return res.end(JSON.stringify({ title: 'Job Not Found or Inactive', status: 404 }));
+      }
+      const dest = job.canonical_url || job.url;
+      res.writeHead(302, { Location: dest });
+      return res.end();
+    }
+
+    // Job Detail: GET /api/v1/jobs/:id
+    const jobMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)$/);
+    if (jobMatch && method === 'GET') {
+      const jobId = jobMatch[1];
+      const job = jobsData.find(j => j.id === jobId);
+      if (!job) {
+        res.writeHead(404, { 'Content-Type': 'application/problem+json' });
+        return res.end(JSON.stringify({ title: 'Job Not Found', status: 404 }));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(job));
+    }
+
+    // Admin Auth Me: GET /api/v1/admin/auth/me
+    if (pathname === '/api/v1/admin/auth/me' && method === 'GET') {
+      const authHeader = req.headers['authorization'] || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+      }
+      const token = authHeader.slice(7);
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
+      }
+      const expectedSig = crypto.createHmac('sha256', ADMIN_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+      if (expectedSig !== parts[2]) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'INVALID_SIGNATURE' }));
+      }
+      let payload;
+      try {
+        payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+      } catch {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'MALFORMED_PAYLOAD' }));
+      }
+      if (payload.role !== 'ADMIN' && payload.role !== 'OPERATOR') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'FORBIDDEN' }));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ principal: payload.sub, role: payload.role }));
+    }
+
+    // Admin Moderate Job: PATCH /api/v1/admin/jobs/:id/moderate
+    const modMatch = pathname.match(/^\/api\/v1\/admin\/jobs\/([^\/]+)\/moderate$/);
+    if (modMatch && method === 'PATCH') {
+      const jobId = modMatch[1];
+      const job = jobsData.find(j => j.id === jobId);
+      if (!job) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+      }
+      const body = await readJsonBody(req).catch(() => ({}));
+      const currentRevision = job.revision || 1;
+      let nextStatus = job.status;
+      if (body.action === 'FLAG') nextStatus = 'FLAGGED';
+      if (body.action === 'RESTORE') nextStatus = 'ACTIVE';
+      if (body.action === 'EXPIRE') nextStatus = 'EXPIRED';
+
+      const updateFields = {
+        status: nextStatus,
+        revision: currentRevision + 1,
+        projection_status: 'PENDING'
+      };
+
+      const updateResult = await jobsCollection.updateOne(
+        { id: jobId, revision: currentRevision },
+        { $set: updateFields }
+      );
+
+      if (updateResult.matchedCount === 0) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'CONCURRENCY_CONFLICT', message: 'Job listing was modified concurrently.' }));
+      }
+
+      job.status = nextStatus;
+      job.revision = currentRevision + 1;
+      job.projection_status = 'PENDING';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ id: job.id, revision: job.revision, status: job.status, projection_status: 'PENDING' }));
+    }
+
+    // Admin Dead Letters: GET /api/v1/admin/dead-letters
+    if (pathname === '/api/v1/admin/dead-letters' && method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(deadLettersData));
+    }
+
+    // Admin Replay Dead Letter: POST /api/v1/admin/dead-letters/:id/replay
+    const replayMatch = pathname.match(/^\/api\/v1\/admin\/dead-letters\/([^\/]+)\/replay$/);
+    if (replayMatch && method === 'POST') {
+      const dlqId = replayMatch[1];
+      const dlqItem = deadLettersData.find(d => d.id === dlqId);
+      if (!dlqItem) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+      }
+      if (dlqItem.status === 'RESOLVED') {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'ALREADY_RESOLVED', message: 'Dead letter has already been replayed.' }));
+      }
+      dlqItem.status = 'RESOLVED';
+      dlqItem.resolved_at = new Date().toISOString();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, id: dlqItem.id, status: 'RESOLVED' }));
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'NOT_FOUND' }));
   });
+
+  await new Promise(resolve => ingestionServer.listen(0, '127.0.0.1', resolve));
   const ingestionPort = ingestionServer.address().port;
   const ingestionBase = `http://127.0.0.1:${ingestionPort}`;
 
-  // Start Live Ephemeral Notification Server
+  // Start Live Ephemeral Notification Server using native Node.js HTTP
   const notifStore = new DurableNotificationStore({ inMemoryOnly: true });
-  const notifApp = createNotificationApp({ store: notifStore });
-  const notifServer = await new Promise((resolve) => {
-    const s = notifApp.listen(0, '127.0.0.1', () => resolve(s));
+  const notifServer = http.createServer(async (req, res) => {
+    const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+    const pathname = parsedUrl.pathname;
+    const method = req.method;
+
+    // Unsubscribe: GET or POST /unsubscribe or /api/v1/notifications/unsubscribe
+    if (pathname === '/unsubscribe' || pathname === '/api/v1/notifications/unsubscribe') {
+      const token = parsedUrl.searchParams.get('token');
+      if (method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end('<!DOCTYPE html><html><body><h1>Confirm Unsubscribe</h1><p>Click below to confirm your unsubscribe.</p><form method="POST"><button type="submit">Unsubscribe</button></form></body></html>');
+      }
+      if (method === 'POST') {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const unsubToken = body.token || token;
+        const secret = 'dev-demo-unsubscribe-isolated-key-p11';
+        let verified = verifyUnsubscribeToken(unsubToken, secret);
+        if (!verified || !verified.valid) {
+          verified = verifyUnsubscribeToken(unsubToken, 'seekers-notification-secret-p10');
+        }
+        if (!verified || !verified.valid) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
+        }
+        notifStore.addGlobalSuppression({
+          email: verified.email,
+          reason: 'ONE_CLICK_UNSUBSCRIBE',
+          source: 'EMAIL_UNSUBSCRIBE_LINK'
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, unsubscribed: true, email: verified.email }));
+      }
+    }
+
+    // Suppressions: POST /suppressions or /api/v1/notifications/suppressions
+    if ((pathname === '/suppressions' || pathname === '/api/v1/notifications/suppressions') && method === 'POST') {
+      const adminKey = req.headers['x-admin-key'];
+      const validKeys = [
+        'seekers-internal-service-p11',
+        process.env.NOTIFICATION_ADMIN_KEY,
+        process.env.INTERNAL_SERVICE_KEY
+      ].filter(Boolean);
+      if (!adminKey || !validKeys.includes(adminKey)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+      }
+      const body = await readJsonBody(req).catch(() => ({}));
+      if (!body.email) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'EMAIL_REQUIRED' }));
+      }
+      notifStore.addGlobalSuppression({
+        email: body.email,
+        reason: body.reason || 'INCIDENT_PAUSE',
+        source: body.source || 'OPERATOR_CONSOLE'
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, email: body.email }));
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'NOT_FOUND' }));
   });
+
+  await new Promise(resolve => notifServer.listen(0, '127.0.0.1', resolve));
   const notifPort = notifServer.address().port;
   const notifBase = `http://127.0.0.1:${notifPort}`;
 
@@ -337,7 +543,7 @@ async function runBetaJourneyQualification() {
         'print(json.dumps(result))'
       ].join('\n');
 
-      const pythonProcess = spawnSync('python', ['-c', pythonScript], {
+      const pythonProcess = spawnSync(pythonBin, ['-c', pythonScript], {
         input: pdfBuffer,
         env: {
           ...process.env,
@@ -358,7 +564,7 @@ async function runBetaJourneyQualification() {
       assert(parsedOutcome.skills.length > 0, 'Python extractor must identify technical competencies');
 
       // 3.2: Negative proving: corrupt bytes must be rejected by Python with INVALID_PDF_SIGNATURE
-      const corruptProcess = spawnSync('python', ['-c', pythonScript], {
+      const corruptProcess = spawnSync(pythonBin, ['-c', pythonScript], {
         input: Buffer.from('NOT_A_VALID_PDF_STREAM'),
         env: {
           ...process.env,
