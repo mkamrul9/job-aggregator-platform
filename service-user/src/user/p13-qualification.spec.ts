@@ -183,6 +183,14 @@ describe('P13 Production Qualification: Security, Privacy & Accessibility', () =
       mockPrisma.accountDeletionRequest.update.mockResolvedValue({
         ...expiredRequest,
         status: 'PROCESSING',
+        attemptCount: 1,
+        leaseExpiresAt: new Date(Date.now() + 300000),
+      });
+      mockPrisma.accountDeletionRequest.findUnique.mockResolvedValue({
+        ...expiredRequest,
+        status: 'PROCESSING',
+        attemptCount: 1,
+        leaseExpiresAt: new Date(Date.now() + 300000),
       });
       mockPrisma.resumeDocument.findMany.mockResolvedValue([
         { storageKey: `resumes/${candidateAId}/cv_v1.pdf` },
@@ -201,6 +209,76 @@ describe('P13 Production Qualification: Security, Privacy & Accessibility', () =
       expect(mockPrisma.user.delete).toHaveBeenCalledWith({
         where: { id: candidateAId },
       });
+    });
+
+    it('fences out stale worker when lease ownership expires or changes before terminal purge', async () => {
+      const expiredRequest = {
+        id: 'del_req_stale',
+        userId: candidateAId,
+        status: 'PENDING',
+        attemptCount: 1,
+        scheduledFor: new Date(Date.now() - 1000),
+      };
+
+      mockPrisma.accountDeletionRequest.findMany.mockResolvedValue([
+        expiredRequest,
+      ]);
+      mockPrisma.accountDeletionRequest.update.mockResolvedValue({
+        ...expiredRequest,
+        status: 'PROCESSING',
+        attemptCount: 1,
+      });
+      // Stale lease: lease expired while deleting external files!
+      mockPrisma.accountDeletionRequest.findUnique.mockResolvedValue({
+        ...expiredRequest,
+        status: 'PROCESSING',
+        attemptCount: 1,
+        leaseExpiresAt: new Date(Date.now() - 10000), // Expired!
+      });
+      mockPrisma.resumeDocument.findMany.mockResolvedValue([]);
+      mockPrisma.user.delete.mockClear();
+
+      const purged = await service.processDueAccountDeletions(new Date());
+
+      // Purge must be aborted by fence check
+      expect(purged).toBe(0);
+      expect(mockPrisma.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('bounds erasure retries and marks request FAILED when max retry attempts exceeded', async () => {
+      const exhaustedRequest = {
+        id: 'del_req_exhausted',
+        userId: candidateAId,
+        status: 'PENDING',
+        scheduledFor: new Date(Date.now() - 1000),
+      };
+
+      mockPrisma.accountDeletionRequest.findMany.mockResolvedValue([
+        exhaustedRequest,
+      ]);
+      mockPrisma.accountDeletionRequest.update.mockResolvedValue({
+        ...exhaustedRequest,
+        status: 'PROCESSING',
+        attemptCount: 6, // Exceeded max 5 attempts!
+      });
+      mockPrisma.accountDeletionRequest.findUnique.mockResolvedValue({
+        ...exhaustedRequest,
+        status: 'PROCESSING',
+        attemptCount: 6,
+      });
+      mockPrisma.user.delete.mockClear();
+
+      const purged = await service.processDueAccountDeletions(new Date());
+
+      expect(purged).toBe(0);
+      expect(mockPrisma.user.delete).not.toHaveBeenCalled();
+      expect(mockPrisma.accountDeletionRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'FAILED',
+          }),
+        }),
+      );
     });
   });
 

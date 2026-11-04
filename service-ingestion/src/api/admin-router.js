@@ -28,11 +28,57 @@ function safeCompare(a, b) {
  * Cross-process distributed lock management for long-running operations.
  * Coordinates across processes and restarts using durable file locks and MongoDB locks.
  */
-async function acquireOperationLock(lockName, operationId, ttlMs = 300000, { stateDir = null, jobsCollection = null } = {}) {
+async function acquireOperationLock(lockName, operationId, ttlMs = 300000, { stateDir = null, jobsCollection = null, locksCollection = null } = {}) {
+  // Resolve MongoDB locks collection if available
+  const locksColl = locksCollection || (jobsCollection && (jobsCollection.db ? jobsCollection.db.collection('operation_locks') : (jobsCollection.database ? jobsCollection.database.collection('operation_locks') : (typeof jobsCollection.collection === 'function' ? jobsCollection.collection('operation_locks') : null))));
+
+  // 1. Authoritative shared distributed store (MongoDB) in multi-replica deployment
+  if (locksColl) {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlMs);
+
+    try {
+      const res = await locksColl.findOneAndUpdate(
+        {
+          _id: lockName,
+          $or: [
+            { locked: false },
+            { expiresAt: { $lt: now } }
+          ]
+        },
+        {
+          $set: {
+            locked: true,
+            operationId,
+            ownerPid: process.pid,
+            lockedAt: now,
+            expiresAt
+          }
+        },
+        { upsert: true, returnDocument: 'after' }
+      );
+
+      const doc = res && res.value !== undefined ? res.value : res;
+      if (!doc || !doc.locked || doc.operationId !== operationId) {
+        // Did not acquire lock - another active worker holds it
+        const currentHolder = await locksColl.findOne({ _id: lockName }).catch(() => null);
+        return { acquired: false, existingOwner: currentHolder?.operationId || 'concurrent_replica' };
+      }
+    } catch (err) {
+      // Handle MongoDB duplicate key error (code 11000 / E11000) during concurrent upsert race
+      if (err.code === 11000 || (err.message && (err.message.includes('11000') || err.message.includes('duplicate key')))) {
+        const currentHolder = await locksColl.findOne({ _id: lockName }).catch(() => null);
+        return { acquired: false, existingOwner: currentHolder?.operationId || 'concurrent_replica' };
+      }
+      // On shared-store outage/connection failure: fail closed, do not pretend lock was acquired!
+      return { acquired: false, error: 'SHARED_STORE_UNAVAILABLE', message: err.message };
+    }
+  }
+
+  // 2. Durable filesystem lock (used in single-host standalone mode or as local process tracker)
   const stateBase = stateDir || process.env.STATE_DIR || './data/state';
   const locksDir = path.join(stateBase, 'locks');
 
-  // 1. Durable file-based cross-process lock
   try {
     fs.mkdirSync(locksDir, { recursive: true });
     const lockFilePath = path.join(locksDir, `${lockName}.lock`);
@@ -41,13 +87,13 @@ async function acquireOperationLock(lockName, operationId, ttlMs = 300000, { sta
       try {
         const raw = fs.readFileSync(lockFilePath, 'utf8');
         const lockData = JSON.parse(raw);
-        const expiresAt = new Date(lockData.expiresAt).getTime();
-        if (Date.now() < expiresAt) {
+        const lockExpiresAt = new Date(lockData.expiresAt).getTime();
+        if (Date.now() < lockExpiresAt) {
           return { acquired: false, existingOwner: lockData.operationId };
         }
-        // Stale lock recovery
+        // Stale lock recovery: previous owner's lease expired
         fs.unlinkSync(lockFilePath);
-      } catch {
+      } catch (parseErr) {
         try { fs.unlinkSync(lockFilePath); } catch {}
       }
     }
@@ -64,45 +110,32 @@ async function acquireOperationLock(lockName, operationId, ttlMs = 300000, { sta
     if (err.code === 'EEXIST') {
       return { acquired: false, existingOwner: 'concurrent_process' };
     }
+    if (!locksColl) {
+      // In standalone single-host mode, filesystem failure must not be silently swallowed
+      return { acquired: false, error: 'FILESYSTEM_LOCK_FAILED', message: err.message };
+    }
   }
 
-  // 2. MongoDB-backed distributed lock if database is reachable
-  if (jobsCollection && jobsCollection.database) {
-    try {
-      const locksColl = jobsCollection.database.collection('operation_locks');
-      const now = new Date();
-      const res = await locksColl.findOneAndUpdate(
-        {
-          _id: lockName,
-          $or: [
-            { locked: false },
-            { expiresAt: { $lt: now } }
-          ]
-        },
-        {
-          $set: {
-            locked: true,
-            operationId,
-            ownerPid: process.pid,
-            lockedAt: now,
-            expiresAt: new Date(Date.now() + ttlMs)
-          }
-        },
-        { upsert: true, returnDocument: 'after' }
-      );
-      if (!res || !res.locked) {
-        return { acquired: false, existingOwner: res?.operationId || 'unknown' };
-      }
-    } catch {}
-  }
-
-  return { acquired: true };
+  return { acquired: true, operationId };
 }
 
-async function releaseOperationLock(lockName, operationId, { stateDir = null, jobsCollection = null } = {}) {
+async function releaseOperationLock(lockName, operationId, { stateDir = null, jobsCollection = null, locksCollection = null } = {}) {
+  const locksColl = locksCollection || (jobsCollection && (jobsCollection.db ? jobsCollection.db.collection('operation_locks') : (jobsCollection.database ? jobsCollection.database.collection('operation_locks') : (typeof jobsCollection.collection === 'function' ? jobsCollection.collection('operation_locks') : null))));
+
+  if (locksColl) {
+    try {
+      // Atomic release: ONLY release if operationId matches! Prevents releasing another owner's lock
+      await locksColl.updateOne(
+        { _id: lockName, operationId },
+        { $set: { locked: false, releasedAt: new Date() } }
+      );
+    } catch (err) {
+      console.warn('Failed to release MongoDB operation lock:', err.message);
+    }
+  }
+
   const stateBase = stateDir || process.env.STATE_DIR || './data/state';
   const lockFilePath = path.join(stateBase, 'locks', `${lockName}.lock`);
-
   try {
     if (fs.existsSync(lockFilePath)) {
       const raw = fs.readFileSync(lockFilePath, 'utf8');
@@ -112,16 +145,6 @@ async function releaseOperationLock(lockName, operationId, { stateDir = null, jo
       }
     }
   } catch {}
-
-  if (jobsCollection && jobsCollection.database) {
-    try {
-      const locksColl = jobsCollection.database.collection('operation_locks');
-      await locksColl.updateOne(
-        { _id: lockName, operationId },
-        { $set: { locked: false, releasedAt: new Date() } }
-      );
-    } catch {}
-  }
 }
 
 // Global operation concurrency locks for long-running batch operations
@@ -212,18 +235,23 @@ function createAdminRouter({
           return { error: 'TOKEN_EXPIRED', status: 401, message: 'Bearer token has expired.' };
         }
 
-        // Issuer verification
+        // Mandatory issuer verification: strictly reject missing or untrusted issuer
         const trustedIssuers = ['seekers-auth', 'seekers-identity', 'seekers-platform'];
         if (process.env.JWT_ISSUER) trustedIssuers.push(process.env.JWT_ISSUER);
-        if (payload.iss && !trustedIssuers.includes(payload.iss)) {
-          return { error: 'UNTRUSTED_ISSUER', status: 401, message: 'Token issuer is untrusted.' };
+        if (!payload.iss || !trustedIssuers.includes(payload.iss)) {
+          return { error: 'UNTRUSTED_ISSUER', status: 401, message: 'Token issuer is untrusted or missing.' };
         }
 
-        // Audience verification
+        // Mandatory audience verification: strictly reject missing or invalid audience
         const trustedAudiences = ['seekers-admin', 'seekers-api', 'seekers-platform'];
         if (process.env.JWT_AUDIENCE) trustedAudiences.push(process.env.JWT_AUDIENCE);
-        if (payload.aud && !trustedAudiences.includes(payload.aud)) {
-          return { error: 'INVALID_AUDIENCE', status: 401, message: 'Token audience is invalid.' };
+        if (!payload.aud || !trustedAudiences.includes(payload.aud)) {
+          return { error: 'INVALID_AUDIENCE', status: 401, message: 'Token audience is invalid or missing.' };
+        }
+
+        // Mandatory subject or user identifier
+        if (!payload.sub && !payload.uid) {
+          return { error: 'MISSING_SUBJECT', status: 401, message: 'Token subject or user identifier is required.' };
         }
 
         if (payload.role === 'CANDIDATE') {
@@ -324,12 +352,16 @@ function createAdminRouter({
       afterState
     };
 
+    let fileSuccess = false;
+    let mongoSuccess = false;
+
     // 1. Durably append to operator audit log file
     try {
       const auditDir = path.join(effectiveStateDir, 'audit');
       fs.mkdirSync(auditDir, { recursive: true });
       const auditFile = path.join(auditDir, 'operator_audit.jsonl');
       fs.appendFileSync(auditFile, JSON.stringify(auditEntry) + '\n', 'utf8');
+      fileSuccess = true;
     } catch (fileErr) {
       console.warn('Could not append to durable audit file:', fileErr.message);
     }
@@ -338,11 +370,17 @@ function createAdminRouter({
     if (auditCollection) {
       try {
         await auditCollection.insertOne(auditEntry);
+        mongoSuccess = true;
       } catch (collErr) {
         console.warn('⚠️ Failed to insert into auditCollection:', collErr.message);
       }
     } else {
       console.warn('⚠️ Audit collection not configured; audit event recorded only in file log.');
+    }
+
+    // Fail closed: if neither sink could persist the audit record, fail the privileged operation
+    if (!fileSuccess && !mongoSuccess) {
+      throw new Error('DURABLE_AUDIT_FAILURE: All audit sinks (file and MongoDB) are unavailable.');
     }
   }
 

@@ -425,6 +425,20 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       if (!claimed) continue;
 
       try {
+        // Enforce retry limit: if attemptCount > 5, mark as FAILED and skip
+        if (claimed.attemptCount && claimed.attemptCount > 5) {
+          if (typeof this.userRepository.markAccountDeletionFailed === 'function') {
+            await this.userRepository.markAccountDeletionFailed(
+              req.id,
+              'Maximum erasure attempts exceeded (5 attempts). Manual operator review required.',
+            );
+          }
+          this.logger.error(
+            `[PurgeWorker] Request ${req.id} for user ${req.userId} exceeded max retry limit (${claimed.attemptCount}). Marked FAILED.`,
+          );
+          continue;
+        }
+
         // 1. Get all private storage keys (resumes and export archives)
         const storageKeys =
           typeof this.userRepository.getStorageKeysForPurge === 'function'
@@ -434,6 +448,22 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         // 2. Delete private objects from storage FIRST
         for (const storageKey of storageKeys) {
           await this.storageService.deleteObject(storageKey);
+        }
+
+        // FENCE CHECK: Verify lease ownership before executing terminal purge!
+        // A stale worker whose lease expired or was reclaimed must NOT execute terminal purge.
+        const isStillOwner =
+          typeof this.userRepository.verifyErasureLeaseOwnership === 'function'
+            ? await this.userRepository.verifyErasureLeaseOwnership(
+                req.id,
+                claimed.attemptCount,
+              )
+            : true;
+        if (!isStillOwner) {
+          this.logger.warn(
+            `[PurgeWorker] Lease expired or was reclaimed for request ${req.id}. Aborting terminal purge.`,
+          );
+          continue;
         }
 
         // 3. Atomically anonymize support reports, record durable erasure, and delete user row

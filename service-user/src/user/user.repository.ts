@@ -396,6 +396,7 @@ export class UserRepository {
     return this.prisma.accountDeletionRequest.findMany({
       where: {
         scheduledFor: { lte: referenceTime },
+        attemptCount: { lte: 5 },
         OR: [
           { status: 'PENDING' },
           {
@@ -407,6 +408,49 @@ export class UserRepository {
       orderBy: { scheduledFor: 'asc' },
       take: limit,
     });
+  }
+
+  async verifyErasureLeaseOwnership(
+    id: string,
+    expectedAttemptCount?: number,
+  ): Promise<boolean> {
+    try {
+      if (!this.prisma.accountDeletionRequest?.findUnique) return true;
+      const current = await this.prisma.accountDeletionRequest.findUnique({
+        where: { id },
+      });
+      if (!current) return false;
+      if (current.status !== 'PROCESSING') return false;
+      const now = new Date();
+      if (current.leaseExpiresAt && current.leaseExpiresAt < now) return false;
+      if (
+        expectedAttemptCount !== undefined &&
+        current.attemptCount !== undefined &&
+        current.attemptCount !== expectedAttemptCount
+      ) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async markAccountDeletionFailed(
+    id: string,
+    failureReason: string,
+  ): Promise<void> {
+    try {
+      if (this.prisma.accountDeletionRequest?.update) {
+        await this.prisma.accountDeletionRequest.update({
+          where: { id },
+          data: {
+            status: 'FAILED',
+            reason: failureReason,
+          },
+        });
+      }
+    } catch {}
   }
 
   async markAccountDeletionProcessing(
