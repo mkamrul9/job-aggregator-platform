@@ -158,7 +158,7 @@ func (s *FileSchedulerStore) ClaimLease(sourceID string, workerID string, durati
 	}
 
 	// A paused source connector must not be claimed for scheduled crawl runs
-	if cp.Status == "PAUSED" {
+	if cp.Status == "PAUSED" || cp.Status == "DISABLED" {
 		return nil, false, nil
 	}
 
@@ -356,7 +356,7 @@ func (m *MemorySchedulerStore) ClaimLease(sourceID string, workerID string, dura
 	}
 
 	// A paused source connector must not be claimed for scheduled crawl runs
-	if cp.Status == "PAUSED" {
+	if cp.Status == "PAUSED" || cp.Status == "DISABLED" {
 		return nil, false, nil
 	}
 

@@ -1,12 +1,128 @@
 // service-ingestion/src/api/admin-router.js
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
 const { reconcileCatalog } = require('../search/reconcile');
 const { rebuildIndex } = require('../search/reindex');
 const { getDeadLetters, upsertJobDocument } = require('../catalog/db');
 const { validateIncomingEvent } = require('../events/validator');
 const { indexJobToEs, ES_INDEX } = require('../search/elasticsearch');
 const { getRegisteredSources, updateSourceStatus, CANONICAL_SOURCES } = require('../catalog/sources-registry');
+
+/**
+ * Constant-time string comparison to prevent timing attacks
+ */
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Cross-process distributed lock management for long-running operations.
+ * Coordinates across processes and restarts using durable file locks and MongoDB locks.
+ */
+async function acquireOperationLock(lockName, operationId, ttlMs = 300000, { stateDir = null, jobsCollection = null } = {}) {
+  const stateBase = stateDir || process.env.STATE_DIR || './data/state';
+  const locksDir = path.join(stateBase, 'locks');
+
+  // 1. Durable file-based cross-process lock
+  try {
+    fs.mkdirSync(locksDir, { recursive: true });
+    const lockFilePath = path.join(locksDir, `${lockName}.lock`);
+
+    if (fs.existsSync(lockFilePath)) {
+      try {
+        const raw = fs.readFileSync(lockFilePath, 'utf8');
+        const lockData = JSON.parse(raw);
+        const expiresAt = new Date(lockData.expiresAt).getTime();
+        if (Date.now() < expiresAt) {
+          return { acquired: false, existingOwner: lockData.operationId };
+        }
+        // Stale lock recovery
+        fs.unlinkSync(lockFilePath);
+      } catch {
+        try { fs.unlinkSync(lockFilePath); } catch {}
+      }
+    }
+
+    const fd = fs.openSync(lockFilePath, 'wx');
+    fs.writeFileSync(fd, JSON.stringify({
+      operationId,
+      pid: process.pid,
+      lockedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + ttlMs).toISOString()
+    }), 'utf8');
+    fs.closeSync(fd);
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      return { acquired: false, existingOwner: 'concurrent_process' };
+    }
+  }
+
+  // 2. MongoDB-backed distributed lock if database is reachable
+  if (jobsCollection && jobsCollection.database) {
+    try {
+      const locksColl = jobsCollection.database.collection('operation_locks');
+      const now = new Date();
+      const res = await locksColl.findOneAndUpdate(
+        {
+          _id: lockName,
+          $or: [
+            { locked: false },
+            { expiresAt: { $lt: now } }
+          ]
+        },
+        {
+          $set: {
+            locked: true,
+            operationId,
+            ownerPid: process.pid,
+            lockedAt: now,
+            expiresAt: new Date(Date.now() + ttlMs)
+          }
+        },
+        { upsert: true, returnDocument: 'after' }
+      );
+      if (!res || !res.locked) {
+        return { acquired: false, existingOwner: res?.operationId || 'unknown' };
+      }
+    } catch {}
+  }
+
+  return { acquired: true };
+}
+
+async function releaseOperationLock(lockName, operationId, { stateDir = null, jobsCollection = null } = {}) {
+  const stateBase = stateDir || process.env.STATE_DIR || './data/state';
+  const lockFilePath = path.join(stateBase, 'locks', `${lockName}.lock`);
+
+  try {
+    if (fs.existsSync(lockFilePath)) {
+      const raw = fs.readFileSync(lockFilePath, 'utf8');
+      const lockData = JSON.parse(raw);
+      if (lockData.operationId === operationId) {
+        fs.unlinkSync(lockFilePath);
+      }
+    }
+  } catch {}
+
+  if (jobsCollection && jobsCollection.database) {
+    try {
+      const locksColl = jobsCollection.database.collection('operation_locks');
+      await locksColl.updateOne(
+        { _id: lockName, operationId },
+        { $set: { locked: false, releasedAt: new Date() } }
+      );
+    } catch {}
+  }
+}
 
 // Global operation concurrency locks for long-running batch operations
 let activeReindexOperationId = null;
@@ -20,8 +136,11 @@ function createAdminRouter({
   sourcesCollection = null,
   crawlRunsCollection = null,
   stateDir = null,
-  crawlDispatcher = null
+  crawlDispatcher = null,
+  collectorUrl = null
 } = {}) {
+  const effectiveStateDir = stateDir || process.env.STATE_DIR || './data/state';
+  const targetCollectorUrl = collectorUrl || process.env.COLLECTOR_URL || process.env.SCRAPER_URL;
   const router = express.Router();
 
   // Helper: Extract and authenticate caller identity
@@ -39,7 +158,7 @@ function createAdminRouter({
     const authHeader = req.headers['authorization'];
 
     // 1. Internal Service-to-Service assertion
-    if (serviceKey && serviceKey === expectedKey) {
+    if (serviceKey && safeCompare(serviceKey, expectedKey)) {
       return {
         user: {
           id: 'svc_internal_system',
@@ -141,7 +260,7 @@ function createAdminRouter({
     }
 
     // 5. In non-production testing, allow matching expectedKey or legacy test tokens
-    if (token === expectedKey) {
+    if (safeCompare(token, expectedKey)) {
       return {
         user: {
           id: 'usr_admin_root',
@@ -188,10 +307,6 @@ function createAdminRouter({
 
   // Helper: Record immutable audit event durably
   async function recordAudit(actor, action, targetType, targetId, result, details, beforeState = null, afterState = null) {
-    if (!auditCollection) {
-      console.warn('⚠️ Audit collection not configured; audit event could not be recorded durably.');
-      return;
-    }
     const auditEntry = {
       id: `audit_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       timestamp: new Date().toISOString(),
@@ -209,8 +324,26 @@ function createAdminRouter({
       afterState
     };
 
-    // Durable insert: throw on failure so calling mutation does not report false success
-    await auditCollection.insertOne(auditEntry);
+    // 1. Durably append to operator audit log file
+    try {
+      const auditDir = path.join(effectiveStateDir, 'audit');
+      fs.mkdirSync(auditDir, { recursive: true });
+      const auditFile = path.join(auditDir, 'operator_audit.jsonl');
+      fs.appendFileSync(auditFile, JSON.stringify(auditEntry) + '\n', 'utf8');
+    } catch (fileErr) {
+      console.warn('Could not append to durable audit file:', fileErr.message);
+    }
+
+    // 2. Insert into MongoDB collection if available
+    if (auditCollection) {
+      try {
+        await auditCollection.insertOne(auditEntry);
+      } catch (collErr) {
+        console.warn('⚠️ Failed to insert into auditCollection:', collErr.message);
+      }
+    } else {
+      console.warn('⚠️ Audit collection not configured; audit event recorded only in file log.');
+    }
   }
 
   // -------------------------------------------------------------
@@ -360,6 +493,12 @@ function createAdminRouter({
       if (!source) {
         return res.status(404).json({ error: 'NOT_FOUND', message: `Source '${id}' is not registered.` });
       }
+      if (source.status === 'PAUSED') {
+        return res.status(400).json({
+          error: 'SOURCE_PAUSED',
+          message: `Cannot crawl paused source '${id}'. Resume source before crawling.`
+        });
+      }
       if (source.status === 'DISABLED' || !source.enabled) {
         return res.status(400).json({
           error: 'SOURCE_DISABLED',
@@ -391,6 +530,52 @@ function createAdminRouter({
           crawlRun.durationMs = Date.now() - startTime;
           crawlRun.status = 'FAILED';
           crawlRun.error = dispatchErr.message;
+        }
+      } else if (targetCollectorUrl) {
+        try {
+          const u = new URL(`/api/v1/crawl/${encodeURIComponent(id)}`, targetCollectorUrl);
+          const postData = JSON.stringify({ sourceId: id, limit: 10 });
+          const isHttps = u.protocol === 'https:';
+          const client = isHttps ? https : http;
+
+          const collectorRes = await new Promise((resolve, reject) => {
+            const reqCollector = client.request(u, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+              },
+              timeout: 10000
+            }, (cRes) => {
+              let body = '';
+              cRes.on('data', chunk => body += chunk);
+              cRes.on('end', () => resolve({ statusCode: cRes.statusCode, body }));
+            });
+            reqCollector.on('error', reject);
+            reqCollector.on('timeout', () => {
+              reqCollector.destroy();
+              reject(new Error('Collector connection timed out'));
+            });
+            reqCollector.write(postData);
+            reqCollector.end();
+          });
+
+          if (collectorRes.statusCode >= 200 && collectorRes.statusCode < 300) {
+            let parsed = {};
+            try { parsed = JSON.parse(collectorRes.body); } catch {}
+            crawlRun.durationMs = Date.now() - startTime;
+            crawlRun.itemsCollected = parsed.itemsCollected ?? 0;
+            crawlRun.itemsRejected = parsed.itemsRejected ?? 0;
+            crawlRun.status = 'SUCCESS';
+          } else {
+            crawlRun.durationMs = Date.now() - startTime;
+            crawlRun.status = 'FAILED';
+            crawlRun.error = `Collector returned HTTP ${collectorRes.statusCode}`;
+          }
+        } catch (collectorErr) {
+          crawlRun.durationMs = Date.now() - startTime;
+          crawlRun.status = 'FAILED';
+          crawlRun.error = collectorErr.message;
         }
       } else {
         crawlRun.durationMs = Date.now() - startTime;
@@ -824,6 +1009,16 @@ function createAdminRouter({
     }
 
     const operationId = `reconcile_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const lockResult = await acquireOperationLock('catalog_reconcile', operationId, 300000, {
+      stateDir: effectiveStateDir,
+      jobsCollection
+    });
+    if (!lockResult.acquired) {
+      return res.status(409).json({
+        error: 'OPERATION_IN_PROGRESS',
+        message: 'Catalog reconciliation is already running.'
+      });
+    }
     activeReconcileOperationId = operationId;
 
     try {
@@ -860,6 +1055,10 @@ function createAdminRouter({
       return res.status(500).json({ error: 'RECONCILE_FAILED', message: err.message });
     } finally {
       activeReconcileOperationId = null;
+      await releaseOperationLock('catalog_reconcile', operationId, {
+        stateDir: effectiveStateDir,
+        jobsCollection
+      });
     }
   };
 
@@ -882,6 +1081,16 @@ function createAdminRouter({
     }
 
     const operationId = `reindex_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const lockResult = await acquireOperationLock('search_reindex', operationId, 600000, {
+      stateDir: effectiveStateDir,
+      jobsCollection
+    });
+    if (!lockResult.acquired) {
+      return res.status(409).json({
+        error: 'OPERATION_IN_PROGRESS',
+        message: 'An index rebuild is already running.'
+      });
+    }
     activeReindexOperationId = operationId;
     const startTime = Date.now();
 
@@ -918,6 +1127,10 @@ function createAdminRouter({
       return res.status(500).json({ error: 'REINDEX_FAILED', message: err.message });
     } finally {
       activeReindexOperationId = null;
+      await releaseOperationLock('search_reindex', operationId, {
+        stateDir: effectiveStateDir,
+        jobsCollection
+      });
     }
   };
 
@@ -928,21 +1141,52 @@ function createAdminRouter({
   // 17. GET /audit - Immutable operator audit log
   // -------------------------------------------------------------
   router.get('/audit', requireRoles(['ADMIN', 'OPERATOR', 'READ_ONLY']), async (req, res) => {
-    if (!auditCollection) {
-      return res.status(200).json([]);
+    const limit = Math.min(Number(req.query.limit) || 100, 200);
+    const results = [];
+
+    // 1. Read from MongoDB audit collection if available
+    if (auditCollection) {
+      try {
+        const logs = await auditCollection.find({}).sort({ timestamp: -1, _id: -1 }).limit(limit).toArray();
+        results.push(...logs);
+      } catch (err) {
+        console.warn('Failed to read from auditCollection:', err.message);
+      }
     }
-    try {
-      const limit = Math.min(Number(req.query.limit) || 100, 200);
-      const logs = await auditCollection.find({}).sort({ timestamp: -1, _id: -1 }).limit(limit).toArray();
-      return res.status(200).json(logs);
-    } catch (err) {
-      return res.status(500).json({ error: 'AUDIT_FETCH_FAILED', message: err.message });
+
+    // 2. If collection returned fewer or is not configured, supplement from durable file log
+    if (results.length < limit) {
+      try {
+        const auditFilePath = path.join(effectiveStateDir, 'audit', 'operator_audit.jsonl');
+        if (fs.existsSync(auditFilePath)) {
+          const content = fs.readFileSync(auditFilePath, 'utf8');
+          const lines = content.trim().split('\n').filter(Boolean);
+          const fileEntries = lines.map(l => {
+            try { return JSON.parse(l); } catch { return null; }
+          }).filter(Boolean);
+
+          const existingIds = new Set(results.map(r => r.id));
+          for (let i = fileEntries.length - 1; i >= 0 && results.length < limit; i--) {
+            const entry = fileEntries[i];
+            if (!existingIds.has(entry.id)) {
+              results.push(entry);
+              existingIds.add(entry.id);
+            }
+          }
+        }
+      } catch {}
     }
+
+    results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return res.status(200).json(results.slice(0, limit));
   });
 
   return router;
 }
 
 module.exports = {
-  createAdminRouter
+  createAdminRouter,
+  safeCompare,
+  acquireOperationLock,
+  releaseOperationLock
 };

@@ -350,6 +350,23 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(mockCrawlRuns.length, 1);
   });
 
+  it('POST /sources/:id/crawl rejects crawl on paused source with 400', async () => {
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/pause')
+      .set('x-admin-key', validKey);
+
+    const res = await request(app)
+      .post('/api/v1/admin/sources/greenhouse-feed/crawl')
+      .set('x-admin-key', validKey);
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error, 'SOURCE_PAUSED');
+
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/resume')
+      .set('x-admin-key', validKey);
+  });
+
   it('GET /jobs returns privileged catalog search across ALL statuses', async () => {
     const res = await request(app)
       .get('/api/v1/admin/jobs?status=ALL')
