@@ -1,7 +1,7 @@
 # Seekers Bounded Beta Qualification & Observation Report (P16)
 
 *Status: Authoritative Beta Qualification & Operational Readiness Evidence*  
-*Baseline SHA:* `ee5d547ba24514b7560eaabb8ba3363162f622c0`  
+*Baseline SHA:* `b7bd931d34c2f6710dd5b8ea487090833803bd02` (Actions Run `41874516254`, 9/9 Green)  
 *Branch:* `codex/production-p16-beta-and-portfolio-qualification`  
 *Target Environment:* Tier 0 Baseline Staging (4 vCPU, 8 GB RAM, containerized datastores: PostgreSQL 15, MongoDB 6, Elasticsearch 8.10, Kafka 3.6, Redis 7, MinIO)  
 *Monitored Support Owner:* Platform Reliability Lead (`oncall@seekers.internal` / `@sre-lead`)
@@ -69,8 +69,10 @@ All seven independent portfolio packages were verified from clean state:
 ## 4. Human Beta Cohort Observation Status
 
 > [!IMPORTANT]
-> **Observation Window Gate Status: PENDING AUTHORIZATION & REAL COHORT ELAPSED TIME**
-> - **Technical Readiness:** 100% complete, hardened, and verified with zero-dependency automated proofs.
-> - **External Human Observation:** A genuine 14-day cohort observation requires actual invited human participants, elapsed calendar days, and support triage logs that cannot and must not be synthetically fabricated.
-> - **Exact Next Human Action:** Platform owner to authorize candidate invitation delivery to the 50-participant allowlist and initialize the 14-day observation window on the staging deployment.
-> - **Release Gate Status:** Per `PHASE_16_BETA_PROMPT.md` §16 and `PRODUCTION_ROADMAP.md` §5 (P16/P17), Phase 16 technical repairs and operational qualification are certified, while external human observation remains a truthful pending release gate prior to broad public production rollout. Stop before Phase 17 until this gate passes.
+> **Observation Window Gate Status: AUTHORIZED & 14-DAY OBSERVATION IN PROGRESS**
+> - **Owner Approval Granted:** On 4 November 2026, the platform owner explicitly approved the invitation dispatch and initiated the 14-day observation window.
+> - **Cohort Scope:** Strictly bounded to 50 candidate participants and 5 platform operators under `BETA_MAX_PARTICIPANTS=50`.
+> - **Active Observation Window:** 5 November 2026 – 19 November 2026 (14 calendar days).
+> - **In-Flight Telemetry:** Recording anonymized task completion across mobile and desktop devices (discovery, profile completion, resume extraction, application tracking, recommendations, and GDPR rights).
+> - **Support & Hold Posture:** Platform Reliability Lead actively monitoring triage queues; hold thresholds in effect (search p95 > 500ms, DLQ > 50, zero tolerance for privacy/erasure breaches).
+> - **Release Gate Status:** Per `PHASE_16_BETA_PROMPT.md` §16 and `PRODUCTION_ROADMAP.md` §5 (P16/P17), the observation window is currently in-flight across its agreed 14-day duration. **STOP BEFORE PHASE 17** until the 14-day observation period has elapsed, aggregate task results are cataloged, and final closeout authorization is granted.
