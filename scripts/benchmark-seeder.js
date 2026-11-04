@@ -158,52 +158,49 @@ function generateDeterministicCandidate(index, rng = new DeterministicRng(5000 +
   };
 }
 
+function generateConformantPdfBuffer(title, text) {
+  const safeTitle = (title || 'Candidate Resume').replace(/[()]/g, ' ');
+  const safeText = (text || 'Skills: Go, Python, TypeScript').replace(/[()]/g, ' ');
+  const content = `BT /F1 14 Tf 50 720 Td (${safeTitle}) Tj /F1 10 Tf 0 -24 Td (${safeText}) Tj ET`;
+  const contentBytes = Buffer.from(content, 'latin1');
+  const streamLen = contentBytes.length;
+
+  const header = Buffer.from('%PDF-1.4\n', 'latin1');
+  const obj1 = Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n', 'latin1');
+  const obj2 = Buffer.from('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n', 'latin1');
+  const obj3 = Buffer.from('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n', 'latin1');
+  const obj4 = Buffer.from('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n', 'latin1');
+  const obj5Prefix = Buffer.from(`5 0 obj\n<< /Length ${streamLen} >>\nstream\n`, 'latin1');
+  const obj5Suffix = Buffer.from('\nendstream\nendobj\n', 'latin1');
+  const obj5 = Buffer.concat([obj5Prefix, contentBytes, obj5Suffix]);
+
+  const offsets = [0];
+  let curr = header.length;
+  offsets.push(curr); curr += obj1.length;
+  offsets.push(curr); curr += obj2.length;
+  offsets.push(curr); curr += obj3.length;
+  offsets.push(curr); curr += obj4.length;
+  offsets.push(curr); curr += obj5.length;
+
+  const pad = (n) => String(n).padStart(10, '0');
+  const xref = Buffer.from(
+    `xref\n0 6\n0000000000 65535 f \n${pad(offsets[1])} 00000 n \n${pad(offsets[2])} 00000 n \n${pad(offsets[3])} 00000 n \n${pad(offsets[4])} 00000 n \n${pad(offsets[5])} 00000 n \n`,
+    'latin1'
+  );
+  const trailer = Buffer.from(
+    `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${curr}\n%%EOF\n`,
+    'latin1'
+  );
+
+  return Buffer.concat([header, obj1, obj2, obj3, obj4, obj5, xref, trailer]);
+}
+
 function generateSyntheticResumePdf(candidate) {
   const headline = candidate.profile ? candidate.profile.headline : 'Software Engineer';
   const skills = candidate.profile ? candidate.profile.skills.join(', ') : 'Go, Python, TypeScript';
-  const content = `%PDF-1.4
-1 0 obj
-<< /Title (${candidate.email} - CV)
-   /Author (${candidate.id})
-   /Subject (Technical Resume)
->>
-endobj
-2 0 obj
-<< /Type /Catalog /Pages 3 0 R >>
-endobj
-3 0 obj
-<< /Type /Pages /Kids [4 0 R] /Count 1 >>
-endobj
-4 0 obj
-<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Contents 5 0 R >>
-endobj
-5 0 obj
-<< /Length 200 >>
-stream
-BT
-/F1 12 Tf
-72 712 Td (${candidate.email}) Tj
-0 -20 Td (${headline}) Tj
-0 -20 Td (Core Competencies: ${skills}) Tj
-0 -20 Td (Work Experience: Senior Distributed Systems Architect at TechCorp) Tj
-0 -20 Td (Education: B.Sc. in Computer Science & Engineering) Tj
-ET
-endstream
-endobj
-xref
-0 6
-0000000000 65535 f
-0000000009 00000 n
-0000000100 00000 n
-0000000150 00000 n
-0000000215 00000 n
-0000000295 00000 n
-trailer
-<< /Size 6 /Root 2 0 R >>
-startxref
-550
-%%EOF`;
-  return Buffer.from(content, 'utf8');
+  const title = `${candidate.email || 'Candidate'} - CV`;
+  const text = `Competencies: ${skills} | Role: ${headline} | Experience: Senior Distributed Systems Architect at TechCorp`;
+  return generateConformantPdfBuffer(title, text);
 }
 
 async function seedBenchmarkDataset(options = {}) {

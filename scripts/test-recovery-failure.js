@@ -20,6 +20,7 @@ const { validateImageDigest, runRollbackRehearsal } = require('./rollback-stagin
 const { runBackup, computeManifestHmac, verifyManifestHmac, resolveHmacSecret } = require('./backup-stores');
 const { runRestoreDrill } = require('./restore-drill');
 const { parseAlertRules } = require('./simulate-alerts');
+const { runResilienceFaultSuite } = require('./run-resilience-faults');
 
 async function runNegativeTests() {
   console.log('========================================================================');
@@ -266,30 +267,91 @@ async function runNegativeTests() {
 
   // 4.8: Real mode restore fails closed when database credentials are missing
   {
+    const realScratch = path.join(process.cwd(), 'data', 'test_scratch', `real_restore_test_${Date.now()}`);
+    fs.mkdirSync(realScratch, { recursive: true });
+    const realSecret = 'a_real_production_grade_hmac_secret_key_with_sufficient_entropy_64chars';
     const realManifest = { ...manifest, mode: 'REAL_STAGING_BACKUP' };
-    const realManifestPath = path.join(targetDir, 'real_manifest.json');
-    fs.writeFileSync(realManifestPath, JSON.stringify(realManifest, null, 2), 'utf8');
+    const hmac = computeManifestHmac(realManifest, realSecret);
+    realManifest.hmac_signature = hmac;
+    fs.writeFileSync(path.join(realScratch, 'manifest.json'), JSON.stringify(realManifest, null, 2), 'utf8');
+
+    for (const fileEntry of manifest.files) {
+      const src = path.join(targetDir, fileEntry.name);
+      const dest = path.join(realScratch, fileEntry.name);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+    }
 
     let credsFailed = false;
     try {
       await runRestoreDrill({
-        backupDir: targetDir,
+        backupDir: realScratch,
         realMode: true,
-        allowUnsignedManifest: true,
+        secret: realSecret,
         restoreDbUrl: '',
         restoreMongoUri: '',
-        restoreEsNode: ''
+        restoreEsNode: '',
+        restoreStoragePath: ''
       });
     } catch (err) {
       credsFailed = true;
-      assert(err.message.includes('Missing real target datastore credentials') || err.message.includes('Cannot restore fixture'), 'Must report missing credentials');
+      assert(err.message.includes('Missing explicit isolated target credentials') || err.message.includes('Missing real target datastore credentials'), 'Must report missing credentials');
     }
     assert(credsFailed, 'Real mode restore must fail closed on missing datastore credentials');
     console.log('  ✓ [PASS] Real mode restore fails closed when target database credentials are missing.');
     passedTests++;
+
+    // 4.9: Real mode restore fails closed when RESTORE_DATABASE_URL matches source DATABASE_URL
+    let sourceMatchFailed = false;
+    const origDb = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://admin:secret@live-db:5432/seekers_live';
+    try {
+      await runRestoreDrill({
+        backupDir: realScratch,
+        realMode: true,
+        secret: realSecret,
+        restoreDbUrl: 'postgresql://admin:secret@live-db:5432/seekers_live',
+        restoreMongoUri: 'mongodb://live-mongo:27017/seekers_isolated_restore',
+        restoreEsNode: 'http://live-es:9200',
+        restoreStoragePath: path.join(process.cwd(), 'data', 'restore_scratch_storage')
+      });
+    } catch (err) {
+      sourceMatchFailed = true;
+      assert(err.message.includes('matches source DATABASE_URL'), 'Must reject target matching source DB');
+    } finally {
+      if (origDb) process.env.DATABASE_URL = origDb; else delete process.env.DATABASE_URL;
+    }
+    assert(sourceMatchFailed, 'Must fail closed when restore target matches source database');
+    console.log('  ✓ [PASS] Real mode restore fails closed when target matches source DATABASE_URL.');
+    passedTests++;
+
+    // 4.10: Real mode restore fails closed when authoritative post-backup tombstones are missing
+    let tombstoneFailed = false;
+    try {
+      await runRestoreDrill({
+        backupDir: realScratch,
+        realMode: true,
+        secret: realSecret,
+        restoreDbUrl: 'postgresql://admin:secret@isolated-db:5432/seekers_isolated',
+        restoreMongoUri: 'mongodb://isolated-mongo:27017/seekers_isolated',
+        restoreEsNode: 'http://isolated-es:9200',
+        restoreStoragePath: path.join(process.cwd(), 'data', 'restore_scratch_storage'),
+        postBackupErasures: null
+      });
+    } catch (err) {
+      tombstoneFailed = true;
+      assert(err.message.includes('Real mode restore requires an authoritative post-backup tombstone manifest'), 'Must require authoritative tombstones');
+    }
+    assert(tombstoneFailed, 'Must fail closed when authoritative tombstones are missing in real mode');
+    console.log('  ✓ [PASS] Real mode restore fails closed when authoritative tombstones are absent.');
+    passedTests++;
+
+    try {
+      fs.rmSync(realScratch, { recursive: true, force: true });
+    } catch (_) {}
   }
 
-  // 4.9: verifyManifestHmac safely handles null, undefined, malformed, or non-hex signatures
+  // 4.11: verifyManifestHmac safely handles null, undefined, malformed, or non-hex signatures
   {
     assert.strictEqual(verifyManifestHmac(null), false);
     assert.strictEqual(verifyManifestHmac({}), false);
@@ -299,6 +361,18 @@ async function runNegativeTests() {
     console.log('  ✓ [PASS] verifyManifestHmac safely handles malformed and truncated signatures.');
     passedTests++;
   }
+
+    // 4.12: Real mode resilience suite fails closed when live staging services are unreachable
+    let resilienceRealFailed = false;
+    try {
+      await runResilienceFaultSuite({ realMode: true });
+    } catch (err) {
+      resilienceRealFailed = true;
+      assert(err.message.includes('Real mode staging prerequisites missing or unreachable'), 'Must report missing staging prerequisites');
+    }
+    assert(resilienceRealFailed, 'Real mode resilience suite must fail closed when dependencies are unreachable');
+    console.log('  ✓ [PASS] Real mode resilience suite fails closed on unreachable staging services.');
+    passedTests++;
 
   // Clean up scratch directory
   try {

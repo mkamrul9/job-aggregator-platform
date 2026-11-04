@@ -13,7 +13,7 @@ To avoid conflating registered candidate accounts with simultaneous concurrency,
 
 | Metric | Tier 0: Initial Regional Launch (Target Staging Baseline) | Tier 1: Regional Expansion (Target Scale) | Tier 2: Scaled Production Milestone (Target Long-Term) |
 |---|---|---|---|
-| **Status** | **VERIFIED & BENCHMARKED (PASS)** | **PROJECTED SPECIFICATION (READY)** | **UNVERIFIED ON SINGLE-NODE HOST** |
+| **Status** | **In-Process Baseline: VERIFIED (PASS)**<br>*Live Multi-Host Cluster: PENDING STAGING DEPLOYMENT* | **PROJECTED SPECIFICATION (AWAITING REGIONAL CLUSTER)** | **UNVERIFIED ON SINGLE-NODE HOST** |
 | **Registered Candidates** | 10,000 accounts | 100,000 accounts | 1,000,000 accounts |
 | **Daily Active Users (DAU)** | 1,000 DAU | 10,000 DAU | 100,000 DAU |
 | **Concurrent Sessions** | 50 – 100 simultaneous sessions | 1,000 simultaneous sessions | 10,000 simultaneous sessions |
@@ -25,33 +25,33 @@ To avoid conflating registered candidate accounts with simultaneous concurrency,
 | **Infrastructure Tier** | Single-node Linux VPS (4 vCPU, 8–16GB RAM) | Scaled VPS / Managed DB ($50–$100/mo) | Distributed Cluster ($500+/mo, multi-node ES/Kafka) |
 
 > [!IMPORTANT]
-> **Scale Transparency Statement:** Tier 0 has been empirically benchmarked and verified under repeatable deterministic load tooling (`scripts/benchmark-workloads.js`). Tier 2 represents the architectural design target; it requires a distributed multi-node Elasticsearch and Kafka cluster and is explicitly marked **UNVERIFIED ON SINGLE-NODE HOST**.
+> **Scale Transparency Statement:** The single-host in-process microbenchmarks (`scripts/benchmark-workloads.js`) evaluate pure algorithmic complexity, regex compilation reuse, and genuine Python/spaCy PhraseMatcher PDF parsing over a deterministic 500-listing, 100-profile synthetic seed. They do NOT measure end-to-end multi-node network latency across distributed clusters, nor do they claim 10,000 registered accounts or 50,000 jobs under concurrent network load. Multi-node cluster qualification remains pending staging deployment. Million-user production capacity (Tier 2) is strictly unverified on a single-node host.
 
 ---
 
 ## 2. Empirical In-Process Microbenchmark Measurements (Tier 0 Synthetic Fixtures)
 
-All measurements executed via `scripts/benchmark-workloads.js` over a deterministic seed dataset (500 canonical listings, 100 candidate profiles, 20 synthetic PDFs; seed: 133742).
+All measurements executed via `scripts/benchmark-workloads.js` over a deterministic seed dataset (500 canonical listings, 100 candidate profiles, 20 conformant PDF 1.4 synthetic CVs; seed: 133742).
 
 > [!NOTE]
 > **Measurement Boundary:** These metrics evaluate pure algorithmic and in-process function execution timings on local synthetic fixtures. They isolate data processing overhead and evaluate domain algorithms against Section 7 SLA targets. They do not represent end-to-end multi-node network latency across distributed clusters.
 
 | Workload Component | Stack / Boundary | Offered / Completed | Errors | p50 Latency | p95 Latency | p99 Latency | SLA Target (p95) | Gate Outcome |
 |---|---|---|---|---|---|---|---|---|
-| **1. Public Job Search & Facet Querying** | Node.js Express / Search Projection | 200 / 200 | 0 | 0.18 ms | **0.32 ms** | 0.77 ms | ≤ 500 ms | **PASS** |
-| **2. Identity & Workspace Operations** | NestJS / Prisma / PostgreSQL | 150 / 150 | 0 | 0.00 ms | **0.01 ms** | 0.04 ms | ≤ 300 ms | **PASS** |
-| **3. Ingestion & Idempotent Deduplication** | KafkaJS / Mongo / ES Outbox | 100 / 100 | 0 (5 DLQ) | 0.10 ms | **0.47 ms** | 2.43 ms | ≤ 100 ms | **PASS** |
-| **4. Explainable Matching & Ranking** | Matcher Engine / Candidate Criteria | 50 / 50 | 0 | 0.18 ms | **0.40 ms** | 1.64 ms | ≤ 150 ms | **PASS** |
-| **5. Notification Dispatch Pipeline** | Node.js / Durable Store / CAPTURE | 80 / 80 | 0 | 0.00 ms | **0.28 ms** | 2.30 ms | ≤ 50 ms | **PASS** |
-| **6. Resume NLP Extraction** | Python FastAPI / spaCy Text Parser | 30 / 30 | 0 | 0.58 ms | **0.77 ms** | 1.30 ms | ≤ 30,000 ms (30s) | **PASS** |
+| **1. Public Job Search & Facet Querying** | Node.js Express / Search Projection | 200 / 200 | 0 | 0.36 ms | **1.06 ms** | 2.04 ms | ≤ 500 ms | **PASS** |
+| **2. Identity & Workspace Operations** | NestJS / Prisma / PostgreSQL | 150 / 150 | 0 | 0.01 ms | **0.02 ms** | 0.07 ms | ≤ 300 ms | **PASS** |
+| **3. Ingestion & Idempotent Deduplication** | KafkaJS / Mongo / ES Outbox | 100 / 100 | 0 (5 DLQ) | 0.26 ms | **1.18 ms** | 15.58 ms | ≤ 100 ms | **PASS** |
+| **4. Explainable Matching & Ranking** | Matcher Engine / Candidate Criteria | 50 / 50 | 0 | 0.44 ms | **1.24 ms** | 3.57 ms | ≤ 150 ms | **PASS** |
+| **5. Notification Dispatch Pipeline** | Node.js / Durable Store / CAPTURE | 80 / 80 | 0 | 0.01 ms | **0.42 ms** | 8.96 ms | ≤ 50 ms | **PASS** |
+| **6. Resume NLP Extraction** | Python 3.11 / spaCy `en_core_web_sm` / `pypdf` | 30 / 30 | 0 | 18.96 ms | **29.19 ms** | 40.62 ms | ≤ 30,000 ms (30s) | **PASS** |
 
-*Note: All 6 core workloads met their roadmap p95 SLA targets with strict sample coverage (≥90%) and zero unexpected errors.*
+*Note: All 6 core workloads met their roadmap p95 SLA targets with strict sample coverage (≥90%) and zero unexpected errors. Resume extraction runs against the real Python/spaCy service parser (`service-resume/main.py`), extracting canonical skills (`AWS`, `Go`, `NestJS`, `React`, `TypeScript`) from valid PDF 1.4 byte streams. Plain-text substitutes fail closed with `INVALID_PDF_SIGNATURE`.*
 
 ---
 
 ## 3. Resilience & Controlled Failure Verification
 
-Executed via `scripts/run-resilience-faults.js` verifying component-level fault handling and domain invariants:
+Executed via `scripts/run-resilience-faults.js` (Execution Scope: `IN_PROCESS_SIMULATION`) verifying component-level fault handling and domain invariants:
 
 1. **Downstream Search Cluster Outage (`ECONNREFUSED`):**
    - *Fault Injected:* Elasticsearch connection refused during event ingestion.
@@ -77,6 +77,9 @@ Executed via `scripts/run-resilience-faults.js` verifying component-level fault 
    - *Fault Injected:* Triggering alert delivery to globally suppressed/unsubscribed candidate, followed by duplicate dispatch attempt.
    - *System Behavior:* Dispatcher aborted delivery with `SKIPPED_SUPPRESSED` and prevented duplicate delivery with `SKIPPED_DUPLICATE`. Zero unauthorized emails sent.
    - *Result:* **VERIFIED PASS**
+
+> [!NOTE]
+> **Staging Fault Prerequisite:** Real staging mode (`--real`) requires reachable live staging services and explicitly isolated target datastores. It enforces fail-closed assertions if target credentials match source datastores or if live dependencies are absent.
 
 ---
 
@@ -117,13 +120,16 @@ Engineering estimates based on published commodity provider rates (Hetzner Cloud
 ## 6. How to Re-Run Benchmark & Resilience Suites Locally
 
 ```bash
-# 1. Generate deterministic seed dataset
+# 1. Generate deterministic seed dataset (conformant PDF 1.4 synthetic resumes)
 node scripts/benchmark-seeder.js
 
-# 2. Execute full performance and SLA percentile benchmark suite
+# 2. Execute full performance and SLA percentile benchmark suite (with real Python/spaCy extractor)
 node scripts/benchmark-workloads.js
 
 # 3. Execute fault-injection and resilience verification suite
 node scripts/run-resilience-faults.js
-```
 
+# 4. Execute regression suites
+node scripts/test-benchmark-accounting.js
+node scripts/test-recovery-failure.js
+```

@@ -99,19 +99,51 @@ async function runRestoreDrill(options = {}) {
 
   if (isRealMode) {
     // Real Staging Restore Execution
-    const dbUrl = options.restoreDbUrl || process.env.RESTORE_DATABASE_URL || process.env.DATABASE_URL;
-    const mongoUri = options.restoreMongoUri || process.env.RESTORE_MONGO_URI || process.env.MONGO_URI;
-    const esNode = options.restoreEsNode || process.env.RESTORE_ES_NODE || process.env.ES_NODE;
+    const dbUrl = options.restoreDbUrl || process.env.RESTORE_DATABASE_URL;
+    const mongoUri = options.restoreMongoUri || process.env.RESTORE_MONGO_URI;
+    const esNode = options.restoreEsNode || process.env.RESTORE_ES_NODE;
+    const targetStorageDir = options.restoreStoragePath || process.env.RESTORE_STORAGE_PATH;
 
-    if (!dbUrl || !mongoUri || !esNode) {
+    if (!dbUrl || !mongoUri || !esNode || !targetStorageDir) {
       const missing = [];
-      if (!dbUrl) missing.push('RESTORE_DATABASE_URL/DATABASE_URL');
-      if (!mongoUri) missing.push('RESTORE_MONGO_URI/MONGO_URI');
-      if (!esNode) missing.push('RESTORE_ES_NODE/ES_NODE');
-      throw new Error(`[RESTORE-DRILL] FAIL-CLOSED: Missing real target datastore credentials: ${missing.join(', ')}`);
+      if (!dbUrl) missing.push('RESTORE_DATABASE_URL');
+      if (!mongoUri) missing.push('RESTORE_MONGO_URI');
+      if (!esNode) missing.push('RESTORE_ES_NODE');
+      if (!targetStorageDir) missing.push('RESTORE_STORAGE_PATH');
+      throw new Error(`[RESTORE-DRILL] FAIL-CLOSED: Missing explicit isolated target credentials: ${missing.join(', ')}. Generic source datastore settings cannot be used as fallbacks.`);
     }
 
-    console.log('[RESTORE-DRILL] Step 3: Restoring PostgreSQL authoritative state to real database...');
+    // Invariant Check: Restore target datastores MUST be isolated from source or production
+    if (process.env.DATABASE_URL && dbUrl.trim() === process.env.DATABASE_URL.trim()) {
+      throw new Error('[RESTORE-DRILL] FAIL-CLOSED: RESTORE_DATABASE_URL matches source DATABASE_URL. Target must be an isolated disposable database.');
+    }
+    if (process.env.MONGO_URI && mongoUri.trim() === process.env.MONGO_URI.trim()) {
+      throw new Error('[RESTORE-DRILL] FAIL-CLOSED: RESTORE_MONGO_URI matches source MONGO_URI. Target must be an isolated disposable database.');
+    }
+    if (process.env.ES_NODE && esNode.trim() === process.env.ES_NODE.trim() && !(options.targetEsIndex || process.env.RESTORE_ES_INDEX)) {
+      throw new Error('[RESTORE-DRILL] FAIL-CLOSED: RESTORE_ES_NODE matches source ES_NODE without isolated target index or cluster.');
+    }
+    if (process.env.OBJECT_STORAGE_DIR && path.resolve(targetStorageDir) === path.resolve(process.env.OBJECT_STORAGE_DIR)) {
+      throw new Error('[RESTORE-DRILL] FAIL-CLOSED: RESTORE_STORAGE_PATH matches source OBJECT_STORAGE_DIR. Target storage must be isolated.');
+    }
+
+    // Enforce Authoritative Post-Backup Tombstone Replay (No synthetic default injection in real mode)
+    let postBackupErasures = options.postBackupErasures;
+    if (!postBackupErasures) {
+      const tombstonesFile = options.tombstonesPath || process.env.RESTORE_TOMBSTONES_PATH;
+      if (tombstonesFile && fs.existsSync(tombstonesFile)) {
+        try {
+          postBackupErasures = JSON.parse(fs.readFileSync(tombstonesFile, 'utf8'));
+        } catch (parseErr) {
+          throw new Error(`[RESTORE-DRILL] FAIL-CLOSED: Failed parsing authoritative tombstones file: ${parseErr.message}`);
+        }
+      }
+    }
+    if (!postBackupErasures || !Array.isArray(postBackupErasures) || postBackupErasures.length === 0) {
+      throw new Error('[RESTORE-DRILL] FAIL-CLOSED: Real mode restore requires an authoritative post-backup tombstone manifest (via options.postBackupErasures or RESTORE_TOMBSTONES_PATH). Synthetic default tombstones are forbidden.');
+    }
+
+    console.log('[RESTORE-DRILL] Step 3: Restoring PostgreSQL authoritative state to real isolated database...');
     const pgBackup = JSON.parse(fs.readFileSync(path.join(backupDir, 'postgres_authoritative.json'), 'utf8'));
     const { Client } = require('pg');
     const pgClient = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 5000 });
@@ -139,34 +171,28 @@ async function runRestoreDrill(options = {}) {
         );
       }
 
-      // Step 4: Replay Post-Backup Durable Erasure Tombstones (Crucial P14 Privacy Gate)
-      console.log('[RESTORE-DRILL] Step 4: Replaying tombstones recorded AFTER backup snapshot in real PostgreSQL...');
-      const postBackupErasures = options.postBackupErasures || [
-        {
-          id: 'erasure_usr_active_02',
-          userId: 'usr_active_02',
-          erasedAt: new Date(Date.now() - 1000).toISOString(),
-          requestedAt: new Date(Date.now() - 5000).toISOString(),
-          ipHash: crypto.createHash('sha256').update('10.0.0.1').digest('hex')
-        }
-      ];
-
+      // Step 4: Replay Authoritative Post-Backup Durable Erasure Tombstones
+      console.log(`[RESTORE-DRILL] Step 4: Replaying ${postBackupErasures.length} authoritative post-backup tombstones in real PostgreSQL...`);
       for (const newErasure of postBackupErasures) {
-        console.log(`  Replaying post-backup tombstone into DB for user ${newErasure.userId}...`);
+        const uId = newErasure.userId || newErasure.user_id;
+        console.log(`  Replaying post-backup tombstone into DB for user ${uId}...`);
         await pgClient.query(
           `INSERT INTO "DurableErasureRecord" (id, "userId", "erasedAt", "requestedAt", "ipHash")
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (id) DO NOTHING`,
-          [newErasure.id, newErasure.userId, newErasure.erasedAt, newErasure.requestedAt, newErasure.ipHash]
+          [newErasure.id, uId, newErasure.erasedAt || newErasure.erased_at || new Date().toISOString(), newErasure.requestedAt || newErasure.requested_at || new Date().toISOString(), newErasure.ipHash || newErasure.ip_hash || 'hash']
         );
         // Purge user from User table
-        await pgClient.query('DELETE FROM "User" WHERE id = $1', [newErasure.userId]);
+        await pgClient.query('DELETE FROM "User" WHERE id = $1', [uId]);
       }
 
-      // Verify that erased user is NOT active in database
-      const checkRes = await pgClient.query('SELECT COUNT(*) FROM "User" WHERE id = $1', ['usr_active_02']);
-      if (parseInt(checkRes.rows[0].count, 10) > 0) {
-        throw new Error('[RESTORE-DRILL] PRIVACY REGRESSION: User usr_active_02 was resurrected after restore in real PostgreSQL!');
+      // Verify that no erased user remains active in database
+      for (const newErasure of postBackupErasures) {
+        const uId = newErasure.userId || newErasure.user_id;
+        const checkRes = await pgClient.query('SELECT COUNT(*) FROM "User" WHERE id = $1', [uId]);
+        if (parseInt(checkRes.rows[0].count, 10) > 0) {
+          throw new Error(`[RESTORE-DRILL] PRIVACY REGRESSION: User ${uId} was resurrected after restore in real PostgreSQL!`);
+        }
       }
 
       const totalUsersRes = await pgClient.query('SELECT COUNT(*) FROM "User"');
@@ -184,7 +210,7 @@ async function runRestoreDrill(options = {}) {
     }
 
     // Step 5: Restore Canonical MongoDB
-    console.log('[RESTORE-DRILL] Step 5: Restoring MongoDB canonical job catalog...');
+    console.log('[RESTORE-DRILL] Step 5: Restoring MongoDB canonical job catalog into isolated database...');
     const mongoBackup = JSON.parse(fs.readFileSync(path.join(backupDir, 'mongo_catalog.json'), 'utf8'));
     const { MongoClient } = require('mongodb');
     const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
@@ -199,16 +225,46 @@ async function runRestoreDrill(options = {}) {
     }
     restoredCatalogCount = await db.collection('jobs').countDocuments();
     await mongoClient.close();
-    console.log(`  ✓ Restored ${restoredCatalogCount} canonical job listings into MongoDB.`);
+    console.log(`  ✓ Restored ${restoredCatalogCount} canonical job listings into isolated MongoDB.`);
 
     // Step 6: Search Projection Rebuild
     console.log('[RESTORE-DRILL] Step 6: Rebuilding Elasticsearch search projection from canonical catalog...');
-    rebuiltSearchCount = restoredCatalogCount;
-    console.log(`  ✓ Rebuilt search projection with ${rebuiltSearchCount} indexed documents.`);
+    const targetIndex = options.targetEsIndex || process.env.RESTORE_ES_INDEX || 'restore_jobs_index';
+    let esClient;
+    try {
+      const { Client } = require(path.join(process.cwd(), 'service-ingestion', 'node_modules', '@elastic', 'elasticsearch'));
+      esClient = new Client({ node: esNode });
+    } catch (_) {
+      const { Client } = require('@elastic/elasticsearch');
+      esClient = new Client({ node: esNode });
+    }
+
+    for (const job of jobs) {
+      await esClient.index({
+        index: targetIndex,
+        id: job.id,
+        body: {
+          id: job.id,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          skills: job.skills,
+          status: job.moderation_status || job.status || 'ACTIVE',
+          indexed_at: new Date().toISOString()
+        }
+      });
+    }
+    await esClient.indices.refresh({ index: targetIndex });
+    const countRes = await esClient.count({ index: targetIndex });
+    rebuiltSearchCount = countRes.count || 0;
+
+    if (rebuiltSearchCount !== restoredCatalogCount) {
+      throw new Error(`[RESTORE-DRILL] Projection mismatch: MongoDB has ${restoredCatalogCount}, Elasticsearch index ${targetIndex} has ${rebuiltSearchCount}`);
+    }
+    console.log(`  ✓ Rebuilt search projection with ${rebuiltSearchCount} indexed documents in Elasticsearch.`);
 
     // Step 7: Private Object Storage Recovery
-    console.log('[RESTORE-DRILL] Step 7: Restoring and checking private object storage...');
-    const targetStorageDir = process.env.RESTORE_STORAGE_PATH || process.env.OBJECT_STORAGE_DIR || path.join(process.cwd(), 'service-user', 'data', 'storage');
+    console.log('[RESTORE-DRILL] Step 7: Restoring and checking isolated private object storage...');
     fs.mkdirSync(targetStorageDir, { recursive: true });
 
     const backupStorageDir = path.join(backupDir, 'object_storage');
@@ -220,9 +276,15 @@ async function runRestoreDrill(options = {}) {
     }
 
     // Purge any stored resume files belonging to erased users
-    const purgedResumeExists = fs.existsSync(path.join(targetStorageDir, 'resumes_usr_purged_99_cv.pdf'));
-    if (purgedResumeExists) {
-      fs.unlinkSync(path.join(targetStorageDir, 'resumes_usr_purged_99_cv.pdf'));
+    for (const erasure of postBackupErasures) {
+      const uId = erasure.userId || erasure.user_id;
+      const files = fs.readdirSync(targetStorageDir);
+      for (const f of files) {
+        if (f.includes(uId)) {
+          fs.unlinkSync(path.join(targetStorageDir, f));
+          console.log(`  Purged restored resume for erased user ${uId}: ${f}`);
+        }
+      }
     }
     console.log('  ✓ Verified no orphaned/purged resume files exist in restored storage.');
   } else {
@@ -357,6 +419,9 @@ async function runRestoreDrill(options = {}) {
   const drillEnd = Date.now();
   const measuredRtoSeconds = ((drillEnd - drillStart) / 1000).toFixed(3);
   const backupAgeMinutes = ((Date.now() - new Date(manifest.timestamp).getTime()) / 60000).toFixed(2);
+  const acknowledgedWritesLost = options.acknowledgedWritesLost !== undefined
+    ? options.acknowledgedWritesLost
+    : (manifest.acknowledged_writes_lost !== undefined ? manifest.acknowledged_writes_lost : 0);
 
   const rtoTargetSeconds = 60 * 60; // 60 minutes
   const rpoTargetMinutes = 15; // 15 minutes
@@ -399,7 +464,8 @@ async function runRestoreDrill(options = {}) {
       catalog_documents_restored: restoredCatalogCount,
       search_documents_rebuilt: rebuiltSearchCount,
       active_users_restored: restoredUsersCount,
-      durable_erasures_preserved: durableErasuresCount
+      durable_erasures_preserved: durableErasuresCount,
+      acknowledged_writes_lost: acknowledgedWritesLost
     },
     privacy_and_security: {
       hmac_provenance_verified: true,

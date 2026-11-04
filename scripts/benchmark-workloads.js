@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { performance } = require('perf_hooks');
+const { spawnSync } = require('child_process');
 
 // Import domain modules for direct in-process measurement and client adapters
 const { seedBenchmarkDataset, generateDeterministicListing, generateDeterministicCandidate } = require('./benchmark-seeder');
@@ -564,11 +565,9 @@ async function benchmarkNotificationWorkload(candidates, listings) {
 // ----------------------------------------------------------------------------
 // BENCHMARK 6: Python Resume Extraction Latency (FastAPI / spaCy Simulation)
 // ----------------------------------------------------------------------------
-const TECH_SKILLS_MOCK = ['Go', 'Python', 'TypeScript', 'Node.js', 'React', 'Kubernetes', 'Docker'];
-
 async function benchmarkResumeExtractor(fixtureDir) {
   console.log('\n--- Benchmark 6: Resume Extraction Processing & NLP Workload ---');
-  console.log('Testing PDF text parsing, entity extraction, and threadpool bounds (In-Process Microbenchmark)...');
+  console.log('Testing PDF text parsing, entity extraction, and threadpool bounds (Real Python/spaCy Extractor)...');
 
   const iterations = 30;
   const minSamplesRequired = 25; // >80% required sample coverage
@@ -594,55 +593,128 @@ async function benchmarkResumeExtractor(fixtureDir) {
   }
 
   const samplePdfPath = path.join(fixtureDir, 'resumes', 'usr_bench_00000_resume.pdf');
-  const latencies = [];
-  let errorCount = 0;
-  const startTotal = performance.now();
-
-  for (let i = 0; i < iterations; i++) {
-    const t0 = performance.now();
-    try {
-      // Must enforce real fixture existence - fail closed if fixture is missing!
-      if (!fs.existsSync(samplePdfPath)) {
-        throw new Error(`Required benchmark resume fixture missing: ${samplePdfPath}`);
-      }
-      const pdfBuffer = fs.readFileSync(samplePdfPath);
-      if (!pdfBuffer || pdfBuffer.length === 0) {
-        throw new Error('Empty resume PDF fixture buffer');
-      }
-
-      // Parse PDF byte stream and extract technical skills
-      const content = pdfBuffer.toString('utf8');
-      const lines = content.split('\n');
-      const extractedSkills = TECH_SKILLS_MOCK.filter(skill =>
-        content.toLowerCase().includes(skill.toLowerCase())
-      );
-
-      const parsedProfile = {
-        name: 'Candidate Benchmark',
-        extracted_skills: extractedSkills,
-        line_count: lines.length,
-        size_bytes: pdfBuffer.length
-      };
-
-      const elapsed = performance.now() - t0;
-      latencies.push(elapsed);
-    } catch (err) {
-      errorCount++;
-    }
+  if (!fs.existsSync(samplePdfPath)) {
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: `Required benchmark resume fixture missing: ${samplePdfPath}`
+    };
   }
 
-  const durationSec = (performance.now() - startTotal) / 1000;
+  // 1. Pre-flight PDF Header & Magic Bytes Validation (rejection of plain-text substitutes)
+  const pdfBuffer = fs.readFileSync(samplePdfPath);
+  if (!pdfBuffer || pdfBuffer.length < 4 || !pdfBuffer.subarray(0, 4).equals(Buffer.from('%PDF'))) {
+    console.error('  [FAIL-CLOSED] Invalid PDF signature: document does not start with %PDF header');
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: 'INVALID_PDF_SIGNATURE: Document does not start with valid %PDF header.'
+    };
+  }
+
+  // 2. Execute Real Python NLP Extraction using service-resume
+  const pyScript = path.join(__dirname, 'parse-resume-bench.py');
+  const pythonCmd = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
+  const pyRes = spawnSync(pythonCmd, [pyScript, samplePdfPath, String(iterations)], {
+    encoding: 'utf8',
+    timeout: 60000
+  });
+
+  if (pyRes.error || pyRes.status !== 0 || !pyRes.stdout) {
+    const errMsg = pyRes.error ? pyRes.error.message : (pyRes.stderr || 'Python benchmark runner exited with error');
+    console.error(`  [FAIL-CLOSED] Python parser dependency failure: ${errMsg}`);
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: `Python parser execution failed: ${errMsg}`
+    };
+  }
+
+  let parseData;
+  try {
+    parseData = JSON.parse(pyRes.stdout.trim());
+  } catch (e) {
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: `Malformed JSON output from Python benchmark runner: ${e.message}`
+    };
+  }
+
+  if (parseData.error === 'INVALID_PDF_SIGNATURE' || parseData.success === false && (!parseData.completed || parseData.completed === 0)) {
+    return {
+      workload: 'Python Resume NLP Extractor',
+      mode: 'IN_PROCESS_MICROBENCHMARK',
+      offered: iterations,
+      attempted: iterations,
+      completed: 0,
+      errors: iterations,
+      min_samples_required: minSamplesRequired,
+      error_budget: maxAllowedErrors,
+      throughput_rps: 0,
+      percentiles_ms: calculatePercentiles([]),
+      target_sla_ms: targetSlaMs,
+      sla_met: false,
+      failure_reason: parseData.message || parseData.error || 'Extraction failed'
+    };
+  }
+
+  const latencies = Array.isArray(parseData.latencies) ? parseData.latencies : [];
+  const completedCount = parseData.completed || 0;
+  const errorCount = parseData.errors !== undefined ? parseData.errors : (iterations - completedCount);
+  const totalDurationSec = (latencies.reduce((a, b) => a + b, 0) / 1000) || 1;
   const stats = calculatePercentiles(latencies);
-  const throughputRps = (durationSec > 0 && latencies.length > 0)
-    ? parseFloat((latencies.length / durationSec).toFixed(1))
+  const throughputRps = (totalDurationSec > 0 && completedCount > 0)
+    ? parseFloat((completedCount / totalDurationSec).toFixed(1))
     : 0;
 
   const hasRequiredSamples = stats.count >= minSamplesRequired;
   const withinErrorBudget = errorCount <= maxAllowedErrors;
   const targetMet = hasRequiredSamples && withinErrorBudget && stats.p95 !== null && stats.p95 <= targetSlaMs;
 
-  console.log(`  Offered/Attempted: ${iterations} | Completed: ${latencies.length} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
-  console.log(`  Throughput:        ${throughputRps} completed resumes/sec`);
+  console.log(`  Offered/Attempted: ${iterations} | Completed: ${completedCount} | Errors: ${errorCount} (Allowed: ${maxAllowedErrors})`);
+  console.log(`  Throughput:        ${throughputRps} completed resumes/sec (Extracted Skills Sample: ${(parseData.skills || []).join(', ')})`);
   console.log(`  Latency p50:       ${stats.p50} ms | p95: ${stats.p95} ms | p99: ${stats.p99} ms`);
   console.log(`  Target Gate:       p95 <= ${targetSlaMs} ms (30s) -> ${targetMet ? 'PASS' : 'FAIL'} (Measured: ${stats.p95} ms, Samples: ${stats.count}/${minSamplesRequired})`);
 
@@ -651,7 +723,7 @@ async function benchmarkResumeExtractor(fixtureDir) {
     mode: 'IN_PROCESS_MICROBENCHMARK',
     offered: iterations,
     attempted: iterations,
-    completed: latencies.length,
+    completed: completedCount,
     errors: errorCount,
     min_samples_required: minSamplesRequired,
     error_budget: maxAllowedErrors,

@@ -24,10 +24,37 @@ const { normalizeCanonicalUrl } = require('../service-ingestion/src/models/job')
 const { DurableNotificationStore } = require('../service-notification/src/storage');
 const { DeliveryDispatcher } = require('../service-notification/src/dispatcher');
 
-async function runResilienceFaultSuite() {
+async function runResilienceFaultSuite(options = {}) {
+  const isRealMode = Boolean(
+    options.realMode ||
+    process.argv.includes('--real') ||
+    (process.env.NODE_ENV === 'production' && !process.argv.includes('--demo') && !options.demoMode)
+  );
+
   console.log('========================================================================');
   console.log('[RESILIENCE-FAULTS] Seekers Fault Injection & Recovery Verification (P15)');
+  console.log(`[RESILIENCE-FAULTS] Execution Scope: [${isRealMode ? 'REAL_STAGING_MODE' : 'IN_PROCESS_SIMULATION'}]`);
   console.log('========================================================================\n');
+
+  if (isRealMode) {
+    const missing = [];
+    const endpoints = [
+      { name: 'service-user', url: process.env.USER_SERVICE_URL || 'http://127.0.0.1:3001/health' },
+      { name: 'service-ingestion', url: process.env.INGESTION_SERVICE_URL || 'http://127.0.0.1:3002/health' },
+      { name: 'service-resume', url: process.env.RESUME_SERVICE_URL || 'http://127.0.0.1:8000/health' }
+    ];
+    const { probeServiceHttp } = require('./deploy-staging');
+    for (const ep of endpoints) {
+      try {
+        await probeServiceHttp(ep.url, 1000);
+      } catch (err) {
+        missing.push(`${ep.name} (${ep.url}: ${err.message})`);
+      }
+    }
+    if (missing.length > 0) {
+      throw new Error(`[RESILIENCE-FAULTS] FAIL-CLOSED: Real mode staging prerequisites missing or unreachable: ${missing.join('; ')}. Staging cluster required for real mode.`);
+    }
+  }
 
   let passedTests = 0;
   const faultOutcomes = [];
@@ -412,6 +439,8 @@ async function runResilienceFaultSuite() {
 
   const report = {
     fault_suite_id: `faults_${new Date().toISOString().replace(/[:.]/g, '-')}`,
+    mode: isRealMode ? 'REAL_STAGING_MODE' : 'IN_PROCESS_SIMULATION',
+    is_simulation: !isRealMode,
     timestamp: new Date().toISOString(),
     tests_passed: passedTests,
     scenarios: faultOutcomes,
