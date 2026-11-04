@@ -10,32 +10,61 @@
  * Supports two operational modes:
  *  1. REAL MODE (--real): Connects to live databases (DATABASE_URL, MONGO_URI) and dumps live data.
  *     Fails closed (exit code 1) if databases are unreachable or dump fails.
- *  2. DEMO/FIXTURE MODE (--demo, default without live DB flags): Generates labeled synthetic staging fixtures,
- *     explicitly marked as FIXTURE_DEMO_NON_PRODUCTION.
+ *  2. DEMO/REHEARSAL MODE (--demo, default without live DB flags): Generates labeled synthetic staging fixtures,
+ *     explicitly marked as REHEARSAL_FIXTURE_DEMO.
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_HMAC_SECRET = process.env.BACKUP_HMAC_SECRET || 'seekers_backup_hmac_secret_p14_durable_key';
+const KNOWN_INSECURE_FALLBACK_SECRET = 'seekers_backup_hmac_secret_p14_durable_key';
+
+function canonicalJsonStringify(obj) {
+  if (obj === null || typeof obj !== 'object') {
+    return JSON.stringify(obj);
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(item => canonicalJsonStringify(item)).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map(key => JSON.stringify(key) + ':' + canonicalJsonStringify(obj[key])).join(',') + '}';
+}
+
+function resolveHmacSecret(providedSecret, isRealMode = false) {
+  const secret = providedSecret || process.env.BACKUP_HMAC_SECRET;
+  if (isRealMode) {
+    if (!secret || secret === KNOWN_INSECURE_FALLBACK_SECRET) {
+      throw new Error('[BACKUP] FAIL-CLOSED: BACKUP_HMAC_SECRET must be explicitly configured with an authentic secret in real mode (cannot use default or empty).');
+    }
+    if (secret.length < 32) {
+      throw new Error('[BACKUP] FAIL-CLOSED: BACKUP_HMAC_SECRET must be at least 32 characters in real mode.');
+    }
+  }
+  return secret || KNOWN_INSECURE_FALLBACK_SECRET;
+}
 
 function computeSha256(filePath) {
   const content = fs.readFileSync(filePath);
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function computeManifestHmac(manifestObject, secret = DEFAULT_HMAC_SECRET) {
+function computeManifestHmac(manifestObject, secret, isRealMode = false) {
+  const resolvedSecret = resolveHmacSecret(secret, isRealMode);
   const shallowCopy = { ...manifestObject };
   delete shallowCopy.hmac_signature;
-  const canonicalString = JSON.stringify(shallowCopy, Object.keys(shallowCopy).sort());
-  return crypto.createHmac('sha256', secret).update(canonicalString).digest('hex');
+  const canonicalString = canonicalJsonStringify(shallowCopy);
+  return crypto.createHmac('sha256', resolvedSecret).update(canonicalString).digest('hex');
 }
 
-function verifyManifestHmac(manifestObject, secret = DEFAULT_HMAC_SECRET) {
+function verifyManifestHmac(manifestObject, secret, isRealMode = false) {
   if (!manifestObject || !manifestObject.hmac_signature) return false;
-  const expected = computeManifestHmac(manifestObject, secret);
-  return crypto.timingSafeEqual(Buffer.from(manifestObject.hmac_signature, 'hex'), Buffer.from(expected, 'hex'));
+  try {
+    const expected = computeManifestHmac(manifestObject, secret, isRealMode);
+    return crypto.timingSafeEqual(Buffer.from(manifestObject.hmac_signature, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return false;
+  }
 }
 
 async function runBackup(options = {}) {
@@ -44,7 +73,6 @@ async function runBackup(options = {}) {
     process.argv.includes('--real') ||
     (process.env.NODE_ENV === 'production' && !process.argv.includes('--demo') && !options.demoMode)
   );
-  const isDemo = !isRealMode;
 
   const targetDir =
     options.targetDir ||
@@ -57,13 +85,16 @@ async function runBackup(options = {}) {
   fs.mkdirSync(targetDir, { recursive: true });
 
   const startTime = Date.now();
-  console.log(`[BACKUP] Starting backup pipeline in [${isRealMode ? 'REAL_STAGING_MODE' : 'FIXTURE_DEMO_NON_PRODUCTION'}] -> ${targetDir}`);
+  console.log(`[BACKUP] Starting backup pipeline in [${isRealMode ? 'REAL_STAGING_MODE' : 'REHEARSAL_FIXTURE_DEMO'}] -> ${targetDir}`);
+
+  // Validate secret pre-flight
+  const hmacSecret = resolveHmacSecret(options.secret, isRealMode);
 
   let postgresData;
   let mongoData;
+  const storageFiles = [];
 
   if (isRealMode) {
-    // In real mode, we must query real datastores or dump tools. If missing or unreachable, fail closed.
     const dbUrl = process.env.DATABASE_URL;
     const mongoUri = process.env.MONGO_URI;
 
@@ -80,12 +111,16 @@ async function runBackup(options = {}) {
 
     try {
       console.log('[BACKUP] Querying real PostgreSQL authoritative tables...');
-      // Simulated live dump attempt via protocol or child process
       const { Client } = require('pg');
-      const pgClient = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 3000 });
+      const pgClient = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 5000 });
       await pgClient.connect();
+
       const usersRes = await pgClient.query('SELECT * FROM "User"');
+      const profilesRes = await pgClient.query('SELECT * FROM "Profile"');
       const erasuresRes = await pgClient.query('SELECT * FROM "DurableErasureRecord"');
+      const deletionReqsRes = await pgClient.query('SELECT * FROM "AccountDeletionRequest"');
+      const trackedAppsRes = await pgClient.query('SELECT * FROM "TrackedApplication"');
+
       await pgClient.end();
 
       postgresData = {
@@ -94,7 +129,10 @@ async function runBackup(options = {}) {
         exported_at: new Date().toISOString(),
         tables: {
           users: usersRes.rows,
+          profiles: profilesRes.rows,
           durable_erasure_records: erasuresRes.rows,
+          account_deletion_requests: deletionReqsRes.rows,
+          tracked_applications: trackedAppsRes.rows
         }
       };
     } catch (pgErr) {
@@ -103,31 +141,69 @@ async function runBackup(options = {}) {
     }
 
     try {
-      console.log('[BACKUP] Querying real MongoDB canonical catalog...');
+      console.log('[BACKUP] Querying real MongoDB canonical catalog & operational collections...');
       const { MongoClient } = require('mongodb');
-      const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 3000 });
+      const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
       await mongoClient.connect();
       const db = mongoClient.db();
+
       const jobs = await db.collection('jobs').find({}).toArray();
+      const sources = await db.collection('sources').find({}).toArray();
+      const deadLetters = await db.collection('dead_letters').find({}).toArray();
+
+      let audits = [];
+      try {
+        audits = await db.collection('audits').find({}).toArray();
+      } catch {
+        // collection may not exist yet
+      }
+
       await mongoClient.close();
 
       mongoData = {
-        collection: 'jobs',
         mode: 'LIVE_DATABASE_DUMP',
         exported_at: new Date().toISOString(),
         record_count: jobs.length,
+        collections: {
+          jobs,
+          sources,
+          dead_letters: deadLetters,
+          audits
+        },
         documents: jobs
       };
     } catch (mongoErr) {
       console.error(`[BACKUP] MongoDB real dump failed: ${mongoErr.message}`);
       throw mongoErr;
     }
+
+    // Real object storage copy
+    const realStorageDir = process.env.OBJECT_STORAGE_DIR || path.join(process.cwd(), 'service-user', 'data', 'storage');
+    const storageBackupDir = path.join(targetDir, 'object_storage');
+    fs.mkdirSync(storageBackupDir, { recursive: true });
+
+    if (fs.existsSync(realStorageDir)) {
+      const liveFiles = fs.readdirSync(realStorageDir).filter(f => fs.statSync(path.join(realStorageDir, f)).isFile());
+      for (const f of liveFiles) {
+        const srcPath = path.join(realStorageDir, f);
+        const dstPath = path.join(storageBackupDir, f);
+        fs.copyFileSync(srcPath, dstPath);
+        storageFiles.push({
+          name: `object_storage/${f}`,
+          type: 'Private Object Storage',
+          path: dstPath,
+          size_bytes: fs.statSync(dstPath).size,
+          sha256_checksum: computeSha256(dstPath),
+          record_count: 1
+        });
+      }
+    }
   } else {
     // Demonstration Fixture Mode
-    console.log('[BACKUP] Note: Running in FIXTURE DEMO mode with verified synthetic data.');
+    console.log('[BACKUP] Note: Running in REHEARSAL_FIXTURE_DEMO mode with verified synthetic data.');
     postgresData = options.customPostgresData || {
       schema_version: '20261103000000_p13_durable_erasure_and_export',
-      mode: 'FIXTURE_DEMO_NON_PRODUCTION',
+      mode: 'REHEARSAL_FIXTURE_DEMO',
       tables: {
         users: [
           {
@@ -144,6 +220,9 @@ async function runBackup(options = {}) {
             created_at: new Date(Date.now() - 86400000 * 20).toISOString(),
             profile: { headline: 'Catalog Lead', location: 'London, UK' }
           }
+        ],
+        profiles: [
+          { id: 'prof_01', user_id: 'usr_active_01', headline: 'Senior Staff Engineer' }
         ],
         durable_erasure_records: [
           {
@@ -177,7 +256,7 @@ async function runBackup(options = {}) {
 
     mongoData = options.customMongoData || {
       collection: 'jobs',
-      mode: 'FIXTURE_DEMO_NON_PRODUCTION',
+      mode: 'REHEARSAL_FIXTURE_DEMO',
       exported_at: new Date().toISOString(),
       record_count: 3,
       documents: [
@@ -224,6 +303,22 @@ async function runBackup(options = {}) {
         }
       ]
     };
+
+    // Fixture storage object
+    const storageBackupDir = path.join(targetDir, 'object_storage');
+    fs.mkdirSync(storageBackupDir, { recursive: true });
+    const activeResumePath = path.join(storageBackupDir, 'resumes_usr_active_01_cv.pdf');
+    const pdfHeader = '%PDF-1.4\n1 0 obj\n<< /Title (Active Candidate Resume - Staging Demo) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF';
+    fs.writeFileSync(activeResumePath, pdfHeader, 'utf8');
+
+    storageFiles.push({
+      name: 'object_storage/resumes_usr_active_01_cv.pdf',
+      type: 'Private Object Storage',
+      path: activeResumePath,
+      size_bytes: fs.statSync(activeResumePath).size,
+      sha256_checksum: computeSha256(activeResumePath),
+      record_count: 1
+    });
   }
 
   // 1. Write PostgreSQL Authoritative Snapshot
@@ -234,15 +329,7 @@ async function runBackup(options = {}) {
   const mongoBackupPath = path.join(targetDir, 'mongo_catalog.json');
   fs.writeFileSync(mongoBackupPath, JSON.stringify(mongoData, null, 2), 'utf8');
 
-  // 3. Private Object Storage Snapshot (Resumes and Durable Archives)
-  const storageBackupDir = path.join(targetDir, 'object_storage');
-  fs.mkdirSync(storageBackupDir, { recursive: true });
-
-  const activeResumePath = path.join(storageBackupDir, 'resumes_usr_active_01_cv.pdf');
-  const pdfHeader = '%PDF-1.4\n1 0 obj\n<< /Title (Active Candidate Resume) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF';
-  fs.writeFileSync(activeResumePath, pdfHeader, 'utf8');
-
-  // 4. Calculate SHA-256 Checksums and Build Authenticated Manifest
+  // 3. Assemble Files Array
   const files = [
     {
       name: 'postgres_authoritative.json',
@@ -260,21 +347,14 @@ async function runBackup(options = {}) {
       sha256_checksum: computeSha256(mongoBackupPath),
       record_count: mongoData.documents ? mongoData.documents.length : 0
     },
-    {
-      name: 'object_storage/resumes_usr_active_01_cv.pdf',
-      type: 'Private Object Storage',
-      path: activeResumePath,
-      size_bytes: fs.statSync(activeResumePath).size,
-      sha256_checksum: computeSha256(activeResumePath),
-      record_count: 1
-    }
+    ...storageFiles
   ];
 
   const manifest = {
     backup_id: path.basename(targetDir),
     timestamp: new Date().toISOString(),
     environment: isRealMode ? 'staging_real' : 'fixture_staging_demo',
-    mode: isRealMode ? 'REAL_STAGING_BACKUP' : 'FIXTURE_DEMO_NON_PRODUCTION',
+    mode: isRealMode ? 'REAL_STAGING_BACKUP' : 'REHEARSAL_FIXTURE_DEMO',
     duration_ms: Date.now() - startTime,
     rpo_target_minutes: 15,
     rto_target_minutes: 60,
@@ -288,7 +368,7 @@ async function runBackup(options = {}) {
     }))
   };
 
-  manifest.hmac_signature = computeManifestHmac(manifest);
+  manifest.hmac_signature = computeManifestHmac(manifest, hmacSecret, isRealMode);
 
   const manifestPath = path.join(targetDir, 'manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
@@ -305,9 +385,17 @@ async function runBackup(options = {}) {
 
 if (require.main === module) {
   runBackup().catch(err => {
-    console.error('[BACKUP] Failed:', err);
+    console.error('[BACKUP] Failed:', err.message);
     process.exit(1);
   });
 }
 
-module.exports = { runBackup, computeSha256, computeManifestHmac, verifyManifestHmac };
+module.exports = {
+  runBackup,
+  computeSha256,
+  computeManifestHmac,
+  verifyManifestHmac,
+  canonicalJsonStringify,
+  resolveHmacSecret,
+  KNOWN_INSECURE_FALLBACK_SECRET
+};
