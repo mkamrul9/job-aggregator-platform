@@ -204,7 +204,7 @@ async function getRegisteredSources(sourcesCollection = null, stateDir = null) {
 /**
  * Updates source state (PAUSE / RESUME)
  */
-async function updateSourceStatus(id, newStatus, { sourcesCollection = null } = {}) {
+async function updateSourceStatus(id, newStatus, { sourcesCollection = null, stateDir = null } = {}) {
   const canonical = CANONICAL_SOURCES.find(s => s.id === id);
   if (!canonical) {
     throw new Error(`Source '${id}' is not registered`);
@@ -227,6 +227,26 @@ async function updateSourceStatus(id, newStatus, { sourcesCollection = null } = 
       { $set: updatedFields },
       { upsert: true }
     );
+  }
+
+  // Synchronize durable checkpoint file for Go scheduler
+  const stateBase = stateDir || process.env.STATE_DIR || './data/state';
+  try {
+    fs.mkdirSync(stateBase, { recursive: true });
+    const cpPath = path.join(stateBase, `${id}.checkpoint.json`);
+    let cp = { source_id: id, status: newStatus };
+    if (fs.existsSync(cpPath)) {
+      try {
+        cp = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
+      } catch {}
+    }
+    cp.source_id = id;
+    cp.status = newStatus;
+    cp.enabled = newStatus === 'HEALTHY';
+    cp.updated_at = new Date().toISOString();
+    fs.writeFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
+  } catch (err) {
+    console.warn(`Could not update checkpoint file for source ${id}:`, err.message);
   }
 
   return { ...canonical, ...updatedFields };

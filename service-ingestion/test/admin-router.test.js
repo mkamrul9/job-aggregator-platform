@@ -1,6 +1,8 @@
 // service-ingestion/test/admin-router.test.js
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert');
+const crypto = require('crypto');
+const http = require('http');
 const request = require('supertest');
 const { createIngestionApp } = require('../index');
 
@@ -15,10 +17,26 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
   const validKey = 'seekers-internal-admin-p12';
 
   // Helper to create synthetic JWT token with specific role
-  function createRoleToken(role, uid = 'usr_test_123', email = 'test@seekers.internal') {
-    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ uid, email, role, admin: role === 'ADMIN' })).toString('base64url');
-    return `${header}.${payload}.sig`;
+  function createRoleToken(role, uid = 'usr_test_123', email = 'test@seekers.internal', { exp, iss, aud, secret = validKey, alg = 'HS256' } = {}) {
+    const header = Buffer.from(JSON.stringify({ alg, typ: 'JWT' })).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(JSON.stringify({
+      uid,
+      sub: uid,
+      email,
+      role,
+      admin: role === 'ADMIN',
+      exp: exp !== undefined ? exp : now + 3600,
+      iss: iss || 'seekers-auth',
+      aud: aud || 'seekers-admin'
+    })).toString('base64url');
+
+    if (alg === 'none') {
+      return `${header}.${payload}.sig`;
+    }
+
+    const sig = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+    return `${header}.${payload}.${sig}`;
   }
 
   beforeEach(() => {
@@ -56,7 +74,7 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     ];
 
     const testUrl = 'https://pathao.com/careers/go-dev-1';
-    const testUrlHash = require('crypto').createHash('sha256').update(testUrl).digest('hex');
+    const testUrlHash = crypto.createHash('sha256').update(testUrl).digest('hex');
 
     mockDeadLetters = [
       {
@@ -96,6 +114,10 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
       countDocuments: async (filter = {}) => {
         if (filter.status) return mockJobs.filter(j => j.status === filter.status).length;
         if (filter.projection_status) return mockJobs.filter(j => j.projection_status === filter.projection_status).length;
+        if (filter.created_at?.$gte) {
+          const gte = new Date(filter.created_at.$gte).getTime();
+          return mockJobs.filter(j => new Date(j.created_at).getTime() >= gte).length;
+        }
         return mockJobs.length;
       },
       findOne: async (filter) => {
@@ -226,6 +248,53 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(res.body.error, 'FORBIDDEN_CANDIDATE');
   });
 
+  it('rejects unsigned tokens (alg: none) with 401 Unauthorized', async () => {
+    const unsignedToken = createRoleToken('ADMIN', 'usr_evil', 'evil@seekers.internal', { alg: 'none' });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${unsignedToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'UNAUTHORIZED_ACCESS');
+    assert.ok(res.body.message.includes('alg: none'));
+  });
+
+  it('rejects expired tokens with 401 Unauthorized', async () => {
+    const expiredToken = createRoleToken('ADMIN', 'usr_exp', 'exp@seekers.internal', {
+      exp: Math.floor(Date.now() / 1000) - 60
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${expiredToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'TOKEN_EXPIRED');
+  });
+
+  it('rejects tokens with invalid issuer', async () => {
+    const invalidIssToken = createRoleToken('ADMIN', 'usr_iss', 'iss@seekers.internal', {
+      iss: 'malicious-issuer.com'
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${invalidIssToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_ISSUER');
+  });
+
+  it('rejects tokens with invalid audience', async () => {
+    const invalidAudToken = createRoleToken('ADMIN', 'usr_aud', 'aud@seekers.internal', {
+      aud: 'wrong-audience-portal'
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${invalidAudToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_AUDIENCE');
+  });
+
   it('accepts authenticated requests with x-admin-key header', async () => {
     const res = await request(app)
       .get('/api/v1/admin/ingestion/status')
@@ -280,6 +349,19 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(reindexRes.body.error, 'INSUFFICIENT_ROLE_PERMISSIONS');
   });
 
+  it('GET /status reports truthful telemetry without fake floors', async () => {
+    const res = await request(app)
+      .get('/api/v1/admin/status')
+      .set('x-admin-key', validKey);
+
+    assert.strictEqual(res.status, 200);
+    // Since mockJobs were created in the past (2026-10-28), hourlyThroughput must be 0, not fake 120!
+    assert.strictEqual(res.body.throughputHourly, 0);
+    // Latency and lag must be null when unmeasured, not fake 18 or 14!
+    assert.strictEqual(res.body.avgLatencyMs, null);
+    assert.strictEqual(res.body.kafkaLagMs, null);
+  });
+
   it('GET /sources returns registered sources with legal provenance', async () => {
     const res = await request(app)
       .get('/api/v1/admin/sources')
@@ -317,15 +399,67 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(resumeRes.body.status, 'HEALTHY');
   });
 
-  it('POST /sources/:id/crawl triggers manual crawl and records run', async () => {
+  it('POST /sources/:id/crawl returns 503 when Go collector is offline', async () => {
     const res = await request(app)
       .post('/api/v1/admin/sources/greenhouse-feed/crawl')
       .set('x-admin-key', validKey);
 
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.sourceId, 'greenhouse-feed');
-    assert.strictEqual(res.body.status, 'SUCCESS');
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.error, 'COLLECTOR_UNAVAILABLE');
     assert.strictEqual(mockCrawlRuns.length, 1);
+    assert.strictEqual(mockCrawlRuns[0].status, 'FAILED');
+  });
+
+  it('POST /sources/:id/crawl rejects crawl on paused source with 400', async () => {
+    // Pause source first
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/pause')
+      .set('x-admin-key', validKey);
+
+    const res = await request(app)
+      .post('/api/v1/admin/sources/greenhouse-feed/crawl')
+      .set('x-admin-key', validKey);
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error, 'SOURCE_PAUSED');
+
+    // Unpause for clean test cleanup
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/resume')
+      .set('x-admin-key', validKey);
+  });
+
+  it('POST /sources/:id/crawl routes to Go collector when available', async () => {
+    // Spin up lightweight mock collector server
+    const mockCollectorServer = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        id: 'crawl_real_mock_123',
+        sourceId: 'greenhouse-feed',
+        itemsCollected: 7,
+        itemsRejected: 0,
+        status: 'SUCCESS'
+      }));
+    });
+
+    await new Promise(resolve => mockCollectorServer.listen(0, resolve));
+    const port = mockCollectorServer.address().port;
+    const origCollectorUrl = process.env.COLLECTOR_URL;
+    process.env.COLLECTOR_URL = `http://127.0.0.1:${port}`;
+
+    try {
+      const res = await request(app)
+        .post('/api/v1/admin/sources/greenhouse-feed/crawl')
+        .set('x-admin-key', validKey);
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.status, 'SUCCESS');
+      assert.strictEqual(res.body.itemsCollected, 7);
+      assert.ok(mockCrawlRuns.some(r => r.status === 'SUCCESS' && r.itemsCollected === 7));
+    } finally {
+      process.env.COLLECTOR_URL = origCollectorUrl;
+      await new Promise(resolve => mockCollectorServer.close(resolve));
+    }
   });
 
   it('GET /jobs returns privileged catalog search across ALL statuses', async () => {
@@ -354,17 +488,6 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(job.status, 'HIDDEN');
     assert.strictEqual(job.revision, 2);
     assert.strictEqual(job.projection_status, 'PENDING');
-  });
-
-  it('PATCH /jobs/:id/moderate returns 409 on concurrent modification conflict', async () => {
-    const jobId = 'e1a2b3c4-1111-4000-8000-000000000001';
-    // Artificially change the job revision in the background to simulate concurrent worker write
-    const job = mockJobs.find(j => j.id === jobId);
-    job.revision = 99;
-
-    // A stale worker with expected revision 1 tries to moderate
-    // Router retrieves current revision (99) and tries to update with revision 99
-    // But if mock collection detects mismatch, it returns 409
   });
 
   it('GET /dead-letters returns list of quarantined messages with resilient field mapping', async () => {
@@ -433,6 +556,35 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
       assert.strictEqual(res.body.error, 'CONFIGURATION_ERROR');
     } finally {
       process.env.NODE_ENV = origEnv;
+    }
+  });
+
+  it('strictly rejects published development tokens in production mode', async () => {
+    const origEnv = process.env.NODE_ENV;
+    const origKey = process.env.INGESTION_ADMIN_KEY;
+    process.env.NODE_ENV = 'production';
+    process.env.INGESTION_ADMIN_KEY = 'super-strong-production-key-secret-12345';
+
+    try {
+      // Rejection of dev tokens
+      for (const devToken of ['admin_secret_token', 'operator_secret_token', 'readonly_secret_token', 'seekers-internal-admin-p12']) {
+        const res = await request(app)
+          .get('/api/v1/admin/status')
+          .set('x-admin-key', devToken);
+
+        assert.strictEqual(res.status, 401);
+        assert.strictEqual(res.body.error, 'UNAUTHORIZED_ACCESS');
+      }
+
+      // Acceptance of configured production key
+      const goodRes = await request(app)
+        .get('/api/v1/admin/status')
+        .set('x-admin-key', 'super-strong-production-key-secret-12345');
+
+      assert.strictEqual(goodRes.status, 200);
+    } finally {
+      process.env.NODE_ENV = origEnv;
+      process.env.INGESTION_ADMIN_KEY = origKey;
     }
   });
 });

@@ -1,6 +1,8 @@
 // frontend-admin/src/app/core/services/auth.service.ts
-import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { Injectable, Optional } from '@angular/core';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
+import { catchError, tap } from 'rxjs/operators';
 import { OperatorUser, OperatorRole, AppMode } from '../models/operations.models';
 
 export const DEMO_OPERATORS: Record<OperatorRole, OperatorUser> = {
@@ -33,11 +35,13 @@ const USER_STORAGE_KEY = 'seekers_admin_user';
 export class AuthService {
   private userSubject = new BehaviorSubject<OperatorUser | null>(this.loadInitialUser());
   private modeSubject = new BehaviorSubject<AppMode>(this.loadInitialMode());
+  private cancelPendingSubject = new Subject<void>();
 
   user$ = this.userSubject.asObservable();
   mode$ = this.modeSubject.asObservable();
+  cancelPending$ = this.cancelPendingSubject.asObservable();
 
-  constructor() {}
+  constructor(@Optional() private http?: HttpClient) {}
 
   private loadInitialMode(): AppMode {
     try {
@@ -100,6 +104,8 @@ export class AuthService {
   }
 
   setMode(mode: AppMode): void {
+    this.cancelPendingSubject.next();
+
     try {
       localStorage.setItem(MODE_STORAGE_KEY, mode);
     } catch {}
@@ -120,6 +126,8 @@ export class AuthService {
   }
 
   switchRole(role: OperatorRole): void {
+    this.cancelPendingSubject.next();
+
     const user = DEMO_OPERATORS[role];
     try {
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
@@ -135,24 +143,48 @@ export class AuthService {
     let uid = `live_${Date.now()}`;
     let name = email.split('@')[0];
 
-    // Decode token claims if present (e.g. Firebase or standard JWT)
-    try {
-      const parts = token.split('.');
-      if (parts.length === 3) {
+    // Decode token claims if present (standard JWT or Firebase ID token)
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      let header: any = null;
+      let payload: any = null;
+      try {
+        const headerStr = atob(parts[0].replace(/-/g, '+').replace(/_/g, '/'));
+        header = JSON.parse(headerStr);
         const payloadStr = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
-        const payload = JSON.parse(payloadStr);
-        if (payload.admin === true || payload.role === 'ADMIN') {
-          effectiveRole = 'ADMIN';
-        } else if (payload.role === 'OPERATOR') {
-          effectiveRole = 'OPERATOR';
-        } else if (payload.role === 'READ_ONLY') {
-          effectiveRole = 'READ_ONLY';
-        }
-        if (payload.uid || payload.sub) uid = payload.uid || payload.sub;
-        if (payload.name) name = payload.name;
-        if (payload.email) email = payload.email;
+        payload = JSON.parse(payloadStr);
+      } catch {
+        throw new Error('Malformed authentication token structure');
       }
-    } catch {}
+
+      // 1. Strictly reject unsigned tokens (alg: none)
+      const alg = (header.alg || '').toUpperCase();
+      if (!alg || alg === 'NONE') {
+        throw new Error('Unsigned tokens (alg: none) are strictly rejected');
+      }
+
+      // 2. Reject expired tokens
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp <= nowSec) {
+        throw new Error('Authentication session token has expired');
+      }
+
+      // 3. Reject candidate accounts
+      if (payload.role === 'CANDIDATE') {
+        throw new Error('Candidate accounts cannot access administrative console');
+      }
+
+      if (payload.admin === true || payload.role === 'ADMIN') {
+        effectiveRole = 'ADMIN';
+      } else if (payload.role === 'OPERATOR') {
+        effectiveRole = 'OPERATOR';
+      } else if (payload.role === 'READ_ONLY') {
+        effectiveRole = 'READ_ONLY';
+      }
+      if (payload.uid || payload.sub) uid = payload.uid || payload.sub;
+      if (payload.name) name = payload.name;
+      if (payload.email) email = payload.email;
+    }
 
     const user: OperatorUser = {
       id: uid,
@@ -169,7 +201,39 @@ export class AuthService {
     this.setMode('live');
   }
 
+  verifyLiveSession(tokenOverride?: string): Observable<OperatorUser> {
+    const token = tokenOverride || this.currentUser?.token;
+    if (!token || !this.http) {
+      if (this.currentUser) return of(this.currentUser);
+      return throwError(() => new Error('No active live session to verify'));
+    }
+
+    const headers = new HttpHeaders({
+      'Authorization': `Bearer ${token}`,
+      'x-admin-key': token
+    });
+
+    return this.http.get<OperatorUser>('/api/v1/admin/auth/me', { headers }).pipe(
+      tap(verified => {
+        const user: OperatorUser = {
+          ...verified,
+          token
+        };
+        try {
+          localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+        } catch {}
+        this.userSubject.next(user);
+      }),
+      catchError(err => {
+        this.logout();
+        return throwError(() => err);
+      })
+    );
+  }
+
   logout(): void {
+    this.cancelPendingSubject.next();
+
     try {
       localStorage.removeItem(USER_STORAGE_KEY);
     } catch {}

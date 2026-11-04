@@ -158,6 +158,9 @@ func (s *FileSchedulerStore) ClaimLease(sourceID string, workerID string, durati
 	}
 
 	now := time.Now().UTC()
+	if cp.Status == "PAUSED" || cp.Status == "DISABLED" {
+		return nil, false, nil // Paused or disabled source cannot be leased
+	}
 	// Check if existing lease is still valid and owned by someone else
 	if cp.WorkerID != "" && cp.WorkerID != workerID && cp.LeaseUntil.After(now) {
 		return nil, false, nil // Held by another active worker
@@ -351,6 +354,9 @@ func (m *MemorySchedulerStore) ClaimLease(sourceID string, workerID string, dura
 	}
 
 	now := time.Now().UTC()
+	if cp.Status == "PAUSED" || cp.Status == "DISABLED" {
+		return nil, false, nil
+	}
 	if cp.WorkerID != "" && cp.WorkerID != workerID && cp.LeaseUntil.After(now) {
 		return nil, false, nil
 	}
