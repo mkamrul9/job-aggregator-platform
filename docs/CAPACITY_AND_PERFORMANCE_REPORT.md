@@ -1,7 +1,7 @@
 # Seekers Platform Capacity, Performance & Resilience Report (P15)
 
 *Status: Authoritative Engineering Report — Phase 15 Benchmark, Resilience & Cost Qualification*  
-*Baseline Artifact SHA:* `ce66783463009e21f0c032711aae0776fbde1bca`  
+*Baseline Artifact SHA:* `b476dfc00632f273d11dd7bf4b36a71787eefa70`  
 *Branch:* `codex/production-p15-performance-capacity-resilience`  
 *Audit Environment:* Clean isolated local/staging environment, Node.js 22, Go 1.23, Python 3.11, PostgreSQL 15, MongoDB 7.0, Kafka 3.8.0, Elasticsearch 8.10.2.
 
