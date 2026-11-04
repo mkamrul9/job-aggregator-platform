@@ -22,7 +22,7 @@ A responsive administrative operations console, pipeline telemetry dashboard, an
 ```
                   +----------------------------------------------+
                   |         Seekers Operations Console           |
-                  |         (Angular 18 Operations Shell)        |
+                  |         (Angular 19 Operations Shell)        |
                   +-----------------------+----------------------+
                                           |
                       +-------------------+-------------------+

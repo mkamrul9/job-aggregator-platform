@@ -124,9 +124,9 @@ The candidate web application supports both real Firebase authentication and iso
 ## 7. Portfolio Summary & Interview Walkthrough
 
 ### Technology CV Bullet
-> **Lead Frontend Engineer — Next.js Candidate Portal:** Architected a production-ready candidate job portal using Next.js 14 (App Router), React, TypeScript, and TailwindCSS. Engineered fast server-side rendered search with keyset pagination, multi-facet filtering, drag-and-drop resume uploading with client-side byte validation, and an interactive job tracking workspace. Implemented responsive layouts qualified across 320px–1280px+ viewports with zero horizontal overflow.
+> **Lead Frontend Engineer — Next.js Candidate Portal:** Architected a production-ready candidate job portal using Next.js 16.3 (App Router), React 19.2, TypeScript, and TailwindCSS. Engineered fast server-side rendered search with keyset pagination, multi-facet filtering, drag-and-drop resume uploading with client-side byte validation, and an interactive job tracking workspace. Implemented responsive layouts qualified across 320px–1280px+ viewports with zero horizontal overflow.
 
 ### Technical Interview Walkthrough
 1. **Core Problem:** Job seekers experience slow catalog browsing, bloated client bundles, and disjointed mobile layouts on traditional aggregator sites.
-2. **Solution Architecture:** Leveraged Next.js 14 Server Components for search discovery to optimize First Contentful Paint (FCP) and SEO, alongside isolated Client Components for interactive workspace tracking.
+2. **Solution Architecture:** Leveraged Next.js 16 Server Components for search discovery to optimize First Contentful Paint (FCP) and SEO, alongside isolated Client Components for interactive workspace tracking.
 3. **Privacy & UX:** Built GDPR-compliant data export and deletion workflows with a 30-day grace period, transparent outbound employer link disclosure, and verified WCAG 2.1 AA accessibility.

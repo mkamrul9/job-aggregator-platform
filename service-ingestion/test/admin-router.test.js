@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const crypto = require('crypto');
 const request = require('supertest');
 const { createIngestionApp } = require('../index');
+const { acquireOperationLock, releaseOperationLock } = require('../src/api/admin-router');
 
 describe('service-ingestion Admin Router & Privileged Operations', () => {
   let app;
@@ -350,6 +351,23 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(mockCrawlRuns.length, 1);
   });
 
+  it('POST /sources/:id/crawl rejects crawl on paused source with 400', async () => {
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/pause')
+      .set('x-admin-key', validKey);
+
+    const res = await request(app)
+      .post('/api/v1/admin/sources/greenhouse-feed/crawl')
+      .set('x-admin-key', validKey);
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error, 'SOURCE_PAUSED');
+
+    await request(app)
+      .put('/api/v1/admin/sources/greenhouse-feed/resume')
+      .set('x-admin-key', validKey);
+  });
+
   it('GET /jobs returns privileged catalog search across ALL statuses', async () => {
     const res = await request(app)
       .get('/api/v1/admin/jobs?status=ALL')
@@ -562,5 +580,102 @@ describe('service-ingestion Admin Router & Privileged Operations', () => {
     assert.strictEqual(res.status, 502);
     assert.strictEqual(res.body.status, 'FAILED');
     assert.strictEqual(res.body.itemsCollected, 0);
+  });
+
+  it('rejects token with missing issuer with 401 Unauthorized', async () => {
+    const noIssToken = createRoleToken('ADMIN', 'usr_no_iss', 'noiss@seekers.internal', validKey, {
+      iss: undefined
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${noIssToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'UNTRUSTED_ISSUER');
+  });
+
+  it('rejects token with missing audience with 401 Unauthorized', async () => {
+    const noAudToken = createRoleToken('ADMIN', 'usr_no_aud', 'noaud@seekers.internal', validKey, {
+      aud: undefined
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${noAudToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_AUDIENCE');
+  });
+
+  it('rejects token with missing subject and user id with 401 Unauthorized', async () => {
+    const noSubToken = createRoleToken('ADMIN', undefined, 'nosub@seekers.internal', validKey, {
+      uid: undefined,
+      sub: undefined
+    });
+    const res = await request(app)
+      .get('/api/v1/admin/auth/me')
+      .set('Authorization', `Bearer ${noSubToken}`);
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'MISSING_SUBJECT');
+  });
+
+  it('acquireOperationLock handles MongoDB duplicate key error and reports contention', async () => {
+    const mockLocksCollection = {
+      findOneAndUpdate: async () => {
+        const dupError = new Error('E11000 duplicate key error collection: operation_locks index: _id_ dup key');
+        dupError.code = 11000;
+        throw dupError;
+      },
+      findOne: async () => ({
+        _id: 'catalog_reconcile',
+        locked: true,
+        operationId: 'op_active_other_worker'
+      })
+    };
+
+    const res = await acquireOperationLock('catalog_reconcile', 'op_my_attempt', 300000, {
+      locksCollection: mockLocksCollection
+    });
+
+    assert.strictEqual(res.acquired, false);
+    assert.strictEqual(res.existingOwner, 'op_active_other_worker');
+  });
+
+  it('acquireOperationLock fails closed when shared store encounters an outage', async () => {
+    const mockLocksCollection = {
+      findOneAndUpdate: async () => {
+        throw new Error('MongoServerSelectionError: connection timed out');
+      }
+    };
+
+    const res = await acquireOperationLock('catalog_reconcile', 'op_fail_close', 300000, {
+      locksCollection: mockLocksCollection
+    });
+
+    assert.strictEqual(res.acquired, false);
+    assert.strictEqual(res.error, 'SHARED_STORE_UNAVAILABLE');
+  });
+
+  it('releaseOperationLock refuses to release a lock owned by a different operationId', async () => {
+    let released = false;
+    const mockLocksCollection = {
+      updateOne: async (query, update) => {
+        if (query.operationId === 'op_actual_owner') {
+          released = true;
+        }
+      }
+    };
+
+    // Stale worker tries to release
+    await releaseOperationLock('catalog_reconcile', 'op_stale_worker', {
+      locksCollection: mockLocksCollection
+    });
+    assert.strictEqual(released, false);
+
+    // Actual owner releases
+    await releaseOperationLock('catalog_reconcile', 'op_actual_owner', {
+      locksCollection: mockLocksCollection
+    });
+    assert.strictEqual(released, true);
   });
 });

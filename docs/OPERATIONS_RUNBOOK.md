@@ -89,7 +89,7 @@ Prometheus scrapes all backend services at 15-second intervals via `config-prome
   4. Fix ingestion parser mapping and replay poison messages: `POST /api/v1/admin/dead-letters/:id/replay`.
 
 #### 3. `NotificationDeliveryFailureHigh` (Severity: WARNING)
-- **Expression:** `rate(notification_deliveries_total{status="failed"}[5m]) > 0.05` for 2m
+- **Expression:** `(rate(notification_deliveries_total{status="failed"}[5m])) / (rate(notification_deliveries_total[5m]) > 0) > 0.05` for 2m
 - **Impact:** Delivery failure rate exceeds 5% of attempted notifications.
 - **Triage & Remediation:**
   1. Verify SMTP server responsiveness: `curl -v telnet://$SMTP_HOST:$SMTP_PORT`
@@ -121,35 +121,35 @@ Prometheus scrapes all backend services at 15-second intervals via `config-prome
 ### Backup Procedure
 Execute authoritative snapshot pipeline:
 ```bash
-# Real Mode (requires DATABASE_URL and MONGO_URI)
+# Real Mode (requires authentic BACKUP_HMAC_SECRET, DATABASE_URL, and MONGO_URI)
 node scripts/backup-stores.js --real
 
-# Local Fixture Demonstration Mode (synthetic staging baseline)
+# Local Rehearsal Demonstration Mode (synthetic staging baseline)
 node scripts/backup-stores.js --demo
 ```
 The script:
-1. In real mode: dumps PostgreSQL authoritative schema and rows (users, profiles, applications, durable erasures) and MongoDB canonical collections.
-2. In fixture demo mode: exports structured synthetic staging state explicitly labeled `FIXTURE_DEMO_NON_PRODUCTION`.
+1. In real mode: dumps PostgreSQL authoritative schema and rows (users, profiles, deletion requests, applications, durable erasures) and MongoDB canonical collections (`jobs`, `sources`, `dead_letters`, `audits`).
+2. In rehearsal demo mode: exports structured synthetic staging state explicitly labeled `REHEARSAL_FIXTURE_DEMO`.
 3. Archives private object storage (resumes and export archives).
 4. Computes SHA-256 cryptographic checksums for every artifact.
-5. Emits `manifest.json` authenticated with an HMAC-SHA256 signature to guarantee tamper-resistant provenance.
+5. Emits `manifest.json` authenticated with a canonical HMAC-SHA256 signature using recursive key sorting to guarantee tamper-resistant provenance across all nested structures. In real mode, requires an authentic `BACKUP_HMAC_SECRET` of >= 32 characters.
 
 ### Restoration Drill Procedure
 Execute verified restore drill:
 ```bash
-# Real Mode (verifies live restored instances)
+# Real Mode (verifies live restored database and search instances)
 node scripts/restore-drill.js --real
 
-# Local Fixture Demonstration Mode
+# Local Rehearsal Demonstration Mode
 node scripts/restore-drill.js --demo
 ```
 The restoration pipeline validates:
-1. **Cryptographic Authenticity & Integrity:** Verifies manifest HMAC signature and individual artifact SHA-256 checksums before unpacking.
-2. **Post-Backup Tombstone Replay:** Replays durable erasure tombstones recorded AFTER the backup snapshot timestamp, ensuring deletions made after a backup are never resurrected.
+1. **Cryptographic Authenticity & Integrity:** Verifies manifest HMAC signature with canonical nested JSON serialization and individual artifact SHA-256 checksums before unpacking. Rejects fixture manifests in real mode.
+2. **Post-Backup Tombstone Replay:** Replays durable erasure tombstones recorded AFTER the backup snapshot timestamp, ensuring deletions made after a backup are never resurrected in restored PostgreSQL/MongoDB state.
 3. **Resurrection Rejection Invariant:** Validates that active directory lookups and sync probes for erased users are rejected with `403 ACCOUNT_PERMANENTLY_ERASED`.
 4. **Private Storage Containment:** Automatically purges restored resume assets belonging to erased users.
 5. **Search Rebuild:** Rebuilds Elasticsearch projection directly from the restored canonical MongoDB collection.
-6. **SLA Targets:** Verifies that operational targets (`RTO <= 60m` and `RPO <= 15m`) are maintained.
+6. **SLA Targets:** Verifies that operational targets (`RTO <= 60m` and `RPO <= 15m`) are maintained. Real mode measures against live restored instances, while rehearsal mode is clearly demarcated as `REHEARSAL_VERIFIED`.
 
 ---
 
@@ -160,14 +160,14 @@ To safely test reverting a deployment while verifying state preservation:
 # Real Mode
 node scripts/rollback-staging.js --real
 
-# Local Fixture Demonstration Mode
+# Local Rehearsal Demonstration Mode
 node scripts/rollback-staging.js --demo
 ```
 The rollback rehearsal verifies:
 1. **OCI Image Digest Validation:** Strictly validates target image digest syntax (`sha256:[a-f0-9]{64}`) to prevent rolling back to invalid or non-immutable tags.
 2. **Forward Schema Compatibility:** Confirms that applied database migrations are non-destructive and backward-compatible with the target image.
 3. **Durable State Preservation:** Confirms zero data loss across active job catalog items, durable erasure records, and suppression lists.
-4. **Service Health Probes:** Evaluates health probe contracts across all 7 services under the rolled-back target.
+4. **Service Health Probes:** Evaluates health probe contracts across all 7 services via isolated gateway ingress (ports 80 / 443) under the rolled-back target.
 
 ---
 
@@ -187,4 +187,3 @@ The Seekers platform is engineered for resource efficiency using containerized s
 | **Total Estimated Baseline** | **Single-Host Staging / Small-Scale Topology** | **Standard VPS + Off-Site Backups** | **~$16.00 – $31.00 / month** |
 
 *Disclaimer: These figures represent estimated baseline infrastructure costs using commodity VPS providers and do not constitute capacity guarantees or production service level agreements. Production capacity, latency thresholds, concurrency limits, and scaling requirements are empirically measured during Phase 15 performance testing.*
-

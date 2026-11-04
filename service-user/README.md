@@ -107,7 +107,7 @@ The service serves authenticated HTTP endpoints and communicates with backend se
 ## 5. Portfolio Summary & Interview Walkthrough
 
 ### Technology CV Bullet
-> **NestJS Backend Engineer — Identity & Workspace Microservice:** Built an enterprise identity, application tracking, and workspace API using NestJS 10, TypeScript, Prisma, and PostgreSQL 16. Implemented role-based access control, cryptographic session handling, GDPR-compliant data export and 30-day erasure grace periods with durable tombstone fencing, validated across 20 automated qualification checks.
+> **NestJS Backend Engineer — Identity & Workspace Microservice:** Built an enterprise identity, application tracking, and workspace API using NestJS 11, TypeScript, Prisma, and PostgreSQL 16. Implemented role-based access control, cryptographic session handling, GDPR-compliant data export and 30-day erasure grace periods with durable tombstone fencing, validated across 20 automated qualification checks.
 
 ### Technical Interview Walkthrough
 1. **Core Problem:** Managing candidate profiles, multi-stage application state, and resume lifecycle requires strict multi-tenant data isolation and rigorous compliance with right-to-be-forgotten privacy mandates.

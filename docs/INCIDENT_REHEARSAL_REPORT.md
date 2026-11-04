@@ -1,7 +1,7 @@
 # Seekers Platform Incident Rehearsal & Release Candidate Qualification (P16)
 
 *Status: Authoritative Verification Report — Phase 16*  
-*Baseline Artifact SHA:* `33b1ef44a4897e8b8049b7cbf85b2c412bd442b0`  
+*Verified P15 Baseline SHA:* 1d26ca2e961fcad92ad4996727a8da72d7613e57  
 *Branch:* `codex/production-p16-beta-and-portfolio-qualification`  
 *Target Environment:* Tier 0 Single-Host Staging Environment (Docker Compose, isolated networks, private datastores)
 
@@ -73,7 +73,7 @@ All five core operational invariants passed with zero data loss, zero privacy le
 
 | Component | Source Reference | Build Verification Step | Deployment Status |
 |---|---|---|---|
-| **Platform Fleet** | Commit `33b1ef44a4897e8b8049b7cbf85b2c412bd442b0` | GitHub Actions CI Run `#41651088234` | **Local Compose Verified** |
+| **Platform Fleet** | Commit `1d26ca2e961fcad92ad4996727a8da72d7613e57` | GitHub Actions CI Run `#41842668900` | **Local Compose Verified** |
 | `frontend-next` | `frontend-next/Dockerfile` | `docker compose build frontend-next` passed | Standalone dev & container verified |
 | `frontend-admin` | `frontend-admin/Dockerfile` | `docker compose build frontend-admin` passed | Standalone demo & container verified |
 | `service-resume` | `service-resume/Dockerfile` | `docker compose build service-resume` passed | Python FastAPI & gRPC verified |

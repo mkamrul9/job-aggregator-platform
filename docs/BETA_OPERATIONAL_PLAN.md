@@ -1,7 +1,7 @@
 # Seekers Platform Bounded Beta Operational Plan (P16)
 
 *Status: Authoritative Beta Operational Plan & Qualification Framework — Phase 16*  
-*Baseline Artifact SHA:* `33b1ef44a4897e8b8049b7cbf85b2c412bd442b0`  
+*Verified P15 Baseline SHA:* 1d26ca2e961fcad92ad4996727a8da72d7613e57  
 *Branch:* `codex/production-p16-beta-and-portfolio-qualification`  
 *Target Environment:* Tier 0 Single-Node Staging Baseline (4 vCPU, 8 GB RAM, containerized datastores)
 

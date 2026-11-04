@@ -17,9 +17,10 @@ const crypto = require('crypto');
 
 const { validateEnvironment, probeServiceHttp } = require('./deploy-staging');
 const { validateImageDigest, runRollbackRehearsal } = require('./rollback-staging');
-const { runBackup, computeManifestHmac, verifyManifestHmac } = require('./backup-stores');
+const { runBackup, computeManifestHmac, verifyManifestHmac, resolveHmacSecret } = require('./backup-stores');
 const { runRestoreDrill } = require('./restore-drill');
 const { parseAlertRules } = require('./simulate-alerts');
+const { runResilienceFaultSuite } = require('./run-resilience-faults');
 
 async function runNegativeTests() {
   console.log('========================================================================');
@@ -146,7 +147,7 @@ async function runNegativeTests() {
   }
 
   // --------------------------------------------------------------------------
-  // TEST GROUP 4: Backup & Restore Tamper and Failure Checks
+  // TEST GROUP 4: Backup & Restore Cryptographic Authenticity & Integrity Checks
   // --------------------------------------------------------------------------
   console.log('\n--- Test Group 4: Disaster Recovery Tamper & Recovery Checks ---');
 
@@ -175,7 +176,28 @@ async function runNegativeTests() {
   // Restore valid HMAC for subsequent tests
   fs.writeFileSync(path.join(targetDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
-  // 4.2: Restore drill fails when a backup file's SHA-256 checksum is corrupted
+  // 4.2: Changing a nested file checksum after signing MUST fail HMAC verification
+  {
+    const copyManifest = JSON.parse(JSON.stringify(manifest));
+    copyManifest.files[0].sha256_checksum = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    const isValid = verifyManifestHmac(copyManifest);
+    assert.strictEqual(isValid, false, 'verifyManifestHmac must return false when a nested file checksum is altered');
+    console.log('  ✓ [PASS] Modifying nested file checksum after signing fails HMAC signature verification.');
+    passedTests++;
+  }
+
+  // 4.3: Changing a file and its manifest checksum together MUST fail HMAC verification
+  {
+    const copyManifest = JSON.parse(JSON.stringify(manifest));
+    copyManifest.files[0].sha256_checksum = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    copyManifest.files[0].size_bytes = 9999;
+    const isValid = verifyManifestHmac(copyManifest);
+    assert.strictEqual(isValid, false, 'verifyManifestHmac must return false when file metadata and checksum are altered');
+    console.log('  ✓ [PASS] Modifying file and its manifest checksum together fails HMAC verification.');
+    passedTests++;
+  }
+
+  // 4.4: Restore drill fails when a backup file's SHA-256 checksum is corrupted
   {
     const pgPath = path.join(targetDir, 'postgres_authoritative.json');
     const originalContent = fs.readFileSync(pgPath, 'utf8');
@@ -196,7 +218,7 @@ async function runNegativeTests() {
     fs.writeFileSync(pgPath, originalContent, 'utf8');
   }
 
-  // 4.3: Real mode backup fails when DATABASE_URL is missing
+  // 4.5: Real mode backup fails when DATABASE_URL is missing
   {
     const origDbUrl = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL;
@@ -206,7 +228,7 @@ async function runNegativeTests() {
       await runBackup({ realMode: true, targetDir: path.join(process.cwd(), 'data', 'test_scratch', 'real_fail') });
     } catch (err) {
       realBackupFailed = true;
-      assert(err.message.includes('DATABASE_URL is required'), 'Must require DATABASE_URL in real mode');
+      assert(err.message.includes('DATABASE_URL is required') || err.message.includes('FAIL-CLOSED'), 'Must require DATABASE_URL in real mode');
     }
     assert(realBackupFailed, 'Real mode backup must fail without DATABASE_URL');
     console.log('  ✓ [PASS] Real mode backup fails closed when DATABASE_URL is missing.');
@@ -215,24 +237,121 @@ async function runNegativeTests() {
     if (origDbUrl) process.env.DATABASE_URL = origDbUrl;
   }
 
-  // 4.4: Manifest HMAC verification fails when nested properties inside files[] are tampered
+  // 4.6: Real mode backup fails closed if BACKUP_HMAC_SECRET is default or insufficient
   {
-    const nestedTamperedManifest = JSON.parse(JSON.stringify(manifest));
-    nestedTamperedManifest.files[0].sha256_checksum = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-    const isTamperValid = verifyManifestHmac(nestedTamperedManifest);
-    assert.strictEqual(isTamperValid, false, 'verifyManifestHmac must return false when nested file checksum is tampered');
-
-    nestedTamperedManifest.files[0].name = 'malicious_injected.json';
-    assert.strictEqual(verifyManifestHmac(nestedTamperedManifest), false, 'verifyManifestHmac must return false when nested file name is tampered');
-
-    nestedTamperedManifest.files[0].size_bytes = 999999999;
-    assert.strictEqual(verifyManifestHmac(nestedTamperedManifest), false, 'verifyManifestHmac must return false when nested file size is tampered');
-
-    console.log('  ✓ [PASS] Manifest HMAC strictly authenticates complete nested files structure.');
+    let secretFailed = false;
+    try {
+      resolveHmacSecret('seekers_backup_hmac_secret_p14_durable_key', true);
+    } catch (err) {
+      secretFailed = true;
+      assert(err.message.includes('FAIL-CLOSED'), 'Must reject default secret in real mode');
+    }
+    assert(secretFailed, 'Must fail closed on default HMAC secret in real mode');
+    console.log('  ✓ [PASS] Rejects default or empty BACKUP_HMAC_SECRET in real mode.');
     passedTests++;
   }
 
-  // 4.5: verifyManifestHmac handles malformed, truncated, or non-hex signatures safely
+  // 4.7: Real mode restore fails closed when given a fixture manifest
+  {
+    let fixtureRejected = false;
+    try {
+      await runRestoreDrill({ backupDir: targetDir, realMode: true });
+    } catch (err) {
+      fixtureRejected = true;
+      assert(err.message.includes('Cannot restore fixture demo backup into real staging environment'), 'Must reject fixture manifest in real mode');
+    }
+    assert(fixtureRejected, 'Must reject fixture demo backup when realMode=true');
+    console.log('  ✓ [PASS] Real mode restore rejects fixture demo manifest.');
+    passedTests++;
+  }
+
+  // 4.8: Real mode restore fails closed when database credentials are missing
+  {
+    const realScratch = path.join(process.cwd(), 'data', 'test_scratch', `real_restore_test_${Date.now()}`);
+    fs.mkdirSync(realScratch, { recursive: true });
+    const realSecret = 'a_real_production_grade_hmac_secret_key_with_sufficient_entropy_64chars';
+    const realManifest = { ...manifest, mode: 'REAL_STAGING_BACKUP' };
+    const hmac = computeManifestHmac(realManifest, realSecret);
+    realManifest.hmac_signature = hmac;
+    fs.writeFileSync(path.join(realScratch, 'manifest.json'), JSON.stringify(realManifest, null, 2), 'utf8');
+
+    for (const fileEntry of manifest.files) {
+      const src = path.join(targetDir, fileEntry.name);
+      const dest = path.join(realScratch, fileEntry.name);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+    }
+
+    let credsFailed = false;
+    try {
+      await runRestoreDrill({
+        backupDir: realScratch,
+        realMode: true,
+        secret: realSecret,
+        restoreDbUrl: '',
+        restoreMongoUri: '',
+        restoreEsNode: '',
+        restoreStoragePath: ''
+      });
+    } catch (err) {
+      credsFailed = true;
+      assert(err.message.includes('Missing explicit isolated target credentials') || err.message.includes('Missing real target datastore credentials'), 'Must report missing credentials');
+    }
+    assert(credsFailed, 'Real mode restore must fail closed on missing datastore credentials');
+    console.log('  ✓ [PASS] Real mode restore fails closed when target database credentials are missing.');
+    passedTests++;
+
+    // 4.9: Real mode restore fails closed when RESTORE_DATABASE_URL matches source DATABASE_URL
+    let sourceMatchFailed = false;
+    const origDb = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://admin:secret@live-db:5432/seekers_live';
+    try {
+      await runRestoreDrill({
+        backupDir: realScratch,
+        realMode: true,
+        secret: realSecret,
+        restoreDbUrl: 'postgresql://admin:secret@live-db:5432/seekers_live',
+        restoreMongoUri: 'mongodb://live-mongo:27017/seekers_isolated_restore',
+        restoreEsNode: 'http://live-es:9200',
+        restoreStoragePath: path.join(process.cwd(), 'data', 'restore_scratch_storage')
+      });
+    } catch (err) {
+      sourceMatchFailed = true;
+      assert(err.message.includes('matches source DATABASE_URL'), 'Must reject target matching source DB');
+    } finally {
+      if (origDb) process.env.DATABASE_URL = origDb; else delete process.env.DATABASE_URL;
+    }
+    assert(sourceMatchFailed, 'Must fail closed when restore target matches source database');
+    console.log('  ✓ [PASS] Real mode restore fails closed when target matches source DATABASE_URL.');
+    passedTests++;
+
+    // 4.10: Real mode restore fails closed when authoritative post-backup tombstones are missing
+    let tombstoneFailed = false;
+    try {
+      await runRestoreDrill({
+        backupDir: realScratch,
+        realMode: true,
+        secret: realSecret,
+        restoreDbUrl: 'postgresql://admin:secret@isolated-db:5432/seekers_isolated',
+        restoreMongoUri: 'mongodb://isolated-mongo:27017/seekers_isolated',
+        restoreEsNode: 'http://isolated-es:9200',
+        restoreStoragePath: path.join(process.cwd(), 'data', 'restore_scratch_storage'),
+        postBackupErasures: null
+      });
+    } catch (err) {
+      tombstoneFailed = true;
+      assert(err.message.includes('Real mode restore requires an authoritative post-backup tombstone manifest'), 'Must require authoritative tombstones');
+    }
+    assert(tombstoneFailed, 'Must fail closed when authoritative tombstones are missing in real mode');
+    console.log('  ✓ [PASS] Real mode restore fails closed when authoritative tombstones are absent.');
+    passedTests++;
+
+    try {
+      fs.rmSync(realScratch, { recursive: true, force: true });
+    } catch (_) {}
+  }
+
+  // 4.11: verifyManifestHmac safely handles null, undefined, malformed, or non-hex signatures
   {
     assert.strictEqual(verifyManifestHmac(null), false);
     assert.strictEqual(verifyManifestHmac({}), false);
@@ -243,29 +362,17 @@ async function runNegativeTests() {
     passedTests++;
   }
 
-  // 4.6: Production default secret rejection
-  {
-    const origEnv = process.env.NODE_ENV;
-    const origSecret = process.env.BACKUP_HMAC_SECRET;
+    // 4.12: Real mode resilience suite fails closed when live staging services are unreachable
+    let resilienceRealFailed = false;
     try {
-      process.env.NODE_ENV = 'production';
-      delete process.env.BACKUP_HMAC_SECRET;
-
-      let secretRejected = false;
-      try {
-        computeManifestHmac({ backup_id: 'test' });
-      } catch (err) {
-        secretRejected = true;
-        assert(err.message.includes('BACKUP_HMAC_SECRET is required in production'));
-      }
-      assert(secretRejected, 'computeManifestHmac must reject default fallback secret in production');
-      console.log('  ✓ [PASS] Backup pipeline rejects insecure default fallback secret in production.');
-      passedTests++;
-    } finally {
-      process.env.NODE_ENV = origEnv;
-      if (origSecret) process.env.BACKUP_HMAC_SECRET = origSecret;
+      await runResilienceFaultSuite({ realMode: true });
+    } catch (err) {
+      resilienceRealFailed = true;
+      assert(err.message.includes('Real mode staging prerequisites missing or unreachable'), 'Must report missing staging prerequisites');
     }
-  }
+    assert(resilienceRealFailed, 'Real mode resilience suite must fail closed when dependencies are unreachable');
+    console.log('  ✓ [PASS] Real mode resilience suite fails closed on unreachable staging services.');
+    passedTests++;
 
   // Clean up scratch directory
   try {

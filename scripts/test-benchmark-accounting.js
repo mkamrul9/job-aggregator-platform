@@ -9,11 +9,13 @@
  *  1. calculatePercentiles([]) returns nulls, never 0 ms.
  *  2. Workloads with 100% failure (e.g. [null]) return sla_met === false, completed === 0, p95 === null.
  *  3. Workloads missing fixture files fail closed with sla_met === false.
- *  4. Workloads with errors exceeding error budgets return sla_met === false.
- *  5. Healthy runs with valid data return sla_met === true and positive completed counts.
+ *  4. Workloads with plain-text substituted for PDF fixtures fail closed with INVALID_PDF_SIGNATURE.
+ *  5. Workloads with errors exceeding error budgets return sla_met === false.
+ *  6. Healthy runs with valid data return sla_met === true, real extracted skills, and positive completed counts.
  */
 
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 const {
   calculatePercentiles,
@@ -85,11 +87,35 @@ async function runBenchmarkAccountingTests() {
     assert.strictEqual(res.completed, 0);
     assert.strictEqual(res.errors, 30);
     assert.strictEqual(res.percentiles_ms.p95, null);
-    console.log('  ✓ [PASS] benchmarkResumeExtractor fails closed without silent mock string fallback.');
+    console.log('  ✓ [PASS] benchmarkResumeExtractor fails closed when fixture directory is missing.');
     passed++;
   }
 
-  // 6. Healthy execution with valid seeded dataset
+  // 6. benchmarkResumeExtractor with plain-text substitute fixture must fail closed
+  {
+    const fakeDir = path.join(process.cwd(), 'data', 'test_scratch', `fake_plain_${Date.now()}`);
+    const fakeResumesDir = path.join(fakeDir, 'resumes');
+    fs.mkdirSync(fakeResumesDir, { recursive: true });
+    const fakePdfPath = path.join(fakeResumesDir, 'usr_bench_00000_resume.pdf');
+    fs.writeFileSync(fakePdfPath, 'Plain text CV substitute without %PDF header. Skills: Go, Python, React.', 'utf8');
+
+    try {
+      const res = await benchmarkResumeExtractor(fakeDir);
+      assert.strictEqual(res.sla_met, false, 'Plain text substitute must NEVER achieve sla_met=true');
+      assert.strictEqual(res.completed, 0, 'Completed extractions on plain text must be 0');
+      assert.strictEqual(res.errors, 30, 'All 30 iterations on plain text must be recorded as errors');
+      assert.strictEqual(res.percentiles_ms.p95, null, 'p95 must be null on failed extraction');
+      assert(res.failure_reason.includes('INVALID_PDF_SIGNATURE'), 'Must report INVALID_PDF_SIGNATURE error');
+      console.log('  ✓ [PASS] Plain-text substitute fails closed with INVALID_PDF_SIGNATURE (0 completions, 30 errors).');
+      passed++;
+    } finally {
+      try {
+        fs.rmSync(fakeDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
+  }
+
+  // 7. Healthy execution with valid seeded dataset
   {
     const { listings, candidates, targetDir } = await seedBenchmarkDataset({
       listingCount: 20,
@@ -102,7 +128,14 @@ async function runBenchmarkAccountingTests() {
     assert.strictEqual(searchRes.errors, 0, 'Healthy run must have 0 errors');
     assert(typeof searchRes.percentiles_ms.p95 === 'number', 'p95 must be a valid number');
     assert(searchRes.throughput_rps > 0, 'Throughput must be positive');
-    console.log('  ✓ [PASS] Healthy dataset achieves sample coverage, 0 errors, and positive throughput.');
+
+    const resumeRes = await benchmarkResumeExtractor(targetDir);
+    assert.strictEqual(resumeRes.sla_met, true, 'Healthy resume parser must pass');
+    assert.strictEqual(resumeRes.errors, 0, 'Healthy resume parser must have 0 errors');
+    assert.strictEqual(resumeRes.completed, 30, 'Must complete all 30 real extractions');
+    assert(typeof resumeRes.percentiles_ms.p95 === 'number', 'p95 must be valid numeric latency');
+
+    console.log('  ✓ [PASS] Healthy dataset achieves sample coverage, 0 errors, and positive throughput across all benchmarks.');
     passed++;
   }
 

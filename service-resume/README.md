@@ -117,7 +117,7 @@ Access the standalone interface at `http://localhost:8000/`.
 ## 6. Portfolio Summary & Interview Walkthrough
 
 ### Technology CV Bullet
-> **Python NLP Software Engineer — Resume Parsing Microservice:** Designed and implemented a high-performance Python 3.11 service utilizing FastAPI, spaCy `PhraseMatcher`, and `pypdf` to extract technical competencies from PDF resumes with p95 latency < 1 ms. Engineered dual gRPC (`resume.proto`) and REST interfaces, backed by a self-contained responsive web console operating with zero external database dependencies.
+> **Python NLP Software Engineer — Resume Parsing Microservice:** Designed and implemented a high-performance Python 3.11 service utilizing FastAPI, spaCy `PhraseMatcher`, and `pypdf` to extract technical competencies from PDF resumes with measured p95 latency ~10-15 ms on commodity CPU (well within the 30s SLA ceiling). Engineered dual gRPC (`resume.proto`) and REST interfaces, backed by a self-contained responsive web console operating with zero external database dependencies.
 
 ### Technical Interview Walkthrough
 1. **Core Problem:** Candidates upload resumes in arbitrary formatting; extracting skills via third-party LLMs introduces high latency (2-5s), recurring token costs, and privacy concerns.
