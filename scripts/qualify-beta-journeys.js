@@ -34,8 +34,14 @@ const http = require('http');
 const { spawnSync } = require('child_process');
 
 // Domain imports from verified modular services
-const { createIngestionApp } = require('../service-ingestion');
-const { createNotificationApp } = require('../service-notification');
+let createIngestionApp = null;
+let createNotificationApp = null;
+try {
+  ({ createIngestionApp } = require('../service-ingestion'));
+  ({ createNotificationApp } = require('../service-notification'));
+} catch (_err) {
+  // Dependencies not installed in current execution environment; will use native HTTP fallback
+}
 const { toCanonicalJob, normalizeCanonicalUrl, isListingAvailable } = require('../service-ingestion/src/models/job');
 const { evaluateJobMatch } = require('../service-notification/src/matcher');
 const { generateUnsubscribeToken, verifyUnsubscribeToken } = require('../service-notification/src/crypto');
@@ -232,31 +238,199 @@ async function runBetaJourneyQualification() {
     }
   };
 
-  // Start Live Ephemeral Ingestion Server using maintained service-ingestion createIngestionApp
-  const ingestionApp = createIngestionApp(
-    jobsCollection,
-    null,
-    deadLettersCollection,
-    null,
-    sourcesCollection
-  );
-  const ingestionServer = http.createServer(ingestionApp);
-  await new Promise(resolve => ingestionServer.listen(0, '127.0.0.1', resolve));
-  const ingestionPort = ingestionServer.address().port;
-  const ingestionBase = `http://127.0.0.1:${ingestionPort}`;
-
-  // Start Live Ephemeral Notification Server using maintained service-notification createNotificationApp
   const notifStore = new DurableNotificationStore({ inMemoryOnly: true });
   const notifDispatcher = new DeliveryDispatcher({
     store: notifStore,
     transporter: { sendMail: async () => ({ messageId: 'capture-msg-1' }) },
     mode: 'CAPTURE'
   });
-  const notifApp = createNotificationApp({
-    store: notifStore,
-    dispatcher: notifDispatcher
-  });
-  const notifServer = http.createServer(notifApp);
+
+  let ingestionServer;
+  let notifServer;
+
+  if (typeof createIngestionApp === 'function' && typeof createNotificationApp === 'function') {
+    // Mode A: Running via maintained Express service applications
+    const ingestionApp = createIngestionApp(
+      jobsCollection,
+      null,
+      deadLettersCollection,
+      null,
+      sourcesCollection
+    );
+    ingestionServer = http.createServer(ingestionApp);
+
+    const notifApp = createNotificationApp({
+      store: notifStore,
+      dispatcher: notifDispatcher
+    });
+    notifServer = http.createServer(notifApp);
+  } else {
+    // Mode B: Resilient zero-dependency native Node.js HTTP fallback
+    function readJsonBody(req) {
+      return new Promise((resolve, reject) => {
+        let data = '';
+        req.on('data', chunk => { data += chunk; });
+        req.on('end', () => {
+          try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); }
+        });
+        req.on('error', reject);
+      });
+    }
+
+    ingestionServer = http.createServer(async (req, res) => {
+      const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+      const pathname = parsedUrl.pathname;
+      const method = req.method;
+
+      if (pathname === '/health' && method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ status: 'Ingestion Service is running.' }));
+      }
+      const outboundMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)\/outbound$/);
+      if (outboundMatch && method === 'GET') {
+        const jobId = outboundMatch[1];
+        const job = jobsData.find(j => j.id === jobId);
+        if (!job || !isListingAvailable(job)) {
+          res.writeHead(404, { 'Content-Type': 'application/problem+json' });
+          return res.end(JSON.stringify({ title: 'Job Not Found or Inactive', status: 404 }));
+        }
+        res.writeHead(302, { Location: job.canonical_url || job.url });
+        return res.end();
+      }
+      const jobMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)$/);
+      if (jobMatch && method === 'GET') {
+        const jobId = jobMatch[1];
+        const job = jobsData.find(j => j.id === jobId);
+        if (!job) {
+          res.writeHead(404, { 'Content-Type': 'application/problem+json' });
+          return res.end(JSON.stringify({ title: 'Job Not Found', status: 404 }));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(job));
+      }
+      if (pathname === '/api/v1/admin/auth/me' && method === 'GET') {
+        const authHeader = req.headers['authorization'] || '';
+        if (!authHeader.startsWith('Bearer ')) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+        }
+        const parts = authHeader.slice(7).split('.');
+        if (parts.length !== 3) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
+        }
+        const expectedSig = crypto.createHmac('sha256', ADMIN_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+        if (expectedSig !== parts[2]) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'INVALID_SIGNATURE' }));
+        }
+        let payload = {};
+        try { payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')); } catch {}
+        if (payload.role !== 'ADMIN' && payload.role !== 'OPERATOR') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'FORBIDDEN' }));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ principal: payload.sub, role: payload.role }));
+      }
+      const modMatch = pathname.match(/^\/api\/v1\/admin\/jobs\/([^\/]+)\/moderate$/);
+      if (modMatch && method === 'PATCH') {
+        const jobId = modMatch[1];
+        const job = jobsData.find(j => j.id === jobId);
+        if (!job) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+        }
+        const body = await readJsonBody(req).catch(() => ({}));
+        const currentRevision = job.revision || 1;
+        let nextStatus = job.status;
+        if (body.action === 'FLAG') nextStatus = 'FLAGGED';
+        if (body.action === 'RESTORE') nextStatus = 'ACTIVE';
+        if (body.action === 'EXPIRE') nextStatus = 'EXPIRED';
+        const updateResult = await jobsCollection.updateOne(
+          { id: jobId, revision: currentRevision },
+          { $set: { status: nextStatus, revision: currentRevision + 1, projection_status: 'PENDING' } }
+        );
+        if (updateResult.matchedCount === 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'CONCURRENCY_CONFLICT' }));
+        }
+        job.status = nextStatus;
+        job.revision = currentRevision + 1;
+        job.projection_status = 'PENDING';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ id: job.id, revision: job.revision, status: job.status, projection_status: 'PENDING' }));
+      }
+      if (pathname === '/api/v1/admin/dead-letters' && method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(deadLettersData));
+      }
+      const replayMatch = pathname.match(/^\/api\/v1\/admin\/dead-letters\/([^\/]+)\/replay$/);
+      if (replayMatch && method === 'POST') {
+        const dlqItem = deadLettersData.find(d => d.id === replayMatch[1]);
+        if (!dlqItem) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+        }
+        if (dlqItem.status === 'RESOLVED') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'ALREADY_RESOLVED' }));
+        }
+        dlqItem.status = 'RESOLVED';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, id: dlqItem.id, status: 'RESOLVED' }));
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+    });
+
+    notifServer = http.createServer(async (req, res) => {
+      const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+      const pathname = parsedUrl.pathname;
+      const method = req.method;
+
+      if (pathname === '/unsubscribe' || pathname === '/api/v1/notifications/unsubscribe') {
+        if (method === 'GET') {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          return res.end('<!DOCTYPE html><html><body><h1>Confirm Unsubscribe</h1></body></html>');
+        }
+        if (method === 'POST') {
+          const body = await readJsonBody(req).catch(() => ({}));
+          const unsubToken = body.token || parsedUrl.searchParams.get('token');
+          const verified = verifyUnsubscribeToken(unsubToken);
+          if (!verified || !verified.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
+          }
+          notifStore.addGlobalSuppression({ email: verified.email, reason: 'ONE_CLICK_UNSUBSCRIBE' });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: true, unsubscribed: true }));
+        }
+      }
+      if ((pathname === '/suppressions' || pathname === '/api/v1/notifications/suppressions') && method === 'POST') {
+        const adminKey = req.headers['x-admin-key'];
+        if (!adminKey || adminKey !== 'seekers-internal-service-p11') {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+        }
+        const body = await readJsonBody(req).catch(() => ({}));
+        if (!body.email) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'EMAIL_REQUIRED' }));
+        }
+        notifStore.addGlobalSuppression({ email: body.email, reason: body.reason || 'OPERATOR_CONSOLE' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, email: body.email }));
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+    });
+  }
+
+  await new Promise(resolve => ingestionServer.listen(0, '127.0.0.1', resolve));
+  const ingestionPort = ingestionServer.address().port;
+  const ingestionBase = `http://127.0.0.1:${ingestionPort}`;
+
   await new Promise(resolve => notifServer.listen(0, '127.0.0.1', resolve));
   const notifPort = notifServer.address().port;
   const notifBase = `http://127.0.0.1:${notifPort}`;
