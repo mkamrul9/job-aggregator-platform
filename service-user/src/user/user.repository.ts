@@ -92,6 +92,10 @@ export class UserRepository {
 
         // 2. Atomic candidate ceiling check for new user registration
         if (options?.maxCapacity !== undefined) {
+          // Serialize concurrent registrations across all processes using PostgreSQL transaction advisory lock
+          if (typeof tx.$executeRaw === 'function') {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(987654321)`;
+          }
           const candidateCount = await tx.user.count({
             where: { role: 'CANDIDATE' },
           });

@@ -154,6 +154,12 @@ jobs:
           DATABASE_URL: postgresql://admin:password123@localhost:5432/job_aggregator_users_test?schema=public
         run: npx prisma migrate deploy
 
+      - name: Prove Atomic Beta Admission Concurrency Against PostgreSQL
+        working-directory: ./service-user
+        env:
+          DATABASE_URL: postgresql://admin:password123@localhost:5432/job_aggregator_users_test?schema=public
+        run: npm run test:postgres:race
+
       - name: Set up Python for Resume Extractor Integration
         uses: actions/setup-python@v5
         with:

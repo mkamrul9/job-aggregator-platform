@@ -23,7 +23,8 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:baseline": "prisma migrate resolve --applied 20261027000000_init",
     "test:smoke": "node test/standalone-smoke.js",
-    "test:smoke:negative": "node test/verify-smoke-failure.js"
+    "test:smoke:negative": "node test/verify-smoke-failure.js",
+    "test:postgres:race": "node test/verify-postgres-admission-race.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.4",

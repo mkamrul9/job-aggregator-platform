@@ -34,6 +34,8 @@ const http = require('http');
 const { spawnSync } = require('child_process');
 
 // Domain imports from verified modular services
+const { createIngestionApp } = require('../service-ingestion');
+const { createNotificationApp } = require('../service-notification');
 const { toCanonicalJob, normalizeCanonicalUrl, isListingAvailable } = require('../service-ingestion/src/models/job');
 const { evaluateJobMatch } = require('../service-notification/src/matcher');
 const { generateUnsubscribeToken, verifyUnsubscribeToken } = require('../service-notification/src/crypto');
@@ -116,11 +118,25 @@ async function runBetaJourneyQualification() {
               return true;
             }).slice(0, limitCount || 20);
           }
+        }),
+        skip: () => ({
+          limit: (limitCount) => ({
+            toArray: async () => jobsData.slice(0, limitCount || 20)
+          })
         })
       })
     }),
     findOne: async (query) => {
-      return jobsData.find(j => j.id === query.id || j.canonical_url === query.canonical_url) || null;
+      if (!query) return jobsData[0] || null;
+      if (query.id) return jobsData.find(j => j.id === query.id) || null;
+      if (query.canonical_url) return jobsData.find(j => j.canonical_url === query.canonical_url) || null;
+      if (query.$or) {
+        for (const sub of query.$or) {
+          const match = jobsData.find(j => (sub.id && j.id === sub.id) || (sub.canonical_url && j.canonical_url === sub.canonical_url));
+          if (match) return match;
+        }
+      }
+      return null;
     },
     updateOne: async (filter, update) => {
       const idx = jobsData.findIndex(j => j.id === filter.id);
@@ -133,6 +149,10 @@ async function runBetaJourneyQualification() {
         return { matchedCount: 1, modifiedCount: 1 };
       }
       return { matchedCount: 0, modifiedCount: 0 };
+    },
+    insertOne: async (doc) => {
+      jobsData.push(doc);
+      return { insertedId: doc.id };
     },
     countDocuments: async () => jobsData.length
   };
@@ -184,6 +204,7 @@ async function runBetaJourneyQualification() {
       const item = deadLettersData.find(d => d.id === filter.id);
       if (item) {
         if (update.$set) Object.assign(item, update.$set);
+        if (update.$inc && update.$inc.retry_count) item.retry_count = (item.retry_count || 0) + update.$inc.retry_count;
         return { matchedCount: 1, modifiedCount: 1 };
       }
       return { matchedCount: 0, modifiedCount: 0 };
@@ -211,232 +232,31 @@ async function runBetaJourneyQualification() {
     }
   };
 
-  // Helper to read JSON request body
-  function readJsonBody(req) {
-    return new Promise((resolve, reject) => {
-      let data = '';
-      req.on('data', chunk => { data += chunk; });
-      req.on('end', () => {
-        try {
-          resolve(data ? JSON.parse(data) : {});
-        } catch (e) {
-          reject(e);
-        }
-      });
-      req.on('error', reject);
-    });
-  }
-
-  // Start Live Ephemeral Ingestion Server using native Node.js HTTP
-  const ingestionServer = http.createServer(async (req, res) => {
-    const parsedUrl = new URL(req.url, 'http://127.0.0.1');
-    const pathname = parsedUrl.pathname;
-    const method = req.method;
-
-    // Health
-    if (pathname === '/health' && method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ status: 'Ingestion Service is running.' }));
-    }
-
-    // Outbound redirect: GET /api/v1/jobs/:id/outbound
-    const outboundMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)\/outbound$/);
-    if (outboundMatch && method === 'GET') {
-      const jobId = outboundMatch[1];
-      const job = jobsData.find(j => j.id === jobId);
-      if (!job || !isListingAvailable(job)) {
-        res.writeHead(404, { 'Content-Type': 'application/problem+json' });
-        return res.end(JSON.stringify({ title: 'Job Not Found or Inactive', status: 404 }));
-      }
-      const dest = job.canonical_url || job.url;
-      res.writeHead(302, { Location: dest });
-      return res.end();
-    }
-
-    // Job Detail: GET /api/v1/jobs/:id
-    const jobMatch = pathname.match(/^\/api\/v1\/jobs\/([^\/]+)$/);
-    if (jobMatch && method === 'GET') {
-      const jobId = jobMatch[1];
-      const job = jobsData.find(j => j.id === jobId);
-      if (!job) {
-        res.writeHead(404, { 'Content-Type': 'application/problem+json' });
-        return res.end(JSON.stringify({ title: 'Job Not Found', status: 404 }));
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(job));
-    }
-
-    // Admin Auth Me: GET /api/v1/admin/auth/me
-    if (pathname === '/api/v1/admin/auth/me' && method === 'GET') {
-      const authHeader = req.headers['authorization'] || '';
-      if (!authHeader.startsWith('Bearer ')) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
-      }
-      const token = authHeader.slice(7);
-      const parts = token.split('.');
-      if (parts.length !== 3) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
-      }
-      const expectedSig = crypto.createHmac('sha256', ADMIN_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
-      if (expectedSig !== parts[2]) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'INVALID_SIGNATURE' }));
-      }
-      let payload;
-      try {
-        payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-      } catch {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'MALFORMED_PAYLOAD' }));
-      }
-      if (payload.role !== 'ADMIN' && payload.role !== 'OPERATOR') {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'FORBIDDEN' }));
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ principal: payload.sub, role: payload.role }));
-    }
-
-    // Admin Moderate Job: PATCH /api/v1/admin/jobs/:id/moderate
-    const modMatch = pathname.match(/^\/api\/v1\/admin\/jobs\/([^\/]+)\/moderate$/);
-    if (modMatch && method === 'PATCH') {
-      const jobId = modMatch[1];
-      const job = jobsData.find(j => j.id === jobId);
-      if (!job) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
-      }
-      const body = await readJsonBody(req).catch(() => ({}));
-      const currentRevision = job.revision || 1;
-      let nextStatus = job.status;
-      if (body.action === 'FLAG') nextStatus = 'FLAGGED';
-      if (body.action === 'RESTORE') nextStatus = 'ACTIVE';
-      if (body.action === 'EXPIRE') nextStatus = 'EXPIRED';
-
-      const updateFields = {
-        status: nextStatus,
-        revision: currentRevision + 1,
-        projection_status: 'PENDING'
-      };
-
-      const updateResult = await jobsCollection.updateOne(
-        { id: jobId, revision: currentRevision },
-        { $set: updateFields }
-      );
-
-      if (updateResult.matchedCount === 0) {
-        res.writeHead(409, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'CONCURRENCY_CONFLICT', message: 'Job listing was modified concurrently.' }));
-      }
-
-      job.status = nextStatus;
-      job.revision = currentRevision + 1;
-      job.projection_status = 'PENDING';
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ id: job.id, revision: job.revision, status: job.status, projection_status: 'PENDING' }));
-    }
-
-    // Admin Dead Letters: GET /api/v1/admin/dead-letters
-    if (pathname === '/api/v1/admin/dead-letters' && method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(deadLettersData));
-    }
-
-    // Admin Replay Dead Letter: POST /api/v1/admin/dead-letters/:id/replay
-    const replayMatch = pathname.match(/^\/api\/v1\/admin\/dead-letters\/([^\/]+)\/replay$/);
-    if (replayMatch && method === 'POST') {
-      const dlqId = replayMatch[1];
-      const dlqItem = deadLettersData.find(d => d.id === dlqId);
-      if (!dlqItem) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'NOT_FOUND' }));
-      }
-      if (dlqItem.status === 'RESOLVED') {
-        res.writeHead(409, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'ALREADY_RESOLVED', message: 'Dead letter has already been replayed.' }));
-      }
-      dlqItem.status = 'RESOLVED';
-      dlqItem.resolved_at = new Date().toISOString();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, id: dlqItem.id, status: 'RESOLVED' }));
-    }
-
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'NOT_FOUND' }));
-  });
-
+  // Start Live Ephemeral Ingestion Server using maintained service-ingestion createIngestionApp
+  const ingestionApp = createIngestionApp(
+    jobsCollection,
+    null,
+    deadLettersCollection,
+    null,
+    sourcesCollection
+  );
+  const ingestionServer = http.createServer(ingestionApp);
   await new Promise(resolve => ingestionServer.listen(0, '127.0.0.1', resolve));
   const ingestionPort = ingestionServer.address().port;
   const ingestionBase = `http://127.0.0.1:${ingestionPort}`;
 
-  // Start Live Ephemeral Notification Server using native Node.js HTTP
+  // Start Live Ephemeral Notification Server using maintained service-notification createNotificationApp
   const notifStore = new DurableNotificationStore({ inMemoryOnly: true });
-  const notifServer = http.createServer(async (req, res) => {
-    const parsedUrl = new URL(req.url, 'http://127.0.0.1');
-    const pathname = parsedUrl.pathname;
-    const method = req.method;
-
-    // Unsubscribe: GET or POST /unsubscribe or /api/v1/notifications/unsubscribe
-    if (pathname === '/unsubscribe' || pathname === '/api/v1/notifications/unsubscribe') {
-      const token = parsedUrl.searchParams.get('token');
-      if (method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        return res.end('<!DOCTYPE html><html><body><h1>Confirm Unsubscribe</h1><p>Click below to confirm your unsubscribe.</p><form method="POST"><button type="submit">Unsubscribe</button></form></body></html>');
-      }
-      if (method === 'POST') {
-        const body = await readJsonBody(req).catch(() => ({}));
-        const unsubToken = body.token || token;
-        const secret = 'dev-demo-unsubscribe-isolated-key-p11';
-        let verified = verifyUnsubscribeToken(unsubToken, secret);
-        if (!verified || !verified.valid) {
-          verified = verifyUnsubscribeToken(unsubToken, 'seekers-notification-secret-p10');
-        }
-        if (!verified || !verified.valid) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'INVALID_TOKEN' }));
-        }
-        notifStore.addGlobalSuppression({
-          email: verified.email,
-          reason: 'ONE_CLICK_UNSUBSCRIBE',
-          source: 'EMAIL_UNSUBSCRIBE_LINK'
-        });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: true, unsubscribed: true, email: verified.email }));
-      }
-    }
-
-    // Suppressions: POST /suppressions or /api/v1/notifications/suppressions
-    if ((pathname === '/suppressions' || pathname === '/api/v1/notifications/suppressions') && method === 'POST') {
-      const adminKey = req.headers['x-admin-key'];
-      const validKeys = [
-        'seekers-internal-service-p11',
-        process.env.NOTIFICATION_ADMIN_KEY,
-        process.env.INTERNAL_SERVICE_KEY
-      ].filter(Boolean);
-      if (!adminKey || !validKeys.includes(adminKey)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
-      }
-      const body = await readJsonBody(req).catch(() => ({}));
-      if (!body.email) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'EMAIL_REQUIRED' }));
-      }
-      notifStore.addGlobalSuppression({
-        email: body.email,
-        reason: body.reason || 'INCIDENT_PAUSE',
-        source: body.source || 'OPERATOR_CONSOLE'
-      });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, email: body.email }));
-    }
-
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'NOT_FOUND' }));
+  const notifDispatcher = new DeliveryDispatcher({
+    store: notifStore,
+    transporter: { sendMail: async () => ({ messageId: 'capture-msg-1' }) },
+    mode: 'CAPTURE'
   });
-
+  const notifApp = createNotificationApp({
+    store: notifStore,
+    dispatcher: notifDispatcher
+  });
+  const notifServer = http.createServer(notifApp);
   await new Promise(resolve => notifServer.listen(0, '127.0.0.1', resolve));
   const notifPort = notifServer.address().port;
   const notifBase = `http://127.0.0.1:${notifPort}`;
@@ -511,7 +331,7 @@ async function runBetaJourneyQualification() {
       });
       assert.strictEqual(opAdminRes.status, 200, 'Operator token must be accepted with 200 OK');
       const opJson = await opAdminRes.json();
-      assert.strictEqual(opJson.role, 'OPERATOR');
+      assert.strictEqual(opJson.role || opJson.user?.role, 'OPERATOR');
 
       // 2.3: Tampered signature token -> strictly 401 Unauthorized
       const tamperedRes = await fetch(`${ingestionBase}/api/v1/admin/auth/me`, {
@@ -668,13 +488,11 @@ async function runBetaJourneyQualification() {
       assert.strictEqual(matchOutcome.matches, true, 'Job meets query, remote preference, and compensation bounds');
 
       // 5.2: Cryptographic HMAC unsubscribe token generation
-      const testSecret = 'dev-demo-unsubscribe-isolated-key-p11';
       const unsubToken = generateUnsubscribeToken({
         email: subscription.email,
         subscriptionId: subscription.id,
         candidateId: 'usr_candidate_01',
-        scope: 'SUBSCRIPTION',
-        secret: testSecret
+        scope: 'subscription'
       });
 
       // 5.3: GET confirmation page over live HTTP (link prefetch safe, does not mutate)
