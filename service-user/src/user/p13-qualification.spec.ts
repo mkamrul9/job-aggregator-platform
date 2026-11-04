@@ -272,13 +272,12 @@ describe('P13 Production Qualification: Security, Privacy & Accessibility', () =
 
       expect(purged).toBe(0);
       expect(mockPrisma.user.delete).not.toHaveBeenCalled();
-      expect(mockPrisma.accountDeletionRequest.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: 'FAILED',
-          }),
-        }),
-      );
+      expect(mockPrisma.accountDeletionRequest.update).toHaveBeenCalled();
+      const updateCalls = mockPrisma.accountDeletionRequest.update.mock.calls;
+      const lastCall = updateCalls[updateCalls.length - 1] as unknown as [
+        { data: { status: string } },
+      ];
+      expect(lastCall[0].data.status).toBe('FAILED');
     });
   });
 

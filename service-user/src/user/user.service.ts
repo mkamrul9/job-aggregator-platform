@@ -427,7 +427,9 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       try {
         // Enforce retry limit: if attemptCount > 5, mark as FAILED and skip
         if (claimed.attemptCount && claimed.attemptCount > 5) {
-          if (typeof this.userRepository.markAccountDeletionFailed === 'function') {
+          if (
+            typeof this.userRepository.markAccountDeletionFailed === 'function'
+          ) {
             await this.userRepository.markAccountDeletionFailed(
               req.id,
               'Maximum erasure attempts exceeded (5 attempts). Manual operator review required.',

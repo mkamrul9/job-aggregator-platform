@@ -450,7 +450,9 @@ export class UserRepository {
           },
         });
       }
-    } catch {}
+    } catch {
+      return;
+    }
   }
 
   async markAccountDeletionProcessing(
