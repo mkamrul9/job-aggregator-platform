@@ -294,4 +294,110 @@ describe('UserRepository', () => {
       });
     });
   });
+
+  describe('upsertUser - Atomic Beta Capacity & Session Handling', () => {
+    it('should reject erased candidate with ACCOUNT_PERMANENTLY_ERASED', async () => {
+      mockPrisma.durableErasureRecord = {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'erasure-1', userId: 'erased-uid' }),
+      };
+      await expect(
+        repository.upsertUser('erased-uid', 'erased@seekers.internal', true),
+      ).rejects.toThrow('This account was permanently erased');
+    });
+
+    it('should update existing user session without triggering capacity limit', async () => {
+      mockPrisma.durableErasureRecord = {
+        findUnique: jest.fn().mockResolvedValue(null),
+      };
+      mockPrisma.$transaction = jest
+        .fn()
+        .mockImplementation(
+          <T>(cb: (tx: typeof mockPrisma) => Promise<T>): Promise<T> =>
+            cb(mockPrisma),
+        );
+      mockPrisma.user.findUnique = jest.fn().mockResolvedValue({
+        id: 'existing-uid',
+        email: 'old@seekers.example',
+        profile: { name: 'Existing User' },
+      });
+      mockPrisma.user.update = jest.fn().mockResolvedValue({
+        id: 'existing-uid',
+        email: 'new@seekers.example',
+        emailVerified: true,
+        profile: { name: 'Existing User' },
+      });
+
+      const user = await repository.upsertUser(
+        'existing-uid',
+        'new@seekers.example',
+        true,
+        { maxCapacity: 50 },
+      );
+      expect(user.email).toBe('new@seekers.example');
+      expect(mockPrisma.user.update).toHaveBeenCalled();
+    });
+
+    it('should reject new user when candidate capacity ceiling is reached', async () => {
+      mockPrisma.durableErasureRecord = {
+        findUnique: jest.fn().mockResolvedValue(null),
+      };
+      mockPrisma.$transaction = jest
+        .fn()
+        .mockImplementation(
+          <T>(cb: (tx: typeof mockPrisma) => Promise<T>): Promise<T> =>
+            cb(mockPrisma),
+        );
+      mockPrisma.user.findUnique = jest.fn().mockResolvedValue(null);
+      mockPrisma.user.count = jest.fn().mockResolvedValue(50);
+      mockPrisma.$executeRaw = jest.fn().mockResolvedValue(1);
+
+      await expect(
+        repository.upsertUser('new-uid', 'new@seekers.example', true, {
+          maxCapacity: 50,
+        }),
+      ).rejects.toThrow(
+        'Beta cohort capacity (50 participants) has been reached',
+      );
+    });
+
+    it('should create new candidate user when capacity is available', async () => {
+      mockPrisma.durableErasureRecord = {
+        findUnique: jest.fn().mockResolvedValue(null),
+      };
+      mockPrisma.$transaction = jest
+        .fn()
+        .mockImplementation(
+          <T>(cb: (tx: typeof mockPrisma) => Promise<T>): Promise<T> =>
+            cb(mockPrisma),
+        );
+      mockPrisma.user.findUnique = jest.fn().mockResolvedValue(null);
+      mockPrisma.user.count = jest.fn().mockResolvedValue(10);
+      mockPrisma.$executeRaw = jest.fn().mockResolvedValue(1);
+      mockPrisma.user.create = jest.fn().mockResolvedValue({
+        id: 'new-uid',
+        email: 'new@seekers.example',
+        role: 'CANDIDATE',
+        profile: null,
+      });
+      mockPrisma.profile = {
+        create: jest.fn().mockResolvedValue({
+          id: 'prof-1',
+          userId: 'new-uid',
+          name: '',
+          skills: [],
+        }),
+      };
+
+      const result = await repository.upsertUser(
+        'new-uid',
+        'new@seekers.example',
+        true,
+        { maxCapacity: 50 },
+      );
+      expect(result.id).toBe('new-uid');
+      expect(result.profile).toBeDefined();
+    });
+  });
 });

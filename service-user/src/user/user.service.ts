@@ -146,29 +146,50 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     email: string;
     emailVerified?: boolean;
   }): Promise<{ message: string; user: UserProfileResponseDto }> {
+    let maxCapacity: number | undefined;
+
     if (process.env.BETA_ALLOWLIST_ENABLED === 'true') {
       const existingUser = await this.userRepository.findById(data.id);
       if (!existingUser) {
-        // Enforce cohort capacity ceiling
-        const maxParticipants = parseInt(
+        // Enforce verified identity evidence for initial beta admission
+        if (!data.emailVerified) {
+          throw new ForbiddenException({
+            code: 'BETA_EMAIL_VERIFICATION_REQUIRED',
+            message:
+              'A verified email address is required for initial beta admission.',
+          });
+        }
+
+        // Parse and validate cohort capacity ceiling fail-closed
+        const parsedMax = parseInt(
           process.env.BETA_MAX_PARTICIPANTS || '50',
           10,
         );
+        maxCapacity =
+          Number.isInteger(parsedMax) && parsedMax > 0 ? parsedMax : 50;
+
+        // Pre-flight capacity check
         const currentCount = await this.userRepository.countUsers();
-        if (currentCount >= maxParticipants) {
+        if (currentCount >= maxCapacity) {
           throw new ForbiddenException({
             code: 'BETA_CAPACITY_REACHED',
-            message: `Beta cohort capacity (${maxParticipants} participants) has been reached.`,
+            message:
+              'Beta cohort capacity (' +
+              maxCapacity +
+              ' participants) has been reached.',
           });
         }
-        // Enforce allowlist if configured
+
+        // Enforce allowlist fail-closed
         const allowlistStr = process.env.BETA_INVITE_ALLOWLIST || '';
         const allowedEmails = allowlistStr
           .split(',')
           .map((e) => e.trim().toLowerCase())
           .filter(Boolean);
+
+        // Fail-closed: empty allowlist or uninvited email is rejected
         if (
-          allowedEmails.length > 0 &&
+          allowedEmails.length === 0 ||
           !allowedEmails.includes(data.email.toLowerCase())
         ) {
           throw new ForbiddenException({
@@ -180,11 +201,19 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const user = await this.userRepository.upsertUser(
-      data.id,
-      data.email,
-      data.emailVerified ?? false,
-    );
+    const user =
+      maxCapacity !== undefined
+        ? await this.userRepository.upsertUser(
+            data.id,
+            data.email,
+            data.emailVerified ?? false,
+            { maxCapacity },
+          )
+        : await this.userRepository.upsertUser(
+            data.id,
+            data.email,
+            data.emailVerified ?? false,
+          );
 
     return {
       message: 'User synchronized successfully with PostgreSQL',

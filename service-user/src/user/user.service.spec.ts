@@ -177,6 +177,44 @@ describe('UserService', () => {
       );
     });
 
+    it('should reject unverified email when BETA_ALLOWLIST_ENABLED is true', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'unverified-uid',
+            email: 'approved@seekers.example',
+            emailVerified: false,
+          }),
+        ).rejects.toThrow('A verified email address is required');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should fail closed when BETA_INVITE_ALLOWLIST is empty', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_INVITE_ALLOWLIST = '';
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'any-uid',
+            email: 'user@example.com',
+            emailVerified: true,
+          }),
+        ).rejects.toThrow('An invitation is required');
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
     it('should reject unlisted user when BETA_ALLOWLIST_ENABLED is true', async () => {
       process.env.BETA_ALLOWLIST_ENABLED = 'true';
       process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
@@ -196,7 +234,7 @@ describe('UserService', () => {
       }
     });
 
-    it('should allow allowlisted user when BETA_ALLOWLIST_ENABLED is true', async () => {
+    it('should allow allowlisted user with verified email when BETA_ALLOWLIST_ENABLED is true', async () => {
       process.env.BETA_ALLOWLIST_ENABLED = 'true';
       process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
       mockUserRepository.findById.mockResolvedValue(null);
@@ -210,6 +248,12 @@ describe('UserService', () => {
           emailVerified: true,
         });
         expect(result.message).toContain('synchronized');
+        expect(mockUserRepository.upsertUser).toHaveBeenCalledWith(
+          'approved-uid',
+          'approved@seekers.example',
+          true,
+          { maxCapacity: 50 },
+        );
       } finally {
         delete process.env.BETA_ALLOWLIST_ENABLED;
         delete process.env.BETA_INVITE_ALLOWLIST;
@@ -219,6 +263,7 @@ describe('UserService', () => {
     it('should reject registration when BETA_MAX_PARTICIPANTS ceiling is reached', async () => {
       process.env.BETA_ALLOWLIST_ENABLED = 'true';
       process.env.BETA_MAX_PARTICIPANTS = '50';
+      process.env.BETA_INVITE_ALLOWLIST = 'any@seekers.example';
       mockUserRepository.findById.mockResolvedValue(null);
       mockUserRepository.countUsers.mockResolvedValue(50);
 
@@ -235,6 +280,33 @@ describe('UserService', () => {
       } finally {
         delete process.env.BETA_ALLOWLIST_ENABLED;
         delete process.env.BETA_MAX_PARTICIPANTS;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should permit existing returning user even if unlisted or capacity is full', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_MAX_PARTICIPANTS = '50';
+      process.env.BETA_INVITE_ALLOWLIST = 'someone.else@seekers.example';
+      mockUserRepository.findById.mockResolvedValue(mockUserWithProfile);
+      mockUserRepository.upsertUser.mockResolvedValue(mockUserWithProfile);
+
+      try {
+        const result = await service.syncUser({
+          id: 'firebase-uid-123',
+          email: 'candidate@seekers.example',
+          emailVerified: true,
+        });
+        expect(result.message).toContain('synchronized');
+        expect(mockUserRepository.upsertUser).toHaveBeenCalledWith(
+          'firebase-uid-123',
+          'candidate@seekers.example',
+          true,
+        );
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_MAX_PARTICIPANTS;
+        delete process.env.BETA_INVITE_ALLOWLIST;
       }
     });
   });

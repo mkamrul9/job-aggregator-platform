@@ -40,6 +40,7 @@ export class UserRepository {
     id: string,
     email: string,
     emailVerified = false,
+    options?: { maxCapacity?: number },
   ): Promise<UserWithProfile> {
     if (await this.isUserErased(id)) {
       throw new ForbiddenException({
@@ -50,44 +51,95 @@ export class UserRepository {
     }
 
     try {
-      // 1. Upsert User record
-      const user = await this.prisma.user.upsert({
-        where: { id },
-        update: {
-          email,
-          emailVerified,
-        },
-        create: {
-          id,
-          email,
-          emailVerified,
-          role: 'CANDIDATE',
-        },
-        include: {
-          profile: true,
-        },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. Check if user already exists
+        const existing = await tx.user.findUnique({
+          where: { id },
+          include: { profile: true },
+        });
 
-      // 2. Ensure initial Profile record exists
-      if (!user.profile) {
-        const profile = await this.prisma.profile.create({
+        if (existing) {
+          const updated = await tx.user.update({
+            where: { id },
+            data: {
+              email,
+              emailVerified,
+            },
+            include: {
+              profile: true,
+            },
+          });
+
+          if (!updated.profile) {
+            const profile = await tx.profile.create({
+              data: {
+                userId: updated.id,
+                name: '',
+                skills: [],
+                extractedSkills: [],
+                locations: [],
+                remotePreference: RemoteEligibility.UNSPECIFIED,
+                currency: 'BDT',
+                onboardingCompleted: false,
+                onboardingStep: 0,
+              },
+            });
+            return { ...updated, profile };
+          }
+
+          return updated;
+        }
+
+        // 2. Atomic candidate ceiling check for new user registration
+        if (options?.maxCapacity !== undefined) {
+          const candidateCount = await tx.user.count({
+            where: { role: 'CANDIDATE' },
+          });
+          if (candidateCount >= options.maxCapacity) {
+            throw new ForbiddenException({
+              code: 'BETA_CAPACITY_REACHED',
+              message: `Beta cohort capacity (${options.maxCapacity} participants) has been reached.`,
+            });
+          }
+        }
+
+        // 3. Create new user
+        const user = await tx.user.create({
           data: {
-            userId: user.id,
-            name: '',
-            skills: [],
-            extractedSkills: [],
-            locations: [],
-            remotePreference: RemoteEligibility.UNSPECIFIED,
-            currency: 'BDT',
-            onboardingCompleted: false,
-            onboardingStep: 0,
+            id,
+            email,
+            emailVerified,
+            role: 'CANDIDATE',
+          },
+          include: {
+            profile: true,
           },
         });
-        return { ...user, profile };
-      }
 
-      return user;
+        // 4. Ensure initial Profile record exists
+        if (!user.profile) {
+          const profile = await tx.profile.create({
+            data: {
+              userId: user.id,
+              name: '',
+              skills: [],
+              extractedSkills: [],
+              locations: [],
+              remotePreference: RemoteEligibility.UNSPECIFIED,
+              currency: 'BDT',
+              onboardingCompleted: false,
+              onboardingStep: 0,
+            },
+          });
+          return { ...user, profile };
+        }
+
+        return user;
+      });
     } catch (err: unknown) {
+      if (err instanceof ForbiddenException) {
+        throw err;
+      }
       // Handle unique email constraint conflict across different UIDs
       const prismaError = err as {
         code?: string;
