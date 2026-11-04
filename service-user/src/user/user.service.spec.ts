@@ -48,6 +48,7 @@ describe('UserService', () => {
     upsertUser: jest.fn(),
     findById: jest.fn(),
     countUsers: jest.fn().mockResolvedValue(0),
+    countCandidates: jest.fn().mockResolvedValue(0),
     updateProfile: jest.fn(),
     updateProfileResumeUrl: jest.fn(),
     createExportRequest: jest.fn(),
@@ -239,6 +240,7 @@ describe('UserService', () => {
       process.env.BETA_INVITE_ALLOWLIST = 'approved@seekers.example';
       mockUserRepository.findById.mockResolvedValue(null);
       mockUserRepository.countUsers.mockResolvedValue(5);
+      mockUserRepository.countCandidates.mockResolvedValue(5);
       mockUserRepository.upsertUser.mockResolvedValue(mockUserWithProfile);
 
       try {
@@ -266,6 +268,7 @@ describe('UserService', () => {
       process.env.BETA_INVITE_ALLOWLIST = 'any@seekers.example';
       mockUserRepository.findById.mockResolvedValue(null);
       mockUserRepository.countUsers.mockResolvedValue(50);
+      mockUserRepository.countCandidates.mockResolvedValue(50);
 
       try {
         await expect(
@@ -276,6 +279,29 @@ describe('UserService', () => {
           }),
         ).rejects.toThrow(
           'Beta cohort capacity (50 participants) has been reached',
+        );
+      } finally {
+        delete process.env.BETA_ALLOWLIST_ENABLED;
+        delete process.env.BETA_MAX_PARTICIPANTS;
+        delete process.env.BETA_INVITE_ALLOWLIST;
+      }
+    });
+
+    it('should reject registration when BETA_MAX_PARTICIPANTS is malformed fail-closed', async () => {
+      process.env.BETA_ALLOWLIST_ENABLED = 'true';
+      process.env.BETA_MAX_PARTICIPANTS = 'invalid-number';
+      process.env.BETA_INVITE_ALLOWLIST = 'any@seekers.example';
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      try {
+        await expect(
+          service.syncUser({
+            id: 'new-uid',
+            email: 'any@seekers.example',
+            emailVerified: true,
+          }),
+        ).rejects.toThrow(
+          'Invalid beta cohort configuration: BETA_MAX_PARTICIPANTS must be a positive integer.',
         );
       } finally {
         delete process.env.BETA_ALLOWLIST_ENABLED;

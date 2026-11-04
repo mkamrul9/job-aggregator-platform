@@ -33,14 +33,50 @@ const crypto = require('crypto');
 const http = require('http');
 const { spawnSync } = require('child_process');
 
+// Mode selection: default is STRICT qualification requiring maintained services.
+// An isolated zero-dependency component fallback is available ONLY under explicit flag.
+const isComponentMode =
+  process.argv.includes('--mode=component') ||
+  process.env.QUALIFICATION_MODE === 'component';
+
 // Domain imports from verified modular services
 let createIngestionApp = null;
 let createNotificationApp = null;
+let ingestionImportError = null;
+let notifImportError = null;
+
 try {
   ({ createIngestionApp } = require('../service-ingestion'));
+} catch (err) {
+  ingestionImportError = err;
+}
+
+try {
   ({ createNotificationApp } = require('../service-notification'));
-} catch (_err) {
-  // Dependencies not installed in current execution environment; will use native HTTP fallback
+} catch (err) {
+  notifImportError = err;
+}
+
+if (!isComponentMode) {
+  if (!createIngestionApp || !createNotificationApp) {
+    console.error('\n========================================================================');
+    console.error('❌ [FATAL] RELEASE QUALIFICATION FAILED: MAINTAINED SERVICES REQUIRED');
+    console.error('========================================================================');
+    if (ingestionImportError) {
+      console.error(`- service-ingestion import failure: ${ingestionImportError.message}`);
+    }
+    if (notifImportError) {
+      console.error(`- service-notification import failure: ${notifImportError.message}`);
+    }
+    console.error('\nRelease qualification requires the maintained Express applications and workers.');
+    console.error('To resolve:');
+    console.error('  npm --prefix service-ingestion ci');
+    console.error('  npm --prefix service-notification ci');
+    console.error('\nTo run an isolated zero-dependency component test without maintained services, use:');
+    console.error('  node scripts/qualify-beta-journeys.js --mode=component');
+    console.error('========================================================================\n');
+    process.exit(1);
+  }
 }
 const { toCanonicalJob, normalizeCanonicalUrl, isListingAvailable } = require('../service-ingestion/src/models/job');
 const { evaluateJobMatch } = require('../service-notification/src/matcher');
@@ -76,8 +112,13 @@ function createSignedJwt(payload, secret = ADMIN_SECRET) {
 
 async function runBetaJourneyQualification() {
   console.log('========================================================================');
-  console.log('[BETA-QUALIFICATION] Seekers Real Journey Verification Suite (P16)');
-  console.log('Mode: LIVE_LOOPBACK_HTTP + PYTHON_NLP_INTEGRATION');
+  console.log('[BETA-QUALIFICATION] Seekers Maintained Services Journey Verification (P16)');
+  console.log(`Execution Mode:    ${isComponentMode ? 'COMPONENT FALLBACK (ISOLATED ZERO-DEPENDENCY)' : 'STRICT MAINTAINED APPS & WORKERS (RELEASE GATE)'}`);
+  console.log(`Node.js Runtime:   ${process.version} (${process.platform} ${process.arch})`);
+  console.log(`Python NLP Worker: ${pythonBin} (spaCy + pypdf)`);
+  console.log(`Ingestion App:     ${createIngestionApp ? 'Maintained Express App (service-ingestion)' : 'Fallback Mock Handler'}`);
+  console.log(`Notification App:  ${createNotificationApp ? 'Maintained Express App (service-notification)' : 'Fallback Mock Handler'}`);
+  console.log(`Identity Service:  NestJS UserRepository (PostgreSQL Advisory Lock)`);
   console.log('========================================================================\n');
 
   let passedJourneys = 0;
@@ -264,8 +305,8 @@ async function runBetaJourneyQualification() {
       dispatcher: notifDispatcher
     });
     notifServer = http.createServer(notifApp);
-  } else {
-    // Mode B: Resilient zero-dependency native Node.js HTTP fallback
+  } else if (isComponentMode) {
+    // Mode B: Resilient zero-dependency native Node.js HTTP fallback (Component Mode Only)
     function readJsonBody(req) {
       return new Promise((resolve, reject) => {
         let data = '';
@@ -425,6 +466,8 @@ async function runBetaJourneyQualification() {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'NOT_FOUND' }));
     });
+  } else {
+    throw new Error('Maintained Express service applications are required for release qualification.');
   }
 
   await new Promise(resolve => ingestionServer.listen(0, '127.0.0.1', resolve));
@@ -933,6 +976,22 @@ async function runBetaJourneyQualification() {
   console.log('  - Optimistic Concurrency Fencing:  VERIFIED (409 Conflict handling)');
   console.log('  - RFC 8058 One-Click Unsubscribe:  VERIFIED (two-phase protection)');
   console.log('  - Negative Failure Proving:        VERIFIED (fails closed on offline service)');
+  console.log('========================================================================\n');
+
+  console.log('========================================================================');
+  console.log('[VERIFICATION LEVEL CLASSIFICATION MATRIX]');
+  console.log('  Journey 1  [Integration] Candidate Discovery & Outbound Redirect (Express)');
+  console.log('  Journey 2  [Integration] Cryptographic Auth Tokens & Role Isolation (JWT)');
+  console.log('  Journey 3  [Integration] Private Resume NLP Byte Stream Extraction (spaCy)');
+  console.log('  Journey 4  [Integration] Workspace Application Tracking & Concurrency (409)');
+  console.log('  Journey 5  [Integration] Explainable Recommendations & RFC 8058 Unsubscribe');
+  console.log('  Journey 6  [Integration] GDPR Portability Export & 30-Day Erasure Tombstone');
+  console.log('  Journey 7  [Integration] Operator Catalog Moderation & Revision Fence (409)');
+  console.log('  Journey 8  [Integration] Dead Letter Queue Poison Triage & Idempotent Replay');
+  console.log('  Journey 9  [Integration] Incident Suppression & Outbox Kill-Switch (CAPTURE)');
+  console.log('  Negative   [Integration] Offline Service Refusal & Fail-Closed Fencing');
+  console.log('  Portfolio  [Browser/API] 7 Independent Standalone Showcases Verified');
+  console.log('  Rehearsal  [Staging]     Isolated Restore, Rollback & Disaster Drills');
   console.log('========================================================================\n');
 }
 

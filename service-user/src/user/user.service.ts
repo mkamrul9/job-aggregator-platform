@@ -161,15 +161,23 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
         }
 
         // Parse and validate cohort capacity ceiling fail-closed
-        const parsedMax = parseInt(
-          process.env.BETA_MAX_PARTICIPANTS || '50',
-          10,
-        );
-        maxCapacity =
-          Number.isInteger(parsedMax) && parsedMax > 0 ? parsedMax : 50;
+        const rawMax = process.env.BETA_MAX_PARTICIPANTS;
+        if (rawMax !== undefined && rawMax.trim() !== '') {
+          const parsed = parseInt(rawMax, 10);
+          if (isNaN(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+            throw new ForbiddenException({
+              code: 'BETA_CONFIG_INVALID',
+              message:
+                'Invalid beta cohort configuration: BETA_MAX_PARTICIPANTS must be a positive integer.',
+            });
+          }
+          maxCapacity = parsed;
+        } else {
+          maxCapacity = 50;
+        }
 
-        // Pre-flight capacity check
-        const currentCount = await this.userRepository.countUsers();
+        // Pre-flight capacity check using consistent cohort definition (CANDIDATE role)
+        const currentCount = await this.userRepository.countCandidates();
         if (currentCount >= maxCapacity) {
           throw new ForbiddenException({
             code: 'BETA_CAPACITY_REACHED',
@@ -222,6 +230,14 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
   }
 
   async findOrCreateUser(data: { id: string; email: string }) {
+    if (process.env.BETA_ALLOWLIST_ENABLED === 'true') {
+      const syncResult = await this.syncUser({
+        id: data.id,
+        email: data.email,
+        emailVerified: true,
+      });
+      return syncResult.user;
+    }
     return this.userRepository.upsertUser(data.id, data.email, false);
   }
 

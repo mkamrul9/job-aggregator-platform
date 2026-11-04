@@ -36,6 +36,11 @@ jobs:
           pip install -r service-resume/requirements.txt
           python -m spacy download en_core_web_sm
 
+      - name: Install Ingestion and Notification Dependencies for Journey Qualification
+        run: |
+          npm --prefix service-ingestion ci --ignore-scripts
+          npm --prefix service-notification ci --ignore-scripts
+
       - name: Run Contract Validation Suite
         run: node contracts/validate-contracts.js
 
@@ -153,6 +158,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://admin:password123@localhost:5432/job_aggregator_users_test?schema=public
         run: npx prisma migrate deploy
+
+      - name: Build service-user Application
+        working-directory: ./service-user
+        run: npm run build
 
       - name: Prove Atomic Beta Admission Concurrency Against PostgreSQL
         working-directory: ./service-user

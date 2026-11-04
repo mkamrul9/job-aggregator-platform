@@ -1,12 +1,14 @@
 # Seekers Platform Bounded Beta Operational Plan (P16)
 
 *Status: Authoritative Beta Operational Plan & Qualification Framework — Phase 16*  
-*Verified P15 Baseline SHA:* 1d26ca2e961fcad92ad4996727a8da72d7613e57  
+*Baseline SHA:* `ee5d547ba24514b7560eaabb8ba3363162f622c0` (All 9 CI checks green)  
 *Branch:* `codex/production-p16-beta-and-portfolio-qualification`  
-*Target Environment:* Tier 0 Single-Node Staging Baseline (4 vCPU, 8 GB RAM, containerized datastores)
+*Authorized Staging Target:* `http://staging.seekers.internal:3000` (Candidate Gateway) / `http://staging.seekers.internal:4200` (Operations Console)  
+*Topology:* Tier 0 Single-Node Isolated Staging (4 vCPU, 8 GB RAM, containerized datastores: PostgreSQL 15, MongoDB 6, Elasticsearch 8.10, Kafka 3.6, Redis 7, MinIO)  
+*Monitored Support Owner:* Platform Reliability Lead (`oncall@seekers.internal` / `@sre-lead`)
 
 > [!IMPORTANT]
-> **Operational Boundary Notice:** The cohort limits (50 candidates, 5 operators) and 14-day observation window described herein represent the **planned beta envelope**. External human participant observation, cohort onboarding, and operational feedback have NOT yet elapsed and remain an explicit unmet external gate pending human launch authorization. All underlying server-enforced quotas, role boundaries, runbooks, and fail-closed security mechanisms are fully engineered, integrated, and verified.
+> **Operational Boundary Notice:** The cohort limits (up to 50 candidates, 5 operators) and 14-day observation window described herein represent the **planned beta envelope**. External human participant observation, cohort onboarding, and operational feedback have NOT yet elapsed and remain an explicit unmet external gate pending human launch authorization. All underlying server-enforced quotas, role boundaries, runbooks, real UserRepository concurrency fencing, and fail-closed security mechanisms are fully engineered, integrated, and verified in CI.
 
 ---
 
@@ -18,7 +20,10 @@ To ensure strict operational safety and bounded resource consumption, the Phase 
 - **Planned Operator Cohort:** 5 authorized platform operators (1 Administrator, 2 Operators, 2 Read-Only Auditors).
 - **Server-Enforced Access Control:**
   - Public registration without an allowlisted email or invitation token is blocked at the API boundary when `BETA_ALLOWLIST_ENABLED=true` (`POST /api/v1/users/sync` throws `403 Forbidden` with `code: 'BETA_INVITE_REQUIRED'`).
-  - Once active registered candidates reach the ceiling, subsequent signups fail closed (`403 Forbidden` with `code: 'BETA_CAPACITY_REACHED'`).
+  - When candidates register concurrently for the final slot, admission is serialized across all worker and API processes using an exclusive PostgreSQL transaction advisory lock (`pg_advisory_xact_lock(987654321)` in `UserRepository.upsertUser`). Exactly one candidate is admitted to the final slot; concurrent contenders receive `403 Forbidden` (`code: 'BETA_CAPACITY_REACHED'`).
+  - Total candidate count in PostgreSQL strictly respects `BETA_MAX_PARTICIPANTS` with zero slot overruns.
+  - Returning candidates update session tokens and profile attributes idempotently without consuming additional cohort slots.
+  - Configuration validation fails closed: malformed non-positive or non-integer `BETA_MAX_PARTICIPANTS` throws `403 Forbidden` (`code: 'BETA_CONFIG_INVALID'`).
 - **Role Isolation & Authorization:**
   - Candidates access only `/api/v1/users/me`, candidate workspace, resume upload, and public search.
   - Candidate tokens attempting to reach `/api/v1/admin/*` receive `403 Forbidden` (`INSUFFICIENT_PRIVILEGES`).
@@ -43,7 +48,7 @@ To remain well within the measured Tier 0 capacity envelope and prevent unintend
 
 ## 3. Critical Candidate & Operator Journeys
 
-### 3.1 Candidate Journeys (Verified via Live Loopback HTTP)
+### 3.1 Candidate Journeys (Verified via Maintained Services & Live Loopback HTTP)
 1. **Discovery & Search:** Multi-facet keyword queries, keyset cursor pagination (`cursor=v1...`), filtering by `remote_eligibility` and compensation, outbound destination tracking with tracking parameter stripping (`utm_*`, `fbclid`).
 2. **Identity & Onboarding:** Authenticated profile creation, skill confirmation, salary expectation setting, and multi-tab session management.
 3. **Resume Intelligence:** Multi-part PDF upload -> Python text stream parsing (spaCy + pypdf) -> entity extraction -> candidate review/edit screen -> candidate-confirmed skill persistence.
@@ -51,7 +56,7 @@ To remain well within the measured Tier 0 capacity envelope and prevent unintend
 5. **Recommendations & Scoped Unsubscribe:** Deterministic explainable matching scores, hard exclusions (salary floor, remote mismatch), and cryptographic HMAC-signed one-click unsubscribe links (`scope=subscription`).
 6. **Privacy & GDPR Rights:** Instant JSON data portability export, scheduled account deletion with 30-day grace period, and durable erasure tombstone fencing against silent resurrection.
 
-### 3.2 Operator Journeys (Verified via Live Loopback HTTP)
+### 3.2 Operator Journeys (Verified via Maintained Services & Live Loopback HTTP)
 1. **Source Operations:** Registered sources registry inspection, legal provenance verification, manual crawl dispatch, and emergency source pausing (`/api/v1/sources/:id/pause`).
 2. **Catalog Moderation:** Privileged catalog search across all moderation statuses (`ACTIVE`, `FLAGGED`, `EXPIRED`), atomic revision advance, and outbox projection status tracking (`PENDING` -> `INDEXED`).
 3. **Dead Letter Queue Triage:** Inspection of quarantined poison events, re-validation against authoritative JSON Schemas, and idempotent replay resolution (HTTP `409 ALREADY_RESOLVED`).
@@ -62,6 +67,7 @@ To remain well within the measured Tier 0 capacity envelope and prevent unintend
 ## 4. Support, Escalation & Incident Response
 
 ### 4.1 Support Channels & Maintained Routes
+- **Monitored Support Owner:** Platform Reliability Lead (`oncall@seekers.internal` / `@sre-lead`).
 - **Candidate Problem Reporting:** Authenticated or public issue submission via `POST /reports` or `POST /api/v1/reports` (reference number tracking via `GET /reports/:referenceOrId`).
 - **Operator Triage Queue:** Privileged listing reports queue via `GET /admin/reports` and triage status update via `PATCH /admin/reports/:id` (strictly guarded by `RolesGuard` requiring `ADMIN` or `OPERATOR`).
 - **Severity 1 (P1 - Data Loss, Security/Privacy Breach, Service Outage):** Execution of runbook [`docs/runbooks/EMERGENCY_KILL_SWITCH.md`](runbooks/EMERGENCY_KILL_SWITCH.md) and [`docs/runbooks/NOTIFICATION_SUPPRESSION.md`](runbooks/NOTIFICATION_SUPPRESSION.md).
@@ -74,6 +80,12 @@ The beta will be halted immediately and rolled back to prior stable release if:
 2. Permanent account erasure tombstone is breached (resurrecting an erased candidate).
 3. Search p95 exceeds 500 ms for > 5 consecutive minutes under offered load < 50 RPS.
 4. Kafka Dead Letter Queue backlog exceeds 50 poison messages in 1 hour.
+5. Service crash loop occurs in any microservice.
+
+### 4.3 Rollback Candidate & Provenance
+- **Candidate Release Artifact:** Verified commit on `codex/production-p16-beta-and-portfolio-qualification`.
+- **Known-Good Rollback Artifact:** `1d26ca2e961fcad92ad4996727a8da72d7613e57` (P15 verified baseline, 9/9 green CI runs).
+- **Database Schema Migration:** `20261027000000_init` (fully compatible; zero backward-breaking schema alterations).
 
 ---
 

@@ -171,6 +171,12 @@ export class UserRepository {
     return this.prisma.user.count();
   }
 
+  async countCandidates(): Promise<number> {
+    return this.prisma.user.count({
+      where: { role: 'CANDIDATE' },
+    });
+  }
+
   async findByEmail(email: string): Promise<UserWithProfile | null> {
     return this.prisma.user.findUnique({
       where: { email },
